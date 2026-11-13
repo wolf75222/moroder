@@ -16,12 +16,20 @@
 
 namespace {
 
-int homeCategoryRank(const std::string& category) {
+/* homeCategoryRank
+- Shelves named in HOME_ORDER come first, in that order; everything else
+  follows in the order YouTube Music sent it, as the config documents
+*/
+int homeCategoryRank(const std::vector<std::string>& sent_order, const std::string& category) {
     const auto& order = Config::get().HOME_ORDER;
     const std::string key = utils::lower(category);
 
     for (size_t i = 0; i < order.size(); i++) {
         if (order[i] == key) return static_cast<int>(i);
+    }
+
+    for (size_t i = 0; i < sent_order.size(); i++) {
+        if (sent_order[i] == category) return static_cast<int>(order.size() + i);
     }
 
     return std::numeric_limits<int>::max();
@@ -205,7 +213,7 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
     ordered.reserve(main_content_items.size());
 
     for (auto& item : main_content_items) {
-        ordered.push_back({ homeCategoryRank(item.category), &item });
+        ordered.push_back({ homeCategoryRank(state->home_order, item.category), &item });
     }
 
     std::stable_sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) { return a.first < b.first; });

@@ -98,6 +98,7 @@ public:
         std::shared_ptr<music::IStreamable> current;
 
         std::unordered_map<std::string, std::vector<music::ApiResult>> home;
+        std::vector<std::string> home_order;    // shelf titles, YouTube Music's order
 
         /* library
         - Filled by the Library*Commands, all require the user to be logged in

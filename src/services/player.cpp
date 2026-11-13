@@ -727,6 +727,7 @@ void services::Player::worker_loop() {
                     state.flags["home"] = Flags::Ongoing;
                     state.errors.erase("home");
                     state.home.clear();
+                    state.home_order.clear();
                 }
 
                 std::unordered_map<std::string, std::vector<music::ApiResult>> user_home = music_service->getHome();
@@ -742,6 +743,7 @@ void services::Player::worker_loop() {
                     } else if (!err.failed) {
                         state.flags["home"] = Flags::Done;
                         state.home = user_home;
+                        state.home_order = music_service->homeOrder();
                     }
                 }
 

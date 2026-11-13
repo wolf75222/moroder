@@ -54,6 +54,8 @@ public:
     std::vector<music::ApiResult> getSearch(const std::string& query);
 
     std::unordered_map<std::string, std::vector<music::ApiResult>> getHome();
+    // Shelf titles from the last getHome(), in YouTube Music's order.
+    const std::vector<std::string>& homeOrder() const { return home_order; }
 
     music::Song     getSong(const music::SongRef& song);
     music::Episode  getEpisode(const music::EpisodeRef& episode);
@@ -69,6 +71,7 @@ public:
     music::Playlist getPlaylist(const music::PlaylistRef& playlist);
 
 private:
+    std::vector<std::string> home_order;
     /* ytm
     - The InnerTube client: transport, auth, endpoints, continuations
     - Reads the same browser.json ytmusicapi's setup writes

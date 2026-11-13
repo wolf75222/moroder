@@ -35,7 +35,7 @@ namespace {
 // Tunables that used to live in the Python request objects.
 constexpr int SEARCH_LIMIT   = 20;
 constexpr int RADIO_LIMIT    = 50;
-constexpr int HOME_LIMIT     = 10;
+constexpr int HOME_LIMIT     = -1;  // every shelf YouTube Music has
 constexpr int LIBRARY_LIMIT  = 25;
 
 /* LIBRARY_ALL
@@ -339,6 +339,7 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
         }
     }
 
+    home_order = response.order;
     return response.results;
 }
 
