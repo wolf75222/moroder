@@ -633,7 +633,11 @@ bool checkStructure(const Credentials& creds) {
 bool fromPaste(Credentials& out) {
     std::cout << "\n";
     info("1. Open " + std::string(bold()) + "music.youtube.com" + reset() + " and make sure you are signed in");
+#ifdef __APPLE__
+    info("2. Open DevTools with Cmd+Option+I, then the Network tab");
+#else
     info("2. Open DevTools with F12, then the Network tab");
+#endif
     info("3. Reload the page and filter the requests for " + std::string(bold()) + "/youtubei/" + reset());
     info("4. Click any POST request in the list");
     info("5. Under Headers, copy everything below Request Headers");
@@ -810,6 +814,9 @@ void usage() {
               << "  --browser <name>   browser holding your session, saved as BROWSER\n"
               << "                     firefox, librewolf, floorp, waterfox, zen, mercury,\n"
               << "                     icecat, tor, chrome, chromium, brave, edge, opera,\n"
+#ifdef __APPLE__
+              << "                     safari,\n"
+#endif
               << "                     vivaldi, whale, or a browser:profile spec\n"
               << "  --profile <dir>    explicit browser profile directory, for stream cookies\n"
               << "  --no-colour        plain output\n"

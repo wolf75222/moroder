@@ -309,6 +309,12 @@ public:
             return name;
         }
 
+#ifdef __APPLE__
+        // yt-dlp reads Safari's cookie store directly (needs Full Disk Access
+        // for the terminal app).
+        if (name == "safari") return name;
+#endif
+
         return "";
     }
 

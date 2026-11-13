@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Prefer Homebrew/system headers over stray frameworks (e.g. Mono ships an old
+# libpng/libjpeg in /Library/Frameworks that would shadow the real ones).
+if(APPLE)
+    set(CMAKE_FIND_FRAMEWORK LAST)
+endif()
+
 set(
     DISCORD_SDK_ROOT
     "${CMAKE_SOURCE_DIR}/lib/discord_social_sdk"
@@ -72,6 +78,23 @@ FetchContent_MakeAvailable(ftxui-image-view)
 if(APPLE)
     set_target_properties(tiv PROPERTIES LINK_LIBRARIES "" INTERFACE_LINK_LIBRARIES "")
 endif()
+
+# Covers: without these, CImg downloads through a curl subprocess and hands
+# every JPEG to an external ImageMagick ('magick'/'convert'), so covers silently
+# vanish when ImageMagick isn't installed. Decode in-process when the libs exist.
+find_package(JPEG)
+find_package(PNG)
+find_package(CURL REQUIRED)
+if(JPEG_FOUND)
+    target_compile_definitions(ftxui-image-view PRIVATE cimg_use_jpeg)
+    target_link_libraries(ftxui-image-view PUBLIC JPEG::JPEG)
+endif()
+if(PNG_FOUND)
+    target_compile_definitions(ftxui-image-view PRIVATE cimg_use_png)
+    target_link_libraries(ftxui-image-view PUBLIC PNG::PNG)
+endif()
+target_compile_definitions(ftxui-image-view PRIVATE cimg_use_curl)
+target_link_libraries(ftxui-image-view PUBLIC CURL::libcurl)
 
 if(MORODER_ENABLE_MPRIS)
     FetchContent_Declare(
