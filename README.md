@@ -81,9 +81,10 @@ streams.
 `moroder setup` checks for these and tells you what is missing.
 
 > **Note**
-> Moroder targets Linux and also builds on macOS. On macOS, MPRIS (D-Bus) is
-> compiled out, and Discord rich presence is only built when the Discord Social
-> SDK is present in `lib/`.
+> Moroder targets Linux and macOS. On macOS, MPRIS (D-Bus) is replaced by the
+> native equivalent: Now Playing in Control Center and the menu bar, plus the
+> media keys. Discord rich presence works on both, given the Discord Social SDK
+> in `lib/`.
 
 ---
 
@@ -188,10 +189,13 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-MPRIS is off by default outside Linux (`-DMORODER_ENABLE_MPRIS=ON` to force it).
-Discord rich presence is enabled automatically when
-`lib/discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib` exists
-(`-DMORODER_ENABLE_DISCORD=OFF` to skip it).
+On macOS, MPRIS is replaced by Now Playing: the current track, its cover and
+progress show in Control Center and the menu bar, and the media keys, AirPods
+and Control Center buttons drive play/pause, next/previous, scrubbing and repeat.
+
+Discord rich presence is built when the macOS SDK is in place, at
+`lib/discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib`, just like
+the `.so` on Linux (`-DMORODER_ENABLE_DISCORD=OFF` to build without it).
 
 ---
 

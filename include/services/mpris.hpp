@@ -20,12 +20,31 @@
 #ifndef MORODER_NO_MPRIS
 #include <sdbus-c++/sdbus-c++.h>
 #else
-// No D-Bus (e.g. macOS): minimal stand-ins so the interface still compiles.
-// Every Mpris method is a no-op in that case (see mpris_stub.cpp).
+// No D-Bus (macOS and others): small stand-ins so the same interface compiles.
+// On macOS the backend is mpris_macos.mm (Now Playing + media keys), elsewhere
+// mpris_stub.cpp. Variant keeps the value so the backend can read metadata.
+#include <cstdint>
+#include <type_traits>
+#include <variant>
 namespace sdbus {
-struct Variant {
+class Variant {
+public:
+    using Value = std::variant<std::monostate, std::string, int64_t, double, bool>;
+
     Variant() = default;
-    template <typename T> Variant(const T&) {}
+
+    template <typename T>
+    Variant(const T& v) {
+        if constexpr (std::is_same_v<T, bool>) value = v;
+        else if constexpr (std::is_integral_v<T>) value = static_cast<int64_t>(v);
+        else if constexpr (std::is_floating_point_v<T>) value = static_cast<double>(v);
+        else if constexpr (std::is_convertible_v<const T&, std::string>) value = std::string(v);
+    }
+
+    const Value& get() const { return value; }
+
+private:
+    Value value;
 };
 struct ObjectPath : std::string { using std::string::string; };
 struct IConnection {};
@@ -160,6 +179,11 @@ private:
     bool canSeek() const;
 
     void setPositionMethod(sdbus::ObjectPath id, int64_t pos);
+
+#ifdef __APPLE__
+    // Pushes the current state to MPNowPlayingInfoCenter. Main thread only.
+    void publishNowPlaying();
+#endif
     void setLoopStatusExternal(const std::string &value);
     void setShuffleExternal(bool value);
 
@@ -199,5 +223,14 @@ public:
     void setIsPreviousPossible(bool possible);
     void updatePlayerControls();
 };
+
+#ifdef __APPLE__
+/* pumpMainThread
+- macOS delivers media keys / Control Center commands to the main thread's run
+  loop, which the TUI otherwise never yields; call this from the UI loop
+- Waits at most `seconds` for events, so it doubles as the loop's idle sleep
+*/
+void pumpMainThread(double seconds);
+#endif
 
 }

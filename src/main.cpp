@@ -13,6 +13,7 @@
 #include "image_view.hpp"
 
 #include <ftxui/component/screen_interactive.hpp>
+#include <ftxui/component/loop.hpp>
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -577,6 +578,17 @@ int main(int argc, char *argv[]) {
         return false;
     });
 
+#ifdef __APPLE__
+    /* Media keys and Control Center commands arrive on the main thread's run
+    loop, so the UI loop yields to it between frames instead of blocking
+    */
+    ftxui::Loop loop(&screen, ui);
+    while (!loop.HasQuitted()) {
+        loop.RunOnce();
+        services::pumpMainThread(0.016);
+    }
+#else
     screen.Loop(ui);
+#endif
     player.detachUI();
 }

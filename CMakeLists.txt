@@ -119,6 +119,10 @@ set(SOURCES
 
 if(MORODER_ENABLE_MPRIS)
     list(APPEND SOURCES src/services/mpris.cpp)
+elseif(APPLE)
+    # Same role as MPRIS: Now Playing in Control Center + media keys
+    enable_language(OBJCXX)
+    list(APPEND SOURCES src/services/mpris_macos.mm)
 else()
     list(APPEND SOURCES src/services/mpris_stub.cpp)
 endif()
@@ -181,6 +185,11 @@ if(MORODER_ENABLE_MPRIS)
     target_link_libraries(${PROJECT_NAME} PRIVATE sdbus-c++)
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE MORODER_NO_MPRIS)
+    if(APPLE)
+        set_source_files_properties(src/services/mpris_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            "-framework Foundation" "-framework AppKit" "-framework MediaPlayer")
+    endif()
 endif()
 
 find_package(PkgConfig REQUIRED)

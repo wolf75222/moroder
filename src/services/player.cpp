@@ -194,8 +194,10 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         uint64_t new_position = mpv_service->getStreamPosition();
 
         if(p < 0) {
-            mpv_service->seekBackward(p);
-            new_position -= p;
+            // p is negative: seekBackward takes the distance as a positive count.
+            const uint64_t back = static_cast<uint64_t>(-p);
+            mpv_service->seekBackward(back);
+            new_position = new_position > back ? new_position - back : 0;
         } else {
             mpv_service->seekForward(p);
             new_position += p;
