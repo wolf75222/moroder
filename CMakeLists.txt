@@ -15,8 +15,27 @@ set(
 set(DISCORD_SDK_LIB_DIR "${DISCORD_SDK_ROOT}/lib/release")
 set(DISCORD_SDK_INCLUDE_DIR "${DISCORD_SDK_ROOT}/include")
 
-set(DISCORD_LIB_PATH "${DISCORD_SDK_LIB_DIR}/libdiscord_partner_sdk.so")
-set(DISCORD_SHARED_LIB "${DISCORD_SDK_LIB_DIR}/libdiscord_partner_sdk.so")
+if(APPLE)
+    set(DISCORD_LIB_PATH "${DISCORD_SDK_LIB_DIR}/libdiscord_partner_sdk.dylib")
+else()
+    set(DISCORD_LIB_PATH "${DISCORD_SDK_LIB_DIR}/libdiscord_partner_sdk.so")
+endif()
+set(DISCORD_SHARED_LIB "${DISCORD_LIB_PATH}")
+
+# MPRIS needs D-Bus, which only makes sense on Linux.
+# Discord rich presence needs the (non-redistributable) Discord Social SDK.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_moroder_mpris_default ON)
+else()
+    set(_moroder_mpris_default OFF)
+endif()
+if(EXISTS "${DISCORD_LIB_PATH}")
+    set(_moroder_discord_default ON)
+else()
+    set(_moroder_discord_default OFF)
+endif()
+option(MORODER_ENABLE_MPRIS "Enable MPRIS (D-Bus) support" ${_moroder_mpris_default})
+option(MORODER_ENABLE_DISCORD "Enable Discord rich presence" ${_moroder_discord_default})
 
 set(MORODER_VERSION "0.0.0-dev" CACHE STRING "Moroder version")
 
@@ -49,13 +68,19 @@ FetchContent_Declare(
     GIT_TAG 1501b3263789b9b0a4aaa61143d78e02d48ad550
 )
 FetchContent_MakeAvailable(ftxui-image-view)
+# tiv links X11 but never uses it (CImg display is disabled); there is no X11 on macOS.
+if(APPLE)
+    set_target_properties(tiv PROPERTIES LINK_LIBRARIES "" INTERFACE_LINK_LIBRARIES "")
+endif()
 
-FetchContent_Declare(
-    sdbus-cpp
-    GIT_REPOSITORY https://github.com/Kistler-Group/sdbus-cpp.git
-    GIT_TAG v2.2.1
-)
-FetchContent_MakeAvailable(sdbus-cpp)
+if(MORODER_ENABLE_MPRIS)
+    FetchContent_Declare(
+        sdbus-cpp
+        GIT_REPOSITORY https://github.com/Kistler-Group/sdbus-cpp.git
+        GIT_TAG v2.2.1
+    )
+    FetchContent_MakeAvailable(sdbus-cpp)
+endif()
 
 FetchContent_Declare(
     ftxui-grid-container
@@ -65,11 +90,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ftxui-grid-container)
 
 set(SOURCES
-    src/services/mpris.cpp
     src/services/mpv.cpp
     src/services/music.cpp
     src/services/player.cpp
-    src/services/social.cpp
 
     src/setup/setup.cpp
 
@@ -94,6 +117,18 @@ set(SOURCES
     src/main.cpp
 )
 
+if(MORODER_ENABLE_MPRIS)
+    list(APPEND SOURCES src/services/mpris.cpp)
+else()
+    list(APPEND SOURCES src/services/mpris_stub.cpp)
+endif()
+
+if(MORODER_ENABLE_DISCORD)
+    list(APPEND SOURCES src/services/social.cpp)
+else()
+    list(APPEND SOURCES src/services/social_stub.cpp)
+endif()
+
 # Embed default config
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/gen)
 
@@ -104,8 +139,8 @@ set(GENERATED_HEADER ${CMAKE_CURRENT_BINARY_DIR}/gen/${GENERATED_HEADER_NAME}.hp
 add_custom_command(
     OUTPUT ${GENERATED_HEADER}
 
-    COMMAND xxd -i -n ${PROJECT_NAME}_default ${DEFAULT_CONF} > ${GENERATED_HEADER}
-    COMMAND sed -i -E "s/^(unsigned )/inline \\1/" ${GENERATED_HEADER}
+    COMMAND xxd -i -n ${PROJECT_NAME}_default ${DEFAULT_CONF} > ${GENERATED_HEADER}.tmp
+    COMMAND sed -E "s/^(unsigned )/inline \\1/" ${GENERATED_HEADER}.tmp > ${GENERATED_HEADER}
 
     DEPENDS ${DEFAULT_CONF}
     COMMENT "Embedding default config into ${GENERATED_HEADER}"
@@ -116,16 +151,41 @@ add_custom_target(generate_${PROJECT_NAME}_conf_header ALL DEPENDS ${GENERATED_H
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(${PROJECT_NAME} ${SOURCES})
+if(APPLE)
+    set(MORODER_RPATH "@loader_path")
+else()
+    set(MORODER_RPATH "$ORIGIN")
+endif()
 set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
-    INSTALL_RPATH "$ORIGIN"
+    INSTALL_RPATH "${MORODER_RPATH}"
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     MORODER_VERSION="${MORODER_VERSION}"
 )
 add_dependencies(${PROJECT_NAME} generate_${PROJECT_NAME}_conf_header)
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${DISCORD_SDK_INCLUDE_DIR})
+if(MORODER_ENABLE_DISCORD)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${DISCORD_SDK_INCLUDE_DIR})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${DISCORD_LIB_PATH})
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${DISCORD_SHARED_LIB}"
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    )
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE MORODER_NO_DISCORD)
+endif()
+
+if(MORODER_ENABLE_MPRIS)
+    target_link_libraries(${PROJECT_NAME} PRIVATE sdbus-c++)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE MORODER_NO_MPRIS)
+endif()
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+find_package(CURL REQUIRED)
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
@@ -139,11 +199,8 @@ target_link_libraries(${PROJECT_NAME}
     ftxui-image-view
     ftxui-grid-container
 
-    mpv
-    curl
-    sdbus-c++
-
-    ${DISCORD_LIB_PATH}
+    PkgConfig::MPV
+    CURL::libcurl
 )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -160,12 +217,6 @@ endif()
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Release>:-O3>
-)
-
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${DISCORD_SHARED_LIB}"
-    $<TARGET_FILE_DIR:${PROJECT_NAME}>
 )
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)

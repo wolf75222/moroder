@@ -6,7 +6,14 @@
 
 #pragma once
 
+#ifndef MORODER_NO_DISCORD
 #include "discordpp.h"
+#endif
+
+#include <atomic>
+#include <ctime>
+#include <memory>
+#include <string>
 
 #include <thread>
 #include <mutex>
@@ -43,7 +50,9 @@ public:
 private:
     uint64_t app_id;
 
+#ifndef MORODER_NO_DISCORD
     std::shared_ptr<discordpp::Client> client;
+#endif
     std::atomic<bool> running = true;
     std::thread worker;
 

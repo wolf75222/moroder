@@ -145,12 +145,18 @@ std::string commandVersion(const std::string& name, const std::string& flag = "-
 }
 
 void openInBrowser(const std::string& url) {
-    if (!haveCommand("xdg-open")) {
-        note("xdg-open not found, open this yourself: " + url);
+#ifdef __APPLE__
+    const std::string opener = "open";
+#else
+    const std::string opener = "xdg-open";
+#endif
+
+    if (!haveCommand(opener)) {
+        note(opener + " not found, open this yourself: " + url);
         return;
     }
 
-    run("xdg-open " + shellQuote(url) + " >/dev/null 2>&1 &");
+    run(opener + " " + shellQuote(url) + " >/dev/null 2>&1 &");
 }
 
 // ---------------------------------------------------------------------------
@@ -233,11 +239,22 @@ struct BrowserSpec {
 
 /* forkRoots
 - Every layout a Firefox fork profile turns up in: the native dotfile, the XDG
-  style some distros use, and flatpak
+  style some distros use, flatpak, and ~/Library/Application Support on macOS
 */
 std::vector<fs::path> forkRoots(const std::string& name) {
     const fs::path h = utils::home();
     if (h.empty()) return {};
+
+#ifdef __APPLE__
+    const fs::path mac = h / "Library" / "Application Support";
+
+    if (name == "librewolf") return { mac / "librewolf" };
+    if (name == "floorp")    return { mac / "Floorp" };
+    if (name == "waterfox")  return { mac / "Waterfox" };
+    if (name == "zen")       return { mac / "zen" };
+    if (name == "tor")       return { mac / "TorBrowser-Data" / "Browser" };
+    return { mac / "Firefox" };
+#endif
 
     if (name == "librewolf") {
         return {

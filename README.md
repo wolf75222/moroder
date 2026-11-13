@@ -81,8 +81,9 @@ streams.
 `moroder setup` checks for these and tells you what is missing.
 
 > **Note**
-> Moroder is Linux-only. MPRIS over sdbus-c++, the XDG config paths and the
-> browser profile discovery all assume it.
+> Moroder targets Linux and also builds on macOS. On macOS, MPRIS (D-Bus) is
+> compiled out, and Discord rich presence is only built when the Discord Social
+> SDK is present in `lib/`.
 
 ---
 
@@ -176,6 +177,21 @@ yt-dlp --version
 > **Note:** `libcurl-dev` is a virtual package on Debian/Ubuntu-based distributions. On Linux Mint, `libcurl4-openssl-dev` provides the required `libcurl` development files.
 
 After installing the dependencies, follow the standard CMake build instructions.
+
+---
+
+### macOS
+
+```bash
+brew install cmake pkg-config mpv yt-dlp
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+MPRIS is off by default outside Linux (`-DMORODER_ENABLE_MPRIS=ON` to force it).
+Discord rich presence is enabled automatically when
+`lib/discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib` exists
+(`-DMORODER_ENABLE_DISCORD=OFF` to skip it).
 
 ---
 

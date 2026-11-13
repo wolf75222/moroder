@@ -15,7 +15,26 @@
 
 #pragma once
 
+#include <string>
+
+#ifndef MORODER_NO_MPRIS
 #include <sdbus-c++/sdbus-c++.h>
+#else
+// No D-Bus (e.g. macOS): minimal stand-ins so the interface still compiles.
+// Every Mpris method is a no-op in that case (see mpris_stub.cpp).
+namespace sdbus {
+struct Variant {
+    Variant() = default;
+    template <typename T> Variant(const T&) {}
+};
+struct ObjectPath : std::string { using std::string::string; };
+struct IConnection {};
+struct IObject {};
+}
+#endif
+#include <functional>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
