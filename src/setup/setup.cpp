@@ -502,6 +502,21 @@ std::map<std::string, std::string> parseHeaderBlob(const std::string& blob) {
         line = utils::trim(line);
         if (line.empty()) continue;
 
+        /* Chromium's "Copy as cURL" (Chrome, Arc, Edge, Brave...) puts the
+        cookies in -b '...' rather than -H 'cookie: ...'; without this the
+        cookie line was misread as a header and setup found no cookie
+        */
+        if (line.rfind("-b ", 0) == 0 || line.rfind("--cookie ", 0) == 0) {
+            size_t open = line.find_first_of("'\"");
+            if (open == std::string::npos) continue;
+
+            size_t close = line.find(line[open], open + 1);
+            if (close == std::string::npos) continue;
+
+            headers["cookie"] = utils::trim(line.substr(open + 1, close - open - 1));
+            continue;
+        }
+
         if (contains(line, "-H ")) {
             size_t pos = 0;
 

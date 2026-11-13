@@ -193,6 +193,12 @@ On macOS, MPRIS is replaced by Now Playing: the current track, its cover and
 progress show in Control Center and the menu bar, and the media keys, AirPods
 and Control Center buttons drive play/pause, next/previous, scrubbing and repeat.
 
+Stream cookies: on macOS, yt-dlp is given the session saved by `moroder setup`
+(exported to `~/.config/moroder/cookies.txt`) instead of reading a browser's
+cookie store, which macOS protects. Any browser works for setup, Arc and
+Safari included; Chromium's "Copy as cURL" can be piped straight in:
+`pbpaste | moroder setup`.
+
 Discord rich presence is built when the macOS SDK is in place, at
 `lib/discord_social_sdk/lib/release/libdiscord_partner_sdk.dylib`, just like
 the `.so` on Linux (`-DMORODER_ENABLE_DISCORD=OFF` to build without it).
