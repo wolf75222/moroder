@@ -549,9 +549,15 @@ lyrics line to jump to it.
 
 Pages have a history, like a browser: <kbd>Esc</kbd>, <kbd>Backspace</kbd> or
 <kbd>[</kbd> go back to the previous page (Home when there is none),
-<kbd>]</kbd> goes forward. On a trackpad, a two-finger swipe sideways does the
-same (over a shelf of covers it scrolls the shelf instead), and on Now
-Playing's cover it skips to the previous / next track.
+<kbd>]</kbd> goes forward, and so do the <kbd>‹</kbd> <kbd>›</kbd> buttons left
+of the search bar. On a trackpad, a two-finger swipe sideways does the same
+(over a shelf of covers it scrolls the shelf instead), and on Now Playing's
+cover it skips to the previous / next track, in terminals that pass sideways
+scrolling on to apps. Warp doesn't (it keeps it for itself), so use the
+buttons or the keys there; `moroder keys` shows what your terminal sends.
+
+Menus, the volume slider, prompts and the search suggestions are drawn on
+your terminal's own background (and transparency), not a fixed grey.
 
 Long playlists show their first 100 tracks as soon as they arrive and the rest
 follows; playing one before it has finished loading queues the rest when it

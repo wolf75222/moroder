@@ -94,7 +94,11 @@ static int keyTest() {
     raw.c_cc[VMIN] = 1; raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 
-    std::cout << "Press keys (Shift/Option + arrows, h, m...). q to quit.\n\n" << std::flush;
+    // Mouse reporting too (any event, SGR), so wheel / trackpad swipes show up.
+    std::cout << "\x1b[?1003h\x1b[?1006h";
+    std::cout << "Press keys (Shift/Option + arrows, h, m...), scroll or swipe. q to quit.\n"
+              << "Also written to ~/.local/state/moroder/logs/keys.log\n\n" << std::flush;
+    std::ofstream log(utils::resolve_path(MORODER_LOG_PATH) / "keys.log", std::ios::trunc);
     const std::vector<std::pair<std::string, std::string>> known = {
         {"\x1b[1;2D", "previous track (Shift+Left)"},  {"\x1b[1;3D", "previous track (Option+Left)"},
         {"\x1b[1;9D", "previous track (Meta+Left)"},   {"\x1b" "b",  "previous track (Option+Left, as Esc b)"},
@@ -138,10 +142,22 @@ static int keyTest() {
         }
         std::string meaning = "-";
         for (const auto& [k, v] : known) if (k == seq) meaning = v;
+        // SGR mouse: ESC [ < button ; x ; y M/m
+        if (seq.rfind("\x1b[<", 0) == 0) {
+            const int b = std::atoi(seq.c_str() + 3);
+            const int base = b & ~(4 | 8 | 16);
+            meaning = base == 64 ? "wheel up" : base == 65 ? "wheel down" : base == 66 ? "wheel LEFT (swipe)" : base == 67 ? "wheel RIGHT (swipe)"
+                    : (b & 32) ? "mouse move" : "mouse button " + std::to_string(base & 3);
+            if (b & 4) meaning += " +shift";
+            if (b & 8) meaning += " +option";
+            if (meaning == "mouse move") { log << shown << " move\n" << std::flush; continue; }   // too many to print
+        }
+        log << shown << "   ->  " << meaning << "\n" << std::flush;
         std::cout << "  " << shown << "   ->  " << meaning << "\n" << std::flush;
         }
         if (quit) break;
     }
+    std::cout << "\x1b[?1003l\x1b[?1006l" << std::flush;
     tcsetattr(STDIN_FILENO, TCSANOW, &old);
     return 0;
 }
@@ -324,6 +340,7 @@ int main(int argc, char *argv[]) {
         }
     };
     std::vector<NavEntry> nav_back, nav_forward;
+    Box nav_back_box{-1, -1, -1, -1}, nav_forward_box{-1, -1, -1, -1};   // the ‹ › buttons
     NavEntry nav_current;
     bool nav_restoring = false;
     std::string last_query;
@@ -1074,6 +1091,16 @@ int main(int argc, char *argv[]) {
 
                 vbox({
                     hbox({
+                        // ‹ › : back / forward, clickable (Warp doesn't pass trackpad swipes on).
+                        vbox({
+                            text(" "),
+                            hbox({
+                                text(" \uf053 ") | (nav_back.empty() ? color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+                                                                    : color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))) | reflect(nav_back_box),
+                                text(" \uf054 ") | (nav_forward.empty() ? color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+                                                                       : color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))) | reflect(nav_forward_box),
+                            }),
+                        }),
                         search_bar->Render() | flex,
                         vbox({
                             text(" "),
@@ -1356,6 +1383,8 @@ int main(int argc, char *argv[]) {
                     player.seekToFraction(double(m.x - p.x_min) / double(p.x_max - p.x_min));
                     return true;
                 }
+                if(in(nav_back_box))    { go_back();    return true; }
+                if(in(nav_forward_box)) { go_forward(); return true; }
                 if(in(playback_bar_data.box_prev))   { player.skipBackward();      return true; }
                 if(in(playback_bar_data.box_play))   { player.togglePause();       return true; }
                 if(in(playback_bar_data.box_next))   { player.skipForward();       return true; }
@@ -2074,7 +2103,7 @@ int main(int argc, char *argv[]) {
             row("right-click",            "menu: play next, radio..."),
             row("middle",                 "preview 15 s"),
             row("wheel",                  "scroll by lines"),
-            row("swipe \u2190 \u2192",      "back / forward; on a shelf: sideways"),
+            row("\uf053 \uf054 / swipe",     "back / forward (swipe: not in Warp)"),
             row("swipe cover",            "now playing: skip tracks"),
             row("volume",                 "click: slider, wheel: level"),
             row("bar",                    "click the line to seek"),
@@ -2125,7 +2154,7 @@ int main(int argc, char *argv[]) {
             const int W = std::max(40, std::min(70, sb.box.x_max - sb.box.x_min - 4));
             Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W)
                 | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-                | bgcolor(Color::RGB(24, 24, 28)) | clear_under;
+                | clear_under;
             base = dbox({
                 base,
                 vbox({
@@ -2155,7 +2184,7 @@ int main(int argc, char *argv[]) {
                 text(" "),
                 text(std::to_string(v) + "%") | size(WIDTH, EQUAL, 4) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 text(" "),
-            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | bgcolor(Color::RGB(24, 24, 28)) | clear_under;
+            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | clear_under;
 
             constexpr int W = BAR + 14;
             const Box& vb = playback_bar_data.box_volume;
@@ -2173,7 +2202,6 @@ int main(int argc, char *argv[]) {
 
         if (ctx.open) {
             constexpr int W = 30;
-            const Color panel = Color::RGB(24, 24, 28);
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
 
             Elements rows;
@@ -2204,7 +2232,6 @@ int main(int argc, char *argv[]) {
             Element menu = vbox(std::move(rows))
                 | size(WIDTH, EQUAL, W)
                 | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-                | bgcolor(panel)
                 | clear_under;
 
             // Keep it on screen near the pointer.
@@ -2231,7 +2258,7 @@ int main(int argc, char *argv[]) {
                 hbox({ filler(), text("enter: ok   esc: cancel ") | dim }),
             }) | size(WIDTH, EQUAL, 56)
                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-               | bgcolor(Color::RGB(24, 24, 28)) | clear_under | center;
+               | clear_under | center;
             base = dbox({ base, box });
         }
 
