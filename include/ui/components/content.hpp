@@ -48,6 +48,8 @@ extern int anim_frame;
 // Queue view drag & drop: each row's area by queue index, and the drag state.
 extern std::vector<std::pair<int, std::shared_ptr<ftxui::Box>>> queue_row_boxes;
 extern int queue_drag_from, queue_drag_over;
+extern int queue_focus_index;     // queue view: row to select after the next rebuild (a move)
+extern bool search_has_focus;     // pages must not take the focus from the search bar
 
 /* buildPlaylist
 - The open playlist (state->open_playlist): a header with Play / Add to queue,

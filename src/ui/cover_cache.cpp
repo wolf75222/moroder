@@ -197,10 +197,12 @@ std::string ui::cover(const std::string& url) {
         std::thread(download, url, dir() / (std::to_string(std::hash<std::string>{}(url)) + "-sq")).detach();
     }
 
-    // Meanwhile a neutral square (the raw image would show uncropped), or,
-    // after a failed download, the URL for image_view to try itself.
+    // Meanwhile (or while waiting for a download slot) a neutral square: the
+    // raw image would show uncropped and be downloaded twice. Only after a
+    // failed download does image_view get the URL to try itself.
     const std::string& ph = placeholder();
-    return (e.pending && !ph.empty()) ? ph : url;
+    const bool failed_before = e.retry_after != std::chrono::steady_clock::time_point{};
+    return (!failed_before && !ph.empty()) ? ph : url;
 }
 
 void ui::onCoverReady(std::function<void()> callback) {

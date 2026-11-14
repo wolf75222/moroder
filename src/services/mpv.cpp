@@ -157,6 +157,7 @@ services::MPV::MPV() {
 
 services::MPV::~MPV() {
     running = false;
+    if (mpv) mpv_wakeup(mpv);
     if (event_thread.joinable()) {
           event_thread.join();
     }
@@ -169,7 +170,8 @@ services::MPV::~MPV() {
 
 void services::MPV::eventLoop() {
     while (running) {
-        mpv_event* event = mpv_wait_event(mpv, 0.01);
+        // Sleeps until mpv has something (the destructor wakes it to stop).
+        mpv_event* event = mpv_wait_event(mpv, -1);
 
         if (!event) continue;
 
@@ -282,6 +284,11 @@ void services::MPV::load(const std::string& url) {
 void services::MPV::append(const std::string& url) {
     const auto [file, options] = splitStream(url);
     const char* args[] = {"loadfile", file.c_str(), "append", "-1", options.empty() ? nullptr : options.c_str(), nullptr};
+    command(args);
+}
+
+void services::MPV::park() {
+    const char* args[] = {"stop", "keep-playlist", nullptr};
     command(args);
 }
 

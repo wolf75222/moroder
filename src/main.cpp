@@ -554,6 +554,7 @@ int main(int argc, char *argv[]) {
         if(Config::isKey(event, cfg.KEY_MOVE_UP) || Config::isKey(event, cfg.KEY_MOVE_DOWN)) {
             const int to = queue_index + (Config::isKey(event, cfg.KEY_MOVE_UP) ? -1 : 1);
             player.moveInQueue(static_cast<size_t>(queue_index), static_cast<size_t>(std::max(0, to)));
+            ui::queue_focus_index = std::max(0, to);     // the moved row stays selected
             return true;
         }
 
@@ -834,6 +835,9 @@ int main(int argc, char *argv[]) {
     auto ui = Renderer(layout, [&] {
         const auto p0 = std::chrono::steady_clock::now();
         sidebar_focused = sidebar->Focused();
+        // Focus left the search bar (a click on the page): search mode ends.
+        if (search_active && !search_bar->Focused()) { search_active = false; content_column = 1; search_bar_data.suggestions.clear(); }
+        ui::search_has_focus = search_bar->Focused();
 
         services::Player::PlayerState state_copy;
         {
@@ -926,7 +930,7 @@ int main(int argc, char *argv[]) {
                      // Synced lyrics scroll smoothly while playing.
                      || (current_state == ui::State::NOWPLAYING && playback_bar_data.is_playing && state_copy.lyrics && !state_copy.lyrics->lines.empty())
                      || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"))
-                     || help_held || volume_pop.open;
+                     || help_held;
             if (help_held) anim_period_ms = 80;
         }
 
@@ -980,8 +984,8 @@ int main(int argc, char *argv[]) {
             });
 
         } else if(current_state == ui::State::SEARCH && state_copy.flags["search"] == services::Player::Flags::Done) {
-            ui::buildSearch(&state_copy, main_content_items, main_content, on_item_press, [&player, &search_bar_data, &main_content, &main_content_items, &screen] {
-                player.search(search_bar_data.value);
+            ui::buildSearch(&state_copy, main_content_items, main_content, on_item_press, [&player, &last_query, &main_content, &main_content_items, &screen] {
+                player.search(last_query);
 
                 main_content_items.clear();
                 main_content->DetachAllChildren();
@@ -1054,7 +1058,7 @@ int main(int argc, char *argv[]) {
         } else if(current_state == ui::State::LIBRARY) {
             int library_rows = std::max(1, (screen.dimy() - 12) / ui::GRID_TILE_HEIGHT);
 
-            ui::buildLibrary(&state_copy, main_content_items, main_content, library_rows, search_bar_data.value, on_chip_press, on_item_press,
+            ui::buildLibrary(&state_copy, main_content_items, main_content, library_rows, search_active ? search_bar_data.value : std::string(), on_chip_press, on_item_press,
                 [&player, &screen] {
                     player.retryLibrary();
                     screen.PostEvent(Event::Custom);
@@ -1153,7 +1157,7 @@ int main(int argc, char *argv[]) {
                         }(),
                     }) | yflex,
 
-                    ((main_content_items.empty() || sidebar_data.is_loading) && state_copy.is_logged_in) ?
+                    ((main_content_items.empty() || sidebar_data.is_loading) && state_copy.is_logged_in && current_state != ui::State::NOWPLAYING) ?
                         vbox({
                             filler(),
                             hbox({
@@ -1256,6 +1260,14 @@ int main(int argc, char *argv[]) {
         return nullptr;
     };
 
+    // Mute / unmute (popover icon and the mute key share the level to go back to).
+    int before_mute = 100;
+    auto toggle_mute = [&] {
+        const int now = playback_bar_data.volume;
+        if (now > 0) { before_mute = now; player.changeVolume(-now); playback_bar_data.volume = 0; }
+        else         { player.changeVolume(before_mute); playback_bar_data.volume = before_mute; }
+    };
+
     // Go to a page from the history (no new history entry for it).
     auto navigate_to = [&](const NavEntry& e) {
         nav_restoring = true;
@@ -1356,10 +1368,7 @@ int main(int argc, char *argv[]) {
                     return true;
                 }
                 if(click && in(volume_pop.mute)) {
-                    static int before_mute = 100;
-                    const int now = playback_bar_data.volume;
-                    if (now > 0) { before_mute = now; player.changeVolume(-now); playback_bar_data.volume = 0; }
-                    else         { player.changeVolume(before_mute); playback_bar_data.volume = before_mute; }
+                    toggle_mute();
                     return true;
                 }
                 if(wheel && (in(volume_pop.bar) || in(volume_pop.mute))) {
@@ -1392,6 +1401,8 @@ int main(int argc, char *argv[]) {
                 if(in(playback_bar_data.box_loop))   { player.cycleLoop();         return true; }
                 if(in(playback_bar_data.box_shuffle)){ player.shuffleUpcoming();   return true; }
                 if(in(playback_bar_data.box_track))  {
+                    // Not as a key: with the search bar focused it would type "v".
+                    if (search_active) close_search();
                     ui->OnEvent(Config::keyEvent(cfg.KEY_NOW_PLAYING));
                     return true;
                 }
@@ -1463,7 +1474,11 @@ int main(int argc, char *argv[]) {
                     const int from = ui::queue_drag_from, to = ui::queue_drag_over;
                     ui::queue_drag_from = ui::queue_drag_over = -1;
                     // The marker sits above the target: moving down, that is one before it.
-                    if (to >= 0 && to != from) player.moveInQueue(static_cast<size_t>(from), static_cast<size_t>(to > from ? to - 1 : to));
+                    if (to >= 0 && to != from) {
+                        const int dest = to > from ? to - 1 : to;
+                        player.moveInQueue(static_cast<size_t>(from), static_cast<size_t>(dest));
+                        ui::queue_focus_index = dest;
+                    }
                     return true;
                 }
             }
@@ -1631,7 +1646,15 @@ int main(int argc, char *argv[]) {
                         else
                             ctx.title = result_title(e->result);
 
-                        ctx.items.push_back({"\uf04b", track ? "Play from here" : "Play", play_hint, key(cfg.KEY_PLAY_NOW)});
+                        // Acts on the item that was clicked, even if the page changes
+                        // while the menu is open (only playlist rows replay the key).
+                        const music::ApiResult clicked = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
+                            ? e->carousel_data.results[e->selected] : e->result;
+                        auto act = [&, clicked, track](const std::string& bind) -> std::function<void()> {
+                            if (track || current_state == ui::State::QUEUE) return key(bind);
+                            return [&, clicked, bind] { on_item_press(Config::keyEvent(bind), clicked); };
+                        };
+                        ctx.items.push_back({"\uf04b", track ? "Play from here" : "Play", play_hint, act(cfg.KEY_PLAY_NOW)});
 
                         // Song under the pointer, for "radio" and "go to artist".
                         const music::ApiResult* r = nullptr;
@@ -1709,11 +1732,22 @@ int main(int argc, char *argv[]) {
                             }
                         }
                         if(current_state == ui::State::QUEUE) {
-                            ctx.items.push_back({"\uf077", "Move up", cfg.KEY_MOVE_UP, key(cfg.KEY_MOVE_UP)});
-                            ctx.items.push_back({"\uf078", "Move down", cfg.KEY_MOVE_DOWN, key(cfg.KEY_MOVE_DOWN)});
-                            ctx.items.push_back({"\uf00d", "Remove from queue", cfg.KEY_REMOVE_FROM_QUEUE, key(cfg.KEY_REMOVE_FROM_QUEUE)});
+                            // The row under the pointer, by queue index: the queue
+                            // can be rebuilt (a track change) while the menu is open.
+                            int qi = -1;
+                            for (const auto& [idx, b] : ui::queue_row_boxes) if (b && b->Contain(m.x, m.y)) qi = idx;
+                            if (qi >= 0) {
+                                ctx.items.push_back({"\uf077", "Move up", cfg.KEY_MOVE_UP, [&player, qi] {
+                                    player.moveInQueue(static_cast<size_t>(qi), static_cast<size_t>(std::max(0, qi - 1)));
+                                    ui::queue_focus_index = std::max(0, qi - 1); }});
+                                ctx.items.push_back({"\uf078", "Move down", cfg.KEY_MOVE_DOWN, [&player, qi] {
+                                    player.moveInQueue(static_cast<size_t>(qi), static_cast<size_t>(qi + 1));
+                                    ui::queue_focus_index = qi + 1; }});
+                                ctx.items.push_back({"\uf00d", "Remove from queue", cfg.KEY_REMOVE_FROM_QUEUE, [&player, qi] {
+                                    player.removeAt(static_cast<size_t>(qi)); }});
+                            }
                         } else {
-                            ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, key(cfg.KEY_ADD_TO_QUEUE)});
+                            ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, act(cfg.KEY_ADD_TO_QUEUE)});
                         }
                     }
                 }
@@ -1853,8 +1887,8 @@ int main(int argc, char *argv[]) {
         }
 
         if(search_bar->Focused()) {
-            // Esc leaves the search bar for the page below.
-            if(event == Event::Escape) {
+            // Esc (or Tab) leaves the search bar for the page below.
+            if(event == Event::Escape || event == Event::Tab || event == Event::TabReverse) {
                 close_search();
                 return true;
             }
@@ -1882,10 +1916,7 @@ int main(int argc, char *argv[]) {
 
         // m (KEY_MUTE): mute / unmute.
         if(Config::isKey(event, cfg.KEY_MUTE)) {
-            static int before_mute = 100;
-            const int now = playback_bar_data.volume;
-            if (now > 0) { before_mute = now; player.changeVolume(-now); }
-            else         { player.changeVolume(before_mute); }
+            toggle_mute();
             return true;
         }
 
@@ -1909,6 +1940,10 @@ int main(int argc, char *argv[]) {
         // v: full-screen Now Playing, and back.
         if(Config::isKey(event, cfg.KEY_NOW_PLAYING) || (event == Event::Escape && current_state == ui::State::NOWPLAYING)) {
             if (current_state == ui::State::NOWPLAYING) {
+                // Back to the page it was opened from, as a "back": recording
+                // it as a new page made Esc bounce between the two.
+                if (!nav_back.empty() && nav_back.back().state == before_now_playing && go_back()) return true;
+                nav_restoring = true;
                 current_state = before_now_playing;
             } else if (event != Event::Escape) {
                 before_now_playing = current_state;
@@ -2004,7 +2039,9 @@ int main(int argc, char *argv[]) {
             sidebar_hidden = !sidebar_hidden;
 
             if(sidebar_hidden) {
+                const bool had_focus = sidebar->Focused();
                 sidebar->Detach();
+                if (had_focus && main_content->Focusable()) main_content->TakeFocus();   // not left with nothing focused
             } else {
                 sidebar_container->Add(sidebar);
             }

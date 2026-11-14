@@ -358,6 +358,8 @@ private:
     */
     std::atomic<bool> load_pending{false};
     std::atomic<bool> fading_out{false};
+    std::atomic<bool> advancing{false};
+    std::string latest_prefetch;                 // the playlist selected last (older prefetches are dropped)          // a track ended and mpv is opening the next one
     // The playlist the queue was last started from (fresh start), and how many
     // of its tracks were queued: its rest is appended when it arrives.
     std::string queued_from_id;
@@ -452,7 +454,9 @@ private:
       ("" on failure); MPV::load / insertAt take that form
     - Blocking (~2.5 s): call it off the UI thread
     */
-    std::string resolveStream(const std::string& youtube_url);
+    // priority: the track the user is waiting for (its own resolver, never
+    // queued behind preloads).
+    std::string resolveStream(const std::string& youtube_url, bool priority = false);
     std::string parseResolved(const std::string& yt_dlp_json);  // "<url>\n<agent>"
     void resolveCurrentAsync(const std::string& youtube_url);   // -> LoadCurrentCommand
     std::string warm_latest;                // last song asked by warmStream

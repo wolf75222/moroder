@@ -68,9 +68,23 @@ std::string librarySignature(services::Player::PlayerState* state, const std::st
 
 using namespace ftxui;
 
+namespace {
+// Identity of a result, to tell whether a shelf's content changed.
+std::string resultId(const music::ApiResult& r) {
+    std::string id;
+    std::visit([&](auto&& d) {
+        using T = std::decay_t<decltype(d)>;
+        if constexpr (!std::is_same_v<T, std::monostate>) id = d.id;
+    }, r.data);
+    return id;
+}
+}
+
 int ui::anim_frame = 0;
 std::vector<std::pair<int, std::shared_ptr<ftxui::Box>>> ui::queue_row_boxes;
 int ui::queue_drag_from = -1, ui::queue_drag_over = -1;
+int ui::queue_focus_index = -1;
+bool ui::search_has_focus = false;
 bool ui::suppress_click = false;
 
 namespace {
@@ -140,7 +154,7 @@ bool buildError(services::Player::PlayerState* state, const std::string& key, st
 
     main_content->DetachAllChildren();
     main_content->Add(item.component);
-    item.component->TakeFocus();
+    if (!ui::search_has_focus) item.component->TakeFocus();
 
     return true;
 }
@@ -286,6 +300,14 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
 
     for (auto& item : main_content_items) {
         ui::getCarouselData(state, item.category, &item.carousel_data);
+        // The quick-picks grid draws grid_data: keep it the same as the data
+        // actions use (a fresh Home replaced the cached one).
+        if (!item.grid_data.results.empty() || utils::lower(item.category) == "quick picks") {
+            const auto& r = item.carousel_data.results;
+            const auto& g = item.grid_data.results;
+            if (r.size() != g.size() || (!r.empty() && resultId(r.front()) != resultId(g.front())))
+                ui::getGridData(state, item.category, &item.grid_data);
+        }
         item.focused = item.component->Focused();
     }
 }
@@ -529,6 +551,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
     ui::queue_row_boxes.clear();
 
     int  queue_index = 0;
+    std::vector<std::pair<int, int>> row_children;    // queue index -> child of queue_container
     auto queue_container = Container::Vertical({});
     bool first_divider = true;
 
@@ -599,13 +622,31 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
             });
 
             entry.component = button;
+            row_children.emplace_back(queue_index, static_cast<int>(queue_container->ChildCount()));
             queue_index++;
         }
 
         queue_container->Add(entry.component);
     }
 
-    if (focus_override >= 0) {
+    const int child_count = static_cast<int>(queue_container->ChildCount());
+    bool placed = false;
+    // A moved row stays selected where it landed.
+    if (ui::queue_focus_index >= 0) {
+        for (const auto& [qi, child] : row_children) {
+            if (qi == ui::queue_focus_index && child < child_count) {
+                queue_container->SetActiveChild(queue_container->ChildAt(child));
+                placed = true;
+                break;
+            }
+        }
+        ui::queue_focus_index = -1;
+        focus_override = -1;
+    }
+
+    if (placed || child_count == 0) {
+        focus_override = -1;
+    } else if (focus_override >= 0) {
         int child_index = std::min(focus_override + 1, (int)queue_container->ChildCount() - 1);
 
         if(state->user_queue.size() >= child_index) {
@@ -619,11 +660,12 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
         if(child_index <= 0) {
             child_index = 1;
         }
+        child_index = std::clamp(child_index, 0, child_count - 1);    // one row left: no index 1
 
         queue_container->SetActiveChild(queue_container->ChildAt(child_index));
         focus_override = -1;
 
-    } else if (queue_container->ChildCount() > state->queue_position + 1) {
+    } else if (state->queue_position + 1 >= 0 && queue_container->ChildCount() > static_cast<size_t>(state->queue_position + 1)) {
         queue_container->SetActiveChild(queue_container->ChildAt(state->queue_position + 1));
     }
 
@@ -895,14 +937,14 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 
     // Opening a playlist lands on its first track, not on the header's
     // buttons (where left/right only flipped between Play and Add to queue).
-    if (focused_track < 0 && !loading && !same_playlist && main_content_items.size() > 1) {
+    if (focused_track < 0 && !loading && !same_playlist && main_content_items.size() > 1 && !ui::search_has_focus) {
         main_content_items[1].component->TakeFocus();
     }
     // Only once its tracks are there: the loading placeholder must not count.
     if (!loading) built_id = playlist->ref.id;
 
     // Keep the focus on the row it was on when a page was added.
-    if (focused_track >= 0) {
+    if (focused_track >= 0 && !ui::search_has_focus) {
         const std::string want = "__track__" + std::to_string(focused_track + 1);
         for (auto& item : main_content_items) {
             if (item.category == want) { item.component->TakeFocus(); break; }
@@ -964,7 +1006,7 @@ void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEnt
         }
 
         // Land on the first section (Top songs), not the header.
-        if (main_content_items.size() > 1) main_content_items[1].component->TakeFocus();
+        if (main_content_items.size() > 1 && !ui::search_has_focus) main_content_items[1].component->TakeFocus();
     }
 
     for (auto& item : main_content_items) {

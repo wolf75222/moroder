@@ -56,25 +56,17 @@ Component ui::PlaybackBar(PlaybackData* data) {
         int width = data->dimx;
         std::string bar_char = "▁";
 
-        Elements progress_line;
-        progress_line.reserve(width);
-
-        int filled = (width * percent) / 100;
-
-        for (int i = 0; i < width; ++i) {
-            if (i < filled) {
-                progress_line.push_back(
-                    text(bar_char) |
-                    color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) |
-                    bold
-                );
-            } else {
-                progress_line.push_back(
-                    text(bar_char) |
-                    color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-                );
-            }
-        }
+        // Two runs of the bar character (played / to come), not one element per column.
+        const int filled = std::clamp((width * percent) / 100, 0, std::max(0, width));
+        std::string played, rest;
+        played.reserve(static_cast<size_t>(filled) * 3);
+        rest.reserve(static_cast<size_t>(std::max(0, width - filled)) * 3);
+        for (int i = 0; i < filled; ++i) played += bar_char;
+        for (int i = filled; i < width; ++i) rest += bar_char;
+        Elements progress_line = {
+            text(played) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold,
+            text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+        };
 
         Element left_controls = hbox({
             text("  "),

@@ -57,6 +57,9 @@ public:
     */
     void setVolume(int percent);
 
+    // Stop playing but keep the playlist (a retry will pick the entry again).
+    void park();
+
     // Add to the playlist without starting it.
     void append(const std::string& url);
 
