@@ -67,6 +67,10 @@ private:
     struct LibraryPodcastsCommand {};
     struct IsLoggedInCommand {};
 
+    struct OpenPlaylistCommand {
+        music::PlaylistRef ref;
+    };
+
     struct RateCommand {
         std::string video_id;
         bool like = true;
@@ -131,6 +135,9 @@ public:
 
         int volume = 100;                                   // 0..100
         std::unordered_map<std::string, bool> liked;        // video id -> liked, this session
+
+        // Playlist shown in the playlist view, with its tracks once loaded.
+        std::shared_ptr<music::Playlist> open_playlist;
 
         // Short message for the playback bar (e.g. why a like failed).
         std::string notice;
@@ -197,6 +204,12 @@ public:
     // Like the current track, or remove the like if it was liked here.
     void toggleLikeCurrent();
 
+    // Load a playlist's tracks for the playlist view (state.open_playlist).
+    void openPlaylist(const music::PlaylistRef& ref);
+
+    // Play the open playlist starting at `index`, then carry on with the rest.
+    void playOpenPlaylistFrom(size_t index);
+
     void setOnStreamStart(std::function<void()> cb) {
         on_stream_start = std::move(cb);
     }
@@ -241,7 +254,8 @@ private:
         LibraryArtistsCommand,
         LibraryPodcastsCommand,
         IsLoggedInCommand,
-        RateCommand
+        RateCommand,
+        OpenPlaylistCommand
     >;
 
     std::queue<Command> command_queue;

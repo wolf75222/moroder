@@ -24,6 +24,9 @@
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <cstdlib>
+#include <chrono>
+#include <thread>
 #include <cstdint>
 #include <string>
 #include <memory>
@@ -284,12 +287,17 @@ int main(int argc, char *argv[]) {
         }
 
         spdlog::info("SIDEBAR: key pressed on playlist, " + playlist.ref.title);
-        bool should_queue = Config::isKey(event, cfg.KEY_ADD_TO_QUEUE);
 
-        auto container = std::make_shared<music::Playlist>(playlist);
-        player.queue(container, !should_queue, !should_queue);
+        // d queues the whole playlist and stays put.
+        if (Config::isKey(event, cfg.KEY_ADD_TO_QUEUE)) {
+            auto container = std::make_shared<music::Playlist>(playlist);
+            player.queue(container, false, false);
+            return true;
+        }
 
-        current_state = ui::State::QUEUE;
+        // Enter / click opens it, like any music app: its tracks, Play, etc.
+        player.openPlaylist(playlist.ref);
+        current_state = ui::State::PLAYLIST;
 
         main_content_items.clear();
         main_content->DetachAllChildren();
@@ -480,6 +488,49 @@ int main(int argc, char *argv[]) {
         } else if(current_state == ui::State::QUEUE) {
             ui::buildQueue(&state_copy, main_content_items, main_content, on_queue_press);
 
+        } else if(current_state == ui::State::PLAYLIST) {
+            ui::buildPlaylist(&state_copy, main_content_items, main_content,
+                [&player, &cfg](const Event& e, int index) {
+                    if (Config::isKey(e, cfg.KEY_PLAY_NOW)) {
+                        player.playOpenPlaylistFrom(static_cast<size_t>(index));
+                        return true;
+                    }
+                    if (Config::isKey(e, cfg.KEY_ADD_TO_QUEUE)) {
+                        std::shared_ptr<music::IStreamable> track;
+                        {
+                            std::lock_guard lock(player.state_mutex);
+                            if (player.state.open_playlist) {
+                                auto all = player.state.open_playlist->getStreamables();
+                                if (index >= 0 && static_cast<size_t>(index) < all.size()) track = all[index];
+                            }
+                        }
+                        if (track) player.queue(track, false, false);
+                        return true;
+                    }
+                    return false;
+                },
+                [&player] { player.playOpenPlaylistFrom(0); },
+                [&player] {
+                    std::shared_ptr<music::Playlist> copy;
+                    {
+                        std::lock_guard lock(player.state_mutex);
+                        if (player.state.open_playlist) copy = std::make_shared<music::Playlist>(*player.state.open_playlist);
+                    }
+                    if (copy) player.queue(std::static_pointer_cast<music::IStreamableContainer>(copy), false, false);
+                },
+                [&player, &main_content_items, &main_content, &screen] {
+                    std::shared_ptr<music::Playlist> open;
+                    {
+                        std::lock_guard lock(player.state_mutex);
+                        open = player.state.open_playlist;
+                    }
+                    if (open) player.openPlaylist(open->ref);
+                    main_content_items.clear();
+                    main_content->DetachAllChildren();
+                    main_content->Add(Renderer([] { return emptyElement(); }));
+                    screen.PostEvent(Event::Custom);
+                });
+
         } else if(current_state == ui::State::LIBRARY) {
             int library_rows = std::max(1, (screen.dimy() - 12) / ui::GRID_TILE_HEIGHT);
 
@@ -537,6 +588,7 @@ int main(int argc, char *argv[]) {
                                   current_state == ui::State::HOME    ? "home"
                                 : current_state == ui::State::SEARCH  ? "search"
                                 : current_state == ui::State::LIBRARY ? "library"
+                                : current_state == ui::State::PLAYLIST ? "open_playlist"
                                                                       : "";
 
                             const bool has_error = !error_key.empty() && state_copy.errors.count(error_key) > 0;
@@ -580,6 +632,29 @@ int main(int argc, char *argv[]) {
     });
 
     bool show_help = false;
+
+    /* Context menu (right-click)
+    - Actions for whatever the pointer was over; each action replays the key
+      that does the same thing, so mouse and keyboard can never disagree
+    */
+    struct ContextMenu {
+        bool open = false;
+        int x = 0, y = 0;
+        int hover = 0;
+        std::vector<std::pair<std::string, std::function<void()>>> items;
+        std::vector<Box> boxes;
+    } ctx;
+
+    // Double-click detection.
+    auto last_click = std::chrono::steady_clock::time_point{};
+    int last_click_x = -1, last_click_y = -1;
+
+    // Content entry that has focus (a row, a carousel, the filters...), if any.
+    auto focused_entry = [&]() -> ui::ContentEntry* {
+        for (auto& item : main_content_items)
+            if (item.component && item.component->Focused()) return &item;
+        return nullptr;
+    };
 
     ui = CatchEvent(ui, [&](Event event){
         /* Mouse
@@ -626,10 +701,97 @@ int main(int argc, char *argv[]) {
                 }
             }
 
+            // An open context menu takes the mouse first.
+            if(ctx.open) {
+                if(m.motion == Mouse::Released || m.button == Mouse::None) {
+                    for(size_t i = 0; i < ctx.boxes.size(); i++) if(in(ctx.boxes[i])) ctx.hover = static_cast<int>(i);
+                    return true;
+                }
+                if(click) {
+                    for(size_t i = 0; i < ctx.boxes.size(); i++) {
+                        if(in(ctx.boxes[i])) {
+                            ctx.open = false;
+                            ctx.items[i].second();
+                            return true;
+                        }
+                    }
+                }
+                ctx.open = false;     // click elsewhere closes it
+                return true;
+            }
+
+            const bool right_click = m.button == Mouse::Right && m.motion == Mouse::Pressed;
+
+            if(right_click) {
+                // Focus what is under the pointer, as a left press would.
+                Event left = Event::Mouse(event.input(), m);
+                left.mouse().button = Mouse::Left;
+                if(!layout->OnEvent(left) || search_bar->Focused()) return true;
+
+                ctx.items.clear();
+                auto key = [&](const std::string& bind) { return [&, bind] { layout->OnEvent(Config::keyEvent(bind)); }; };
+
+                if(sidebar->Focused()) {
+                    const int sel = sidebar_selected;
+                    if(sel > 2 && static_cast<size_t>(sel - 3) < sidebar_data.results.size()) {
+                        const music::Playlist pl = sidebar_data.results[sel - 3];
+                        ctx.items.push_back({"\uf07c  Open", key(cfg.KEY_PLAY_NOW)});
+                        ctx.items.push_back({"\uf04b  Play", [&player, pl] {
+                            player.queue(std::static_pointer_cast<music::IStreamableContainer>(std::make_shared<music::Playlist>(pl)), true, true);
+                        }});
+                        ctx.items.push_back({"\uf067  Add to queue", key(cfg.KEY_ADD_TO_QUEUE)});
+                    }
+                } else if(ui::ContentEntry* e = focused_entry()) {
+                    const std::string& c = e->category;
+                    const bool special = c.rfind("__library_filters__", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
+                    if(!special) {
+                        const bool track = c.rfind("__track__", 0) == 0;
+                        ctx.items.push_back({track ? "\uf04b  Play from here" : "\uf04b  Play", key(cfg.KEY_PLAY_NOW)});
+                        if(current_state == ui::State::QUEUE) {
+                            ctx.items.push_back({"\uf00d  Remove from queue", key(cfg.KEY_REMOVE_FROM_QUEUE)});
+                        } else {
+                            ctx.items.push_back({"\uf067  Add to queue", key(cfg.KEY_ADD_TO_QUEUE)});
+                        }
+                    }
+                }
+
+                if(!ctx.items.empty()) {
+                    ctx.open = true;
+                    ctx.x = m.x;
+                    ctx.y = m.y;
+                    ctx.hover = 0;
+                    ctx.boxes.assign(ctx.items.size(), Box{});
+                }
+                return true;
+            }
+
+            // Double-click: same spot, quickly.
+            bool double_click = false;
+            if(click) {
+                const auto now = std::chrono::steady_clock::now();
+                double_click = now - last_click < std::chrono::milliseconds(400)
+                            && std::abs(m.x - last_click_x) <= 1 && m.y == last_click_y;
+                last_click = double_click ? std::chrono::steady_clock::time_point{} : now;
+                last_click_x = m.x;
+                last_click_y = m.y;
+            }
+
             const bool handled = layout->OnEvent(event);
 
+            /* Click model, like a desktop music app:
+            - single click selects; on navigation (sidebar, library filters) it
+              also opens, since there is nothing else to do with a selection
+            - double-click plays
+            - buttons that act by themselves (Play, Retry) need nothing more
+            */
             if(click && handled && !search_bar->Focused()) {
-                layout->OnEvent(Event::Return);
+                bool navigation = sidebar->Focused();
+                if(ui::ContentEntry* e = focused_entry()) {
+                    navigation = navigation || e->category.rfind("__library_filters__", 0) == 0;
+                    const bool self_acting = e->category.rfind("__error__", 0) == 0 || e->category.rfind("__playlist__", 0) == 0;
+                    if(self_acting) navigation = false, double_click = false;
+                }
+                if(navigation || double_click) layout->OnEvent(Event::Return);
             }
 
             // Wheel over something that doesn't scroll itself: move the focus.
@@ -637,6 +799,14 @@ int main(int argc, char *argv[]) {
                 layout->OnEvent(m.button == Mouse::WheelUp ? Event::ArrowUp : Event::ArrowDown);
             }
 
+            return true;
+        }
+
+        if(ctx.open) {
+            if(event == Event::Escape)    { ctx.open = false; return true; }
+            if(event == Event::ArrowDown) { ctx.hover = (ctx.hover + 1) % static_cast<int>(ctx.items.size()); return true; }
+            if(event == Event::ArrowUp)   { ctx.hover = (ctx.hover + static_cast<int>(ctx.items.size()) - 1) % static_cast<int>(ctx.items.size()); return true; }
+            if(event == Event::Return)    { ctx.open = false; ctx.items[ctx.hover].second(); return true; }
             return true;
         }
 
@@ -786,7 +956,9 @@ int main(int argc, char *argv[]) {
             row("arrows",                 "move around"),
             row(cfg.KEY_FOCUS_SEARCH + " /",  "search"),
             row("esc",                    "leave search / back to home"),
-            row("mouse",                  "click to play, wheel to scroll"),
+            row("click",                  "select (sidebar: open)"),
+            row("dbl-click",              "play"),
+            row("right-click",            "menu: play, queue, open"),
             row(cfg.KEY_QUEUE_VIEW,       "queue"),
             row(cfg.KEY_TOGGLE_SIDEBAR,   "toggle sidebar"),
             row(cfg.KEY_HELP,             "this help"),
@@ -795,23 +967,62 @@ int main(int argc, char *argv[]) {
         }) | borderRounded | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
     };
 
-    ui = Renderer(ui, [ui, &show_help, help_sheet] {
+    ui = Renderer(ui, [ui, &show_help, help_sheet, &ctx, &screen] {
         Element base = ui->Render();
+
+        if (ctx.open) {
+            Elements rows;
+            for (size_t i = 0; i < ctx.items.size(); i++) {
+                Element row = text(" " + ctx.items[i].first + "  ");
+                row = static_cast<int>(i) == ctx.hover
+                    ? row | bold | inverted
+                    : row | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
+                rows.push_back(row | reflect(ctx.boxes[i]));
+            }
+            Element menu = vbox(std::move(rows)) | borderRounded | clear_under;
+
+            // Keep it on screen near the pointer.
+            const int x = std::max(0, std::min(ctx.x, screen.dimx() - 28));
+            const int y = std::max(0, std::min(ctx.y, screen.dimy() - static_cast<int>(ctx.items.size()) - 3));
+            base = dbox({
+                base,
+                vbox({
+                    filler() | size(HEIGHT, EQUAL, y),
+                    hbox({ filler() | size(WIDTH, EQUAL, x), menu, filler() }),
+                    filler(),
+                }),
+            });
+        }
+
         if (!show_help) return base;
         return dbox({ base, help_sheet() | clear_under | center });
     });
 
 #ifdef __APPLE__
-    /* Media keys and Control Center commands arrive on the main thread's run
-    loop, so the UI loop yields to it between frames instead of blocking
-    */
-    ftxui::Loop loop(&screen, ui);
-    while (!loop.HasQuitted()) {
-        loop.RunOnce();
-        services::pumpMainThread(0.016);
+    {
+        /* Media keys and Control Center commands arrive on the main thread's run
+        loop, so the UI loop yields to it between frames instead of blocking.
+        Scoped so the terminal is restored as soon as the UI quits.
+        */
+        ftxui::Loop loop(&screen, ui);
+        while (!loop.HasQuitted()) {
+            loop.RunOnce();
+            services::pumpMainThread(0.016);
+        }
     }
 #else
     screen.Loop(ui);
 #endif
+
+    /* Quitting must be instant and clean
+    - The terminal is already restored (the loop's scope ended)
+    - Stop the sound, flush the logs, and leave without running destructors:
+      background work (a playlist's worth of queued tracks, cover downloads on
+      detached threads) would otherwise keep the process alive with music
+      playing, or touch mutexes torn down during exit and abort
+    */
     player.detachUI();
+    player.pause();
+    spdlog::shutdown();
+    std::_Exit(0);
 }

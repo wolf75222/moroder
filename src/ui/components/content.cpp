@@ -659,3 +659,119 @@ void ui::buildLibrary(services::Player::PlayerState* state, std::deque<ContentEn
         entry.focused = entry.component->Focused();
     }
 }
+
+void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content,
+                       std::function<bool(const ftxui::Event&, int)> on_track, std::function<void()> on_play_all,
+                       std::function<void()> on_queue_all, std::function<void()> on_retry) {
+    if (buildError(state, "open_playlist", main_content_items, main_content, on_retry)) {
+        return;
+    }
+
+    auto playlist = state->open_playlist;
+    if (!playlist) return;
+
+    const bool loading = state->flags["open_playlist"] == services::Player::Flags::Ongoing;
+    const auto tracks = playlist->getStreamables();
+
+    // Rebuild only when what is shown changes.
+    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0");
+    if (!main_content_items.empty() && main_content_items.front().category == signature) {
+        for (auto& item : main_content_items) item.focused = item.component->Focused();
+        return;
+    }
+
+    main_content_items.clear();
+    main_content->DetachAllChildren();
+
+    // Header: title, author, count, and the two actions.
+    {
+        main_content_items.push_back(ContentEntry{});
+        ContentEntry& head = main_content_items.back();
+        head.category = signature;
+
+        auto pill = [](const std::string& label, std::function<void()> fn) {
+            ButtonOption opt;
+            opt.on_click = std::move(fn);
+            opt.transform = [label](const EntryState& s) {
+                auto e = text(" " + label + " ") | borderRounded;
+                return s.focused ? e | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY))
+                                 : e | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
+            };
+            return Button(opt);
+        };
+
+        auto actions = Container::Horizontal({
+            pill("\uf04b  Play", on_play_all),
+            Renderer([] { return text("  "); }),
+            pill("\uf067  Add to queue", on_queue_all),
+        });
+
+        const std::string title = playlist->ref.title;
+        const std::string sub = playlist->ref.author.empty() ? "" : playlist->ref.author + "  \u2022  ";
+        const std::string count = loading ? "loading tracks..." : std::to_string(tracks.size()) + " tracks";
+        const std::string thumb = playlist->ref.thumbnail_large.empty() ? playlist->ref.thumbnail_small : playlist->ref.thumbnail_large;
+
+        head.component = Renderer(actions, [actions, title, sub, count, thumb] {
+            Element cover = thumb.empty()
+                ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
+                : image_view(thumb) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
+            return vbox({
+                text(" "),
+                hbox({
+                    text(" "),
+                    cover,
+                    text("   "),
+                    vbox({
+                        text("PLAYLIST") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                        text(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                        text(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                        filler(),
+                        actions->Render(),
+                    }),
+                }),
+                text(" "),
+            });
+        });
+
+        main_content->Add(head.component);
+    }
+
+    for (size_t i = 0; i < tracks.size(); i++) {
+        auto song = std::dynamic_pointer_cast<music::Song>(tracks[i]);
+        if (!song) continue;
+
+        const std::string top = song->ref.title;
+        const std::string bottom = song->ref.artists.empty() ? "" : song->ref.artists[0].name;
+        const std::string url = song->ref.thumbnail_small;
+        const std::string number = std::to_string(i + 1);
+
+        main_content_items.push_back(ContentEntry{});
+        ContentEntry& item = main_content_items.back();
+        item.category = "__track__" + number;
+
+        ButtonOption opt;
+        opt.transform = [top, bottom, url, number](const EntryState& s) {
+            Element thumb = url.empty()
+                ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
+                : image_view(url) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+            return hbox({
+                text(number) | size(WIDTH, EQUAL, 6) | align_right | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text("  "),
+                thumb,
+                text("  "),
+                vbox({
+                    text(top) | (s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                                           : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                    text(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
+                                                   : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                }) | flex,
+            }) | size(HEIGHT, EQUAL, 2);
+        };
+
+        const int index = static_cast<int>(i);
+        item.component = CatchEvent(Button(opt), [on_track, index](const Event& e) { return on_track(e, index); });
+        main_content->Add(item.component);
+    }
+
+    for (auto& item : main_content_items) item.focused = item.component->Focused();
+}

@@ -8,7 +8,8 @@ enum class State {
     HOME,
     SEARCH,
     QUEUE,
-    LIBRARY
+    LIBRARY,
+    PLAYLIST
 };
 
 }

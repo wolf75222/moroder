@@ -429,7 +429,10 @@ void services::Player::worker_loop() {
             return !command_queue.empty() || !running;
         });
 
-        if (!running && command_queue.empty()) {
+        // On shutdown, pending work is dropped: draining it could mean a
+        // thousand queued tracks (a big playlist) and minutes of network calls
+        // while the music keeps playing after the UI is gone.
+        if (!running) {
             break;
         }
 
@@ -577,8 +580,14 @@ void services::Player::worker_loop() {
                     container = std::make_shared<music::Album>(album);
 
                 } else if (auto playlist_ptr = std::dynamic_pointer_cast<music::Playlist>(c.container)) {
-                    music::Playlist playlist = music_service->getPlaylist(playlist_ptr->ref);
-                    container = std::make_shared<music::Playlist>(playlist);
+                    // Already loaded (the playlist view, or "play from here"): use
+                    // those tracks as they are instead of fetching them again.
+                    if (!playlist_ptr->getStreamables().empty()) {
+                        container = playlist_ptr;
+                    } else {
+                        music::Playlist playlist = music_service->getPlaylist(playlist_ptr->ref);
+                        container = std::make_shared<music::Playlist>(playlist);
+                    }
 
                 } else {
                     spdlog::warn("PLAYER: QueueStreamableContainerCommand, unknown streamable type");
@@ -786,6 +795,25 @@ void services::Player::worker_loop() {
                     refreshLibraryError(state);
                 }
 
+            } else if constexpr (std::is_same_v<T, OpenPlaylistCommand>) {
+                spdlog::info("PLAYER: OpenPlaylistCommand, {}", c.ref.title);
+
+                music::Playlist playlist = music_service->getPlaylist(c.ref);
+                const services::RequestError& err = music_service->lastError();
+
+                std::lock_guard lock(state_mutex);
+
+                // A newer open replaced this one while it loaded: drop it.
+                if (!state.open_playlist || state.open_playlist->ref.id != c.ref.id) return;
+
+                if (err.failed && !err.cancelled) {
+                    state.flags["open_playlist"] = Flags::Error;
+                    state.errors["open_playlist"] = { err.message, err.retryable };
+                } else {
+                    state.open_playlist = std::make_shared<music::Playlist>(playlist);
+                    state.flags["open_playlist"] = Flags::Done;
+                }
+
             } else if constexpr (std::is_same_v<T, RateCommand>) {
                 spdlog::info("PLAYER: RateCommand, {}", c.like ? "like" : "remove like");
 
@@ -959,6 +987,9 @@ void services::Player::worker_loop() {
 }
 
 services::Player::~Player() {
+    // Silence first, whatever teardown still has to wait for.
+    if (mpv_service) mpv_service->stop();
+
     this->stopPositionTick();
     this->detachUI();
 
@@ -1648,6 +1679,42 @@ void services::Player::changeVolume(int delta) {
 
     // Remembered for the next launch.
     std::ofstream(volumeFile(), std::ios::trunc) << volume << "\n";
+}
+
+void services::Player::openPlaylist(const music::PlaylistRef& ref) {
+    {
+        std::lock_guard lock(state_mutex);
+        auto placeholder = std::make_shared<music::Playlist>();
+        placeholder->setRef(ref);
+        state.open_playlist = placeholder;
+        state.flags["open_playlist"] = Flags::Ongoing;
+        state.errors.erase("open_playlist");
+    }
+
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(OpenPlaylistCommand{ref});
+    }
+
+    command_cv.notify_one();
+}
+
+void services::Player::playOpenPlaylistFrom(size_t index) {
+    std::shared_ptr<music::Playlist> from;
+
+    {
+        std::lock_guard lock(state_mutex);
+        if (!state.open_playlist) return;
+
+        auto tracks = state.open_playlist->getStreamables();
+        if (index >= tracks.size()) return;
+
+        from = std::make_shared<music::Playlist>();
+        from->setRef(state.open_playlist->ref);
+        for (size_t i = index; i < tracks.size(); i++) from->addStreamable(tracks[i]);
+    }
+
+    queue(std::static_pointer_cast<music::IStreamableContainer>(from), true, true);
 }
 
 void services::Player::toggleLikeCurrent() {
