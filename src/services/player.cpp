@@ -457,22 +457,26 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         // restored track (another one started first gets nothing of it).
         {
             std::string resumed;
-            bool other_first = false;
             double at = -1;
             {
                 std::lock_guard lock(state_mutex);
                 auto s = std::dynamic_pointer_cast<music::Song>(state.current);
                 at = resume_at;
                 if (s && at >= 0 && s->ref.id == resume_id) resumed = s->ref.id;
-                other_first = at >= 0 && resumed.empty();
             }
             if (!resumed.empty()) {
                 mpv_service->setPosition(static_cast<uint64_t>(at * 1000000.0));
                 this->pause();
                 // Paused, so no tick would come: show the time now (it said "loading").
                 if (on_position_tick) on_position_tick(static_cast<uint64_t>(at * 1000000.0), mpv_service->getStreamDuration());
-            } else if (other_first) {
-                mpv_service->resume();      // the restore had paused mpv
+            } else {
+                /* The state above says playing, so mpv must play too: its pause
+                survives loading another file, so after a pause a double-clicked
+                track loaded silently and Space then took two presses (the first
+                "paused" what already was). Also undoes the restore's pause when
+                another track started first.
+                */
+                mpv_service->resume();
             }
             std::lock_guard lock(state_mutex);
             resume_at = -1;
