@@ -93,6 +93,13 @@ public:
     std::string KEY_PLAY_NOW          = "enter";
     std::string KEY_ADD_TO_QUEUE      = "d";
     std::string KEY_REMOVE_FROM_QUEUE = "c";
+    std::string KEY_SEEK_BACKWARD     = "h";
+    std::string KEY_SEEK_FORWARD      = "l";
+    std::string KEY_VOLUME_DOWN       = "-";
+    std::string KEY_VOLUME_UP         = "=";
+    std::string KEY_HELP              = "?";
+    int SEEK_SECONDS                  = 10;
+    int VOLUME_STEP                   = 5;
 
     /* Lazy initialization using a lambda:
     - Ensures config is loaded once at first access
@@ -633,6 +640,13 @@ private:
             {"KEY_PLAY_NOW",         makeSetter(&Config::KEY_PLAY_NOW),          true},
             {"KEY_ADD_TO_QUEUE",     makeSetter(&Config::KEY_ADD_TO_QUEUE),      true},
             {"KEY_REMOVE_FROM_QUEUE",makeSetter(&Config::KEY_REMOVE_FROM_QUEUE), true},
+            {"KEY_SEEK_BACKWARD",    makeSetter(&Config::KEY_SEEK_BACKWARD),     true},
+            {"KEY_SEEK_FORWARD",     makeSetter(&Config::KEY_SEEK_FORWARD),      true},
+            {"KEY_VOLUME_DOWN",      makeSetter(&Config::KEY_VOLUME_DOWN),       true},
+            {"KEY_VOLUME_UP",        makeSetter(&Config::KEY_VOLUME_UP),         true},
+            {"KEY_HELP",             makeSetter(&Config::KEY_HELP),              true},
+            {"SEEK_SECONDS",         makeSetter(&Config::SEEK_SECONDS),          true},
+            {"VOLUME_STEP",          makeSetter(&Config::VOLUME_STEP),           true},
         };
 
         return table;

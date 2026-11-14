@@ -149,11 +149,14 @@ int main(int argc, char *argv[]) {
     auto playback_bar = ui::PlaybackBar(&playback_bar_data);
 
     player.setOnPositionTick([&screen, &playback_bar_data](uint64_t position, uint64_t duration) {
-        // Remove two seconds to account for UI refresh period
-        // This is just a fix so that the UI progress bar actually reaches song end
-        duration -= services::Player::LOOP_REWIND_EPSILON;
+        playback_bar_data.position = position / 1000000ULL;
+        playback_bar_data.duration = duration / 1000000ULL;
 
-        if (duration <= 0) return;
+        // Remove two seconds to account for UI refresh period
+        // This is just a fix so that the UI progress bar actually reaches song end.
+        // duration is unsigned: guard before subtracting, or it wraps around.
+        if (duration <= services::Player::LOOP_REWIND_EPSILON) return;
+        duration -= services::Player::LOOP_REWIND_EPSILON;
 
         int progress = (position * 100) / duration;
         progress = std::clamp(progress, 0, 100);
@@ -164,11 +167,15 @@ int main(int argc, char *argv[]) {
 
     player.setOnStreamStart([&screen, &playback_bar_data] {
         playback_bar_data.progress = 0;
+        playback_bar_data.position = 0;
+        playback_bar_data.duration = 0;
         screen.PostEvent(Event::Custom);
     });
 
     player.setOnStreamEnd([&screen, &playback_bar_data] {
         playback_bar_data.progress = 0;
+        playback_bar_data.position = 0;
+        playback_bar_data.duration = 0;
         screen.PostEvent(Event::Custom);
     });
 
@@ -520,9 +527,50 @@ int main(int argc, char *argv[]) {
         });
     });
 
-    ui = CatchEvent(ui, [&search_bar, &screen, &sidebar_hidden, &sidebar, &sidebar_container, &audio_playing, &current_state, &player, &cfg](Event event){
+    bool show_help = false;
+
+    ui = CatchEvent(ui, [&search_bar, &screen, &sidebar_hidden, &sidebar, &sidebar_container, &audio_playing, &current_state, &player, &cfg, &show_help, &main_content](Event event){
+        // The help sheet is modal: it only listens for its own close keys.
+        if(show_help) {
+            if(event == Event::Escape || Config::isKey(event, cfg.KEY_HELP) || Config::isKey(event, cfg.KEY_QUIT)) {
+                show_help = false;
+            }
+            return !event.is_mouse();
+        }
+
         if(search_bar->Focused()) {
+            // Esc leaves the search bar for the page below (or the sidebar).
+            if(event == Event::Escape) {
+                if(main_content->Focusable()) main_content->TakeFocus();
+                else sidebar->TakeFocus();
+                return true;
+            }
             return false;
+        }
+
+        if(Config::isKey(event, cfg.KEY_HELP)) {
+            show_help = true;
+            return true;
+        }
+
+        if(Config::isKey(event, cfg.KEY_SEEK_BACKWARD)) {
+            player.seekBy(-static_cast<int64_t>(cfg.SEEK_SECONDS) * 1000000LL);
+            return true;
+        }
+
+        if(Config::isKey(event, cfg.KEY_SEEK_FORWARD)) {
+            player.seekBy(static_cast<int64_t>(cfg.SEEK_SECONDS) * 1000000LL);
+            return true;
+        }
+
+        if(Config::isKey(event, cfg.KEY_VOLUME_DOWN)) {
+            player.changeVolume(-cfg.VOLUME_STEP);
+            return true;
+        }
+
+        if(Config::isKey(event, cfg.KEY_VOLUME_UP)) {
+            player.changeVolume(cfg.VOLUME_STEP);
+            return true;
         }
 
         if(Config::isKey(event, cfg.KEY_QUIT)) {
@@ -576,6 +624,58 @@ int main(int argc, char *argv[]) {
         }
 
         return false;
+    });
+
+    /* Help sheet
+    - Every action and its current key, so bindings are discoverable and stay
+      right when the config remaps them
+    */
+    auto help_sheet = [&cfg] {
+        auto key = [](const std::string& k) {
+            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, 8);
+        };
+        auto row = [&](const std::string& k, const std::string& what) {
+            return hbox({ text("  "), key(k), text(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text("  ") });
+        };
+        auto heading = [](const std::string& t) {
+            return hbox({ text("  "), text(t) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) });
+        };
+
+        return vbox({
+            text(""),
+            hbox({ filler(), text("Keybinds") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
+            text(""),
+            heading("Playback"),
+            row(cfg.KEY_TOGGLE_PAUSE,  "play / pause"),
+            row(cfg.KEY_SKIP_FORWARD,  "next track"),
+            row(cfg.KEY_SKIP_BACKWARD, "previous track"),
+            row(cfg.KEY_SEEK_FORWARD,  "forward " + std::to_string(cfg.SEEK_SECONDS) + " s"),
+            row(cfg.KEY_SEEK_BACKWARD, "back " + std::to_string(cfg.SEEK_SECONDS) + " s"),
+            row(cfg.KEY_VOLUME_UP,     "volume up"),
+            row(cfg.KEY_VOLUME_DOWN,   "volume down"),
+            row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
+            text(""),
+            heading("On the selected item"),
+            row(cfg.KEY_PLAY_NOW,          "play now (starts a radio)"),
+            row(cfg.KEY_ADD_TO_QUEUE,      "add to queue"),
+            row(cfg.KEY_REMOVE_FROM_QUEUE, "remove from queue"),
+            text(""),
+            heading("Navigation"),
+            row("arrows",                 "move around"),
+            row(cfg.KEY_FOCUS_SEARCH,     "search"),
+            row("esc",                    "leave the search bar"),
+            row(cfg.KEY_QUEUE_VIEW,       "queue"),
+            row(cfg.KEY_TOGGLE_SIDEBAR,   "toggle sidebar"),
+            row(cfg.KEY_HELP,             "this help"),
+            row(cfg.KEY_QUIT,             "quit"),
+            text(""),
+        }) | borderRounded | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
+    };
+
+    ui = Renderer(ui, [ui, &show_help, help_sheet] {
+        Element base = ui->Render();
+        if (!show_help) return base;
+        return dbox({ base, help_sheet() | clear_under | center });
     });
 
 #ifdef __APPLE__

@@ -275,6 +275,13 @@ void services::MPV::setLoopFile(bool enabled) {
     spdlog::info("MPV: loop-file {}", value);
 }
 
+void services::MPV::setVolume(int percent) {
+    std::lock_guard<std::mutex> lock(mtx);
+
+    double volume = static_cast<double>(percent);
+    mpv_set_property(mpv, "volume", MPV_FORMAT_DOUBLE, &volume);
+}
+
 void services::MPV::seekForward(uint64_t microseconds) {
     double seconds = static_cast<double>(microseconds) / 1000000.0;
 

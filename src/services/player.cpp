@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
+#include <algorithm>
 #include <type_traits>
 #include <sys/stat.h>
 #include <cstdint>
@@ -191,20 +192,7 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
     });
 
     mpris_service->onSeek([&] (int64_t p) {
-        uint64_t new_position = mpv_service->getStreamPosition();
-
-        if(p < 0) {
-            // p is negative: seekBackward takes the distance as a positive count.
-            const uint64_t back = static_cast<uint64_t>(-p);
-            mpv_service->seekBackward(back);
-            new_position = new_position > back ? new_position - back : 0;
-        } else {
-            mpv_service->seekForward(p);
-            new_position += p;
-        }
-
-        social_service->setPosition(new_position);
-        mpris_service->setPosition(new_position);
+        seekBy(p);
     });
 
     mpris_service->onSetPosition([&] (int64_t p) {
@@ -1551,6 +1539,42 @@ void services::Player::resume() {
     social_service->setPosition(position);
     mpris_service->setPosition(position);
     mpris_service->setPlaybackStatus(services::PlaybackStatus::Playing);
+}
+
+void services::Player::seekBy(int64_t delta) {
+    {
+        std::lock_guard lock(state_mutex);
+        if (!state.current) return;
+    }
+
+    uint64_t new_position = mpv_service->getStreamPosition();
+    const uint64_t duration = mpv_service->getStreamDuration();
+
+    if (delta < 0) {
+        // seekBackward takes the distance as a positive count.
+        const uint64_t back = static_cast<uint64_t>(-delta);
+        mpv_service->seekBackward(back);
+        new_position = new_position > back ? new_position - back : 0;
+    } else {
+        mpv_service->seekForward(static_cast<uint64_t>(delta));
+        new_position += static_cast<uint64_t>(delta);
+        if (duration > 0 && new_position > duration) new_position = duration;
+    }
+
+    social_service->setPosition(new_position);
+    mpris_service->setPosition(new_position);
+}
+
+void services::Player::changeVolume(int delta) {
+    int volume;
+
+    {
+        std::lock_guard lock(state_mutex);
+        state.volume = std::clamp(state.volume + delta, 0, 100);
+        volume = state.volume;
+    }
+
+    mpv_service->setVolume(volume);
 }
 
 void services::Player::togglePause() {

@@ -502,6 +502,13 @@ unbind it.
 | `KEY_SKIP_FORWARD` | `x` | next track |
 | `KEY_TOGGLE_PAUSE` | `space` | play / pause |
 | `KEY_TOGGLE_LOOP` | `r` | cycle looping: off, queue, current track |
+| `KEY_SEEK_BACKWARD` | `h` | jump back `SEEK_SECONDS` (default 10) |
+| `KEY_SEEK_FORWARD` | `l` | jump ahead `SEEK_SECONDS` |
+| `KEY_VOLUME_DOWN` | `-` | volume down by `VOLUME_STEP` (default 5) |
+| `KEY_VOLUME_UP` | `=` | volume up by `VOLUME_STEP` |
+| `KEY_HELP` | `?` | show every keybind |
+
+<kbd>Esc</kbd> leaves the search bar. The playback bar shows elapsed / total time and the volume.
 
 These act on whatever the cursor is over:
 

@@ -8,12 +8,25 @@
 
 using namespace ftxui;
 
+namespace {
+
+std::string clock(uint64_t seconds) {
+    const uint64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
+    char buf[16];
+    if (h > 0) std::snprintf(buf, sizeof(buf), "%llu:%02llu:%02llu", (unsigned long long)h, (unsigned long long)m, (unsigned long long)s);
+    else       std::snprintf(buf, sizeof(buf), "%llu:%02llu", (unsigned long long)m, (unsigned long long)s);
+    return buf;
+}
+
+}
+
 void ui::getPlaybackData(services::Player::PlayerState* state, PlaybackData* data, int dimx) {
     data->is_playing = state->flags["audio"] == services::Player::Flags::Ongoing;
     data->can_skip_forwards  = state->flags["can_skip_forwards"]  == services::Player::Flags::True;
     data->can_skip_backwards = state->flags["can_skip_backwards"] == services::Player::Flags::True;
     data->loop_mode = state->loop_mode;
     data->dimx = dimx;
+    data->volume = state->volume;
 
     if (auto song_ptr = std::dynamic_pointer_cast<music::Song>(state->current)) {
         data->title = song_ptr->ref.title;
@@ -95,12 +108,25 @@ Component ui::PlaybackBar(PlaybackData* data) {
             : data->loop_mode == services::Player::LoopMode::Queue ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)
             :                                                        ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY);
 
+        // Elapsed / total, dimmed while the stream is still loading.
+        Element time = data->duration > 0
+            ? hbox({
+                text(clock(data->position)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                text(" / ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text(clock(data->duration)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+              })
+            : text("--:-- / --:--") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY));
+
+        // Volume: icon follows the level (off / down / up).
+        const char* volume_icon = data->volume == 0 ? "\uf026" : data->volume < 50 ? "\uf027" : "\uf028";
+
         Element right_controls = hbox({
-            text("") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-            text("  "),
+            time,
+            text("    "),
+            text(volume_icon) | color(data->volume == 0 ? ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+            text(" " + std::to_string(data->volume) + "%") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | size(WIDTH, EQUAL, 5),
+            text("   "),
             text("") | color(loop_color),
-            text("  "),
-            text("") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
             text("  "),
         });
 

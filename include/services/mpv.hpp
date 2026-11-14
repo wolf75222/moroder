@@ -52,6 +52,11 @@ public:
     */
     uint64_t getStreamDuration();
 
+    /* setVolume
+    - 0..100, mpv's own software volume
+    */
+    void setVolume(int percent);
+
     /* getStreamPosition
     - Retrieves the position of the currently loaded stream in microseconds.
     - Returns 0 if the position property cannot be retrieved from MPV.

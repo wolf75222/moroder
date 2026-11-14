@@ -121,6 +121,8 @@ public:
 
         music::Radio radio;
         LoopMode loop_mode = LoopMode::None;
+
+        int volume = 100;                                   // 0..100
     };
 
     PlayerState state;
@@ -170,6 +172,12 @@ public:
     void pause();
     void resume();
     void togglePause();
+
+    // Relative seek in the current track, in microseconds (negative = back).
+    void seekBy(int64_t delta);
+
+    // Volume step in percent, clamped to 0..100.
+    void changeVolume(int delta);
 
     void setOnStreamStart(std::function<void()> cb) {
         on_stream_start = std::move(cb);
