@@ -8,6 +8,7 @@
 #pragma once
 
 #include <chrono>
+#include <atomic>
 #include <nlohmann/json.hpp>
 #include <unordered_set>
 
@@ -73,6 +74,10 @@ private:
     struct RefreshSessionCommand {};
 
     struct ShuffleCommand {};
+
+    struct PlayNextCommand {
+        std::shared_ptr<music::IStreamable> streamable;
+    };
 
     struct PrefetchPlaylistCommand {
         music::PlaylistRef ref;
@@ -176,6 +181,9 @@ public:
         std::shared_ptr<services::Lyrics> lyrics;
         std::string lyrics_id;
 
+        // Title of the track being previewed, empty when none.
+        std::string preview_title;
+
         // Short message for the playback bar (e.g. why a like failed).
         std::string notice;
         std::chrono::steady_clock::time_point notice_until;
@@ -251,6 +259,18 @@ public:
     void saveSession();
     bool restoreSession();
 
+    /* Preview
+    - 15 s of a track from its middle, on a second mpv, without touching the
+      queue; what was playing pauses and comes back where it was
+    - A new preview replaces the running one; stopPreview ends it early
+    */
+    void preview(const music::SongRef& song);
+    void stopPreview(bool resume_main = true);
+    bool previewing();
+
+    // Insert a track right after the current one.
+    void playNext(std::shared_ptr<music::IStreamable> streamable);
+
     // Shuffle everything after the current track (queue and mpv together).
     void shuffleUpcoming();
 
@@ -318,7 +338,8 @@ private:
         ShuffleCommand,
         MoveCommand,
         PreloadedCommand,
-        PrefetchPlaylistCommand
+        PrefetchPlaylistCommand,
+        PlayNextCommand
     >;
 
     std::queue<Command> command_queue;
@@ -336,6 +357,11 @@ private:
     void worker_loop();
 
     std::string last_notified_id;   // track already announced by notifyTrack
+
+    std::unique_ptr<MPV> preview_mpv;
+    std::mutex preview_mutex;
+    std::atomic<int> preview_gen{0};
+    bool preview_paused_main = false;       // under preview_mutex
 
     // Playlists already fetched (prefetch or open), by id; under state_mutex.
     std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_cache;

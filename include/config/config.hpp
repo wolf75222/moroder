@@ -107,6 +107,8 @@ public:
     std::string KEY_VOLUME_UP         = "=";
     std::string KEY_LIKE              = "+";
     std::string KEY_SHUFFLE           = "S";
+    std::string KEY_PREVIEW           = "w";
+    std::string KEY_PLAY_NEXT         = "N";
     std::string KEY_MOVE_UP           = "K";
     std::string KEY_MOVE_DOWN         = "J";
     std::string KEY_HELP              = "?";
@@ -662,6 +664,8 @@ private:
             {"KEY_VOLUME_UP",        makeSetter(&Config::KEY_VOLUME_UP),         true},
             {"KEY_LIKE",             makeSetter(&Config::KEY_LIKE),              true},
             {"KEY_SHUFFLE",          makeSetter(&Config::KEY_SHUFFLE),           true},
+            {"KEY_PREVIEW",          makeSetter(&Config::KEY_PREVIEW),           true},
+            {"KEY_PLAY_NEXT",        makeSetter(&Config::KEY_PLAY_NEXT),         true},
             {"KEY_MOVE_UP",          makeSetter(&Config::KEY_MOVE_UP),           true},
             {"KEY_MOVE_DOWN",        makeSetter(&Config::KEY_MOVE_DOWN),         true},
             {"KEY_HELP",             makeSetter(&Config::KEY_HELP),              true},

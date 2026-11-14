@@ -11,6 +11,12 @@
 
 namespace services {
 
+// Put text on the system clipboard (pbcopy, wl-copy or xclip). False if none.
+bool copyToClipboard(const std::string& text);
+
+// Open a URL in the default browser (open / xdg-open).
+void openUrl(const std::string& url);
+
 // cover: image URL (or path) shown in the notification where supported.
 void notifyTrack(const std::string& title, const std::string& subtitle, const std::string& cover = "");
 

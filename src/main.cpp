@@ -7,6 +7,7 @@
 #include "../include/ui/constants/colors.hpp"
 
 #include "../include/services/player.hpp"
+#include "../include/services/notify.hpp"
 #include "../include/config/config.hpp"
 #include "../include/setup/setup.hpp"
 #include "../include/utils/utils.hpp"
@@ -25,6 +26,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <atomic>
@@ -451,9 +453,14 @@ int main(int argc, char *argv[]) {
         playback_bar
     });
 
+    // Opening search starts from an empty bar: typing used to append to the
+    // last query ("veridis quoaround the world"). Up brings past ones back.
     auto open_search = [&] {
         search_active = true;
         content_column = 0;
+        search_bar_data.value.clear();
+        search_bar_data.cursor = 0;
+        search_bar_data.history_index = -1;
         search_bar->TakeFocus();
     };
 
@@ -900,6 +907,17 @@ int main(int argc, char *argv[]) {
         return t;
     };
 
+    // The song under the selection (shelf, list row, playlist track), if any.
+    auto focused_song = [&]() -> std::optional<music::SongRef> {
+        for (auto& item : main_content_items) {
+            if (!item.component || !item.component->Focused()) continue;
+            const music::ApiResult* r = (!item.carousel_data.results.empty() && item.selected >= 0 && static_cast<size_t>(item.selected) < item.carousel_data.results.size())
+                ? &item.carousel_data.results[item.selected] : &item.result;
+            if (const auto* s = std::get_if<music::SongRef>(&r->data)) return *s;
+        }
+        return std::nullopt;
+    };
+
     // Wheel pacing: a trackpad fires dozens of wheel events per swipe.
     auto last_wheel = std::chrono::steady_clock::time_point{};
 
@@ -991,8 +1009,11 @@ int main(int argc, char *argv[]) {
 
             /* Hover doesn't move the selection: following the pointer made the
             focus jump around while scrolling or just passing over the page.
+            Releases are dropped too: everything acts on press, and a menu
+            took the focus back on release (opening a sidebar playlist left
+            the focus in the sidebar instead of on its first track).
             */
-            if(moved) return true;
+            if(moved || m.motion == Mouse::Released) return true;
 
             /* Wheel / trackpad
             - Vertical always scrolls vertically (the sidebar when the pointer is
@@ -1024,6 +1045,17 @@ int main(int argc, char *argv[]) {
                     if(!main_content->Focused()) main_content->TakeFocus();
                     main_content->OnEvent(step);
                 }
+                return true;
+            }
+
+            // Middle click: preview the item under the pointer.
+            if(m.button == Mouse::Middle && m.motion == Mouse::Pressed) {
+                Event left = Event::Mouse(event.input(), m);
+                left.mouse().button = Mouse::Left;
+                ui::suppress_click = true;
+                layout->OnEvent(left);
+                ui::suppress_click = false;
+                if (auto song = focused_song()) player.preview(*song);
                 return true;
             }
 
@@ -1076,6 +1108,20 @@ int main(int argc, char *argv[]) {
                             r = &e->result;
                         if(const auto* song = std::get_if<music::SongRef>(&r->data)) {
                             const music::SongRef ref = *song;
+                            ctx.items.push_back({"\uf028", "Preview 15 s", cfg.KEY_PREVIEW, [&player, ref] { player.preview(ref); }});
+                            ctx.items.push_back({"\uf051", "Play next", cfg.KEY_PLAY_NEXT, [&player, ref] {
+                                auto s = std::make_shared<music::Song>();
+                                s->setRef(ref);
+                                player.playNext(std::static_pointer_cast<music::IStreamable>(s));
+                            }});
+                            const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
+                            ctx.items.push_back({"\uf0c5", "Copy link", "", [&player, link] {
+                                const bool ok = services::copyToClipboard(link);
+                                std::lock_guard lock(player.state_mutex);
+                                player.state.notice = ok ? "Link copied" : "No clipboard tool found";
+                                player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                            }});
+                            ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
                             ctx.items.push_back({"\uf1be", "Start radio", "", [&player, ref] {
                                 auto s = std::make_shared<music::Song>();
                                 s->setRef(ref);
@@ -1216,6 +1262,27 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
+        // A preview ends on Esc / Space / the preview key again (Space also
+        // brings back the paused track, like a normal play/pause).
+        if(player.previewing() && (event == Event::Escape || Config::isKey(event, cfg.KEY_TOGGLE_PAUSE) || Config::isKey(event, cfg.KEY_PREVIEW))) {
+            player.stopPreview(true);
+            return true;
+        }
+
+        if(Config::isKey(event, cfg.KEY_PREVIEW)) {
+            if (auto song = focused_song()) player.preview(*song);
+            return true;
+        }
+
+        if(Config::isKey(event, cfg.KEY_PLAY_NEXT)) {
+            if (auto song = focused_song()) {
+                auto s = std::make_shared<music::Song>();
+                s->setRef(*song);
+                player.playNext(std::static_pointer_cast<music::IStreamable>(s));
+            }
+            return true;
+        }
+
         if(Config::isKey(event, cfg.KEY_SHUFFLE)) {
             player.shuffleUpcoming();
             return true;
@@ -1314,6 +1381,8 @@ int main(int argc, char *argv[]) {
             row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
             row(cfg.KEY_LIKE,          "like / unlike current track"),
             row(cfg.KEY_SHUFFLE,       "shuffle what comes next"),
+            row(cfg.KEY_PREVIEW,       "preview 15 s (middle click too)"),
+            row(cfg.KEY_PLAY_NEXT,     "play next"),
             row(cfg.KEY_NOW_PLAYING,   "now playing: cover + lyrics"),
             text(""),
             heading("On the selected item"),

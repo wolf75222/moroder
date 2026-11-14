@@ -931,6 +931,35 @@ void services::Player::worker_loop() {
                     refreshLibraryError(state);
                 }
 
+            } else if constexpr (std::is_same_v<T, PlayNextCommand>) {
+                auto song_ptr = std::dynamic_pointer_cast<music::Song>(c.streamable);
+                if (!song_ptr) return;
+                auto song = std::make_shared<music::Song>();
+                song->setRef(song_ptr->ref);
+                std::string title = song->ref.title;
+
+                bool queue_instead = false;
+                {
+                    std::lock_guard lock(state_mutex);
+                    const int pos = state.queue_position;
+                    if (pos < 0 || static_cast<size_t>(pos) >= state.user_queue.size()) {
+                        queue_instead = true;      // nothing loaded: just play it
+                    } else {
+                        state.user_queue.insert(state.user_queue.begin() + pos + 1, song);
+                        mpv_service->insertAt(streamUrlFor(song->getStreamUrl()), static_cast<uint16_t>(pos + 1));
+                        state.notice = "Plays next: " + title;
+                        state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                    }
+                }
+
+                if (queue_instead) {
+                    std::lock_guard lock(command_mutex);
+                    command_queue.push(QueueStreamableCommand{ .streamable = song, .fetch_album = false, .start_radio = true, .start_fresh = true });
+                } else {
+                    updateMprisControls();
+                    preloadNext();
+                }
+
             } else if constexpr (std::is_same_v<T, ShuffleCommand>) {
                 std::vector<std::string> urls;
                 size_t pos = 0, count = 0;
@@ -1311,6 +1340,7 @@ void services::Player::search(const std::string& query) {
 }
 
 void services::Player::queue(std::shared_ptr<music::IStreamable> streamable, const bool fresh, const bool radio) {
+    if (fresh) stopPreview(false);     // playing something else ends a preview
     const Config cfg = Config::get();
 
     {
@@ -1328,6 +1358,7 @@ void services::Player::queue(std::shared_ptr<music::IStreamable> streamable, con
 }
 
 void services::Player::queue(std::shared_ptr<music::IStreamableContainer> container, const bool fresh, const bool radio) {
+    if (fresh) stopPreview(false);     // playing something else ends a preview
     const Config cfg = Config::get();
 
     {
@@ -2087,6 +2118,81 @@ std::string services::Player::streamUrlFor(const std::string& url) {
     std::string stream = it->second;
     preloaded.erase(it);
     return stream;
+}
+
+void services::Player::preview(const music::SongRef& song) {
+    if (song.id.empty()) return;
+
+    std::lock_guard pl(preview_mutex);
+    if (!preview_mpv) {
+        preview_mpv = std::make_unique<MPV>();
+        // The clip lasts 15 s from when audio actually starts (after yt-dlp).
+        preview_mpv->setOnStreamStart([this] {
+            const int gen = preview_gen.load();
+            std::thread([this, gen] {
+                std::this_thread::sleep_for(std::chrono::seconds(15));
+                if (preview_gen.load() == gen) stopPreview(true);
+            }).detach();
+        });
+    }
+
+    ++preview_gen;
+
+    bool was_playing = false;
+    int volume = 100;
+    {
+        std::lock_guard lock(state_mutex);
+        was_playing = state.flags["audio"] == Flags::Ongoing;
+        volume = state.volume;
+        state.preview_title = song.title;
+        state.notice = "Preview: " + song.title + "  (15 s, Esc to stop)";
+        state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    }
+
+    // Pause the main track once, even across chained previews.
+    if (was_playing && !preview_paused_main) {
+        preview_paused_main = true;
+        pause();
+    }
+
+    spdlog::info("PLAYER: preview {} (main paused: {})", song.title, preview_paused_main);
+    music::Song s;
+    s.setRef(song);
+    preview_mpv->setVolume(volume);
+    preview_mpv->resume();
+    preview_mpv->play(streamUrlFor(s.getStreamUrl()), "start=30%");
+}
+
+void services::Player::stopPreview(bool resume_main) {
+    std::lock_guard pl(preview_mutex);
+    ++preview_gen;
+    if (preview_mpv) preview_mpv->stop();
+
+    {
+        std::lock_guard lock(state_mutex);
+        if (state.preview_title.empty() && !preview_paused_main) return;
+        state.preview_title.clear();
+        state.notice.clear();
+    }
+
+    spdlog::info("PLAYER: preview over{}", preview_paused_main && resume_main ? ", resuming" : "");
+    if (preview_paused_main) {
+        preview_paused_main = false;
+        if (resume_main) resume();
+    }
+}
+
+bool services::Player::previewing() {
+    std::lock_guard lock(state_mutex);
+    return !state.preview_title.empty();
+}
+
+void services::Player::playNext(std::shared_ptr<music::IStreamable> streamable) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PlayNextCommand{std::move(streamable)});
+    }
+    command_cv.notify_one();
 }
 
 void services::Player::shuffleUpcoming() {

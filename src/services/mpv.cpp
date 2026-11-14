@@ -276,6 +276,11 @@ void services::MPV::setLoopFile(bool enabled) {
     spdlog::info("MPV: loop-file {}", value);
 }
 
+void services::MPV::play(const std::string& url, const std::string& options) {
+    const char* args[] = {"loadfile", url.c_str(), "replace", "-1", options.c_str(), nullptr};
+    command(args);
+}
+
 void services::MPV::move(uint16_t from, uint16_t to) {
     const std::string a = std::to_string(from), b = std::to_string(to);
     const char* args[] = {"playlist-move", a.c_str(), b.c_str(), nullptr};

@@ -536,6 +536,15 @@ every track; playing a track continues with the rest of the playlist.
   artist and duration are sent there; `ENABLE_LYRICS = false` turns it off.
 - **Recently played** is the first home shelf.
 
+### Trying things out
+
+- **Preview** (<kbd>w</kbd>, middle click, or right-click): 15 seconds of a track
+  from its middle, without touching the queue. What was playing pauses and
+  picks up where it was; <kbd>Esc</kbd> or <kbd>Space</kbd> ends it early.
+- **Play next** (<kbd>N</kbd> or right-click): slot a track right after the
+  current one.
+- Right-click a track for **Copy link** and **Open in browser** too.
+
 ### Queue
 
 - <kbd>S</kbd> (or the shuffle icon) shuffles what comes after the current track.

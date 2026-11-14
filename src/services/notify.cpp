@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <mutex>
 #include <spawn.h>
+#include <cstdlib>
+#include <unistd.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -77,6 +79,46 @@ std::string helperBinary() {
 
 }
 #endif
+
+bool services::copyToClipboard(const std::string& text) {
+#ifdef __APPLE__
+    std::vector<std::string> cmd = { "pbcopy" };
+#else
+    std::vector<std::string> cmd = getenv("WAYLAND_DISPLAY") ? std::vector<std::string>{ "wl-copy" }
+                                                             : std::vector<std::string>{ "xclip", "-selection", "clipboard" };
+#endif
+    int fds[2];
+    if (pipe(fds) != 0) return false;
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, fds[0], STDIN_FILENO);
+    posix_spawn_file_actions_addclose(&actions, fds[1]);
+
+    std::vector<char*> argv;
+    for (auto& a : cmd) argv.push_back(a.data());
+    argv.push_back(nullptr);
+
+    pid_t pid = 0;
+    const bool ok = posix_spawnp(&pid, argv[0], &actions, nullptr, argv.data(), environ) == 0;
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[0]);
+    if (ok) {
+        (void)!write(fds[1], text.data(), text.size());
+    }
+    close(fds[1]);
+    if (ok) { int st = 0; waitpid(pid, &st, 0); }
+    return ok;
+}
+
+void services::openUrl(const std::string& url) {
+    if (url.rfind("https://", 0) != 0) return;
+#ifdef __APPLE__
+    spawnAndReap({ "open", url });
+#else
+    spawnAndReap({ "xdg-open", url });
+#endif
+}
 
 void services::notifyTrack(const std::string& title, const std::string& subtitle, const std::string& cover) {
     if (title.empty()) return;

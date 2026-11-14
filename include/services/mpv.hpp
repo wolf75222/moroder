@@ -57,6 +57,9 @@ public:
     */
     void setVolume(int percent);
 
+    // Replace whatever plays with url, with per-file options (e.g. "start=30%").
+    void play(const std::string& url, const std::string& options);
+
     // Playlist edits mirrored from the player's queue.
     void move(uint16_t from, uint16_t to);                  // mpv playlist-move semantics
     void insertAt(const std::string& url, uint16_t index);
