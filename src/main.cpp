@@ -252,6 +252,7 @@ int main(int argc, char *argv[]) {
         bool should_queue = Config::isKey(event, cfg.KEY_ADD_TO_QUEUE);
 
         bool queued = false;
+        bool opened_playlist = false;
 
         std::visit([&](auto&& data) {
             using T = std::decay_t<decltype(data)>;
@@ -277,12 +278,27 @@ int main(int argc, char *argv[]) {
                 queued = true;
 
             } else if constexpr (std::is_same_v<T, music::PlaylistRef>) {
-                auto container = make_streamable(music::Playlist{});
-                player.queue(container, !should_queue, !should_queue);
-                queued = true;
+                if (should_queue) {
+                    auto container = make_streamable(music::Playlist{});
+                    player.queue(container, false, false);
+                    queued = true;
+                } else {
+                    // Like the sidebar: Enter / double-click opens the playlist.
+                    player.openPlaylist(data);
+                    opened_playlist = true;
+                }
             }
 
         }, result.data);
+
+        if (opened_playlist) {
+            current_state = ui::State::PLAYLIST;
+            main_content_items.clear();
+            main_content->DetachAllChildren();
+            main_content->Add(Renderer([] { return emptyElement(); }));
+            screen.PostEvent(Event::Custom);
+            return true;
+        }
 
         if (!queued) {
             spdlog::info("ITEM: nothing queued for result type, " + result.resultType);
@@ -1048,6 +1064,10 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
+        // n / p: the usual next / previous of terminal players, besides x / z.
+        if(event == Event::Character("n")) { player.skipForward();  return true; }
+        if(event == Event::Character("p")) { player.skipBackward(); return true; }
+
         if(Config::isKey(event, cfg.KEY_SKIP_BACKWARD)) {
             player.skipBackward();
             return true;
@@ -1094,8 +1114,8 @@ int main(int argc, char *argv[]) {
             text(""),
             heading("Playback"),
             row(cfg.KEY_TOGGLE_PAUSE,  "play / pause"),
-            row(cfg.KEY_SKIP_FORWARD,  "next track"),
-            row(cfg.KEY_SKIP_BACKWARD, "previous track"),
+            row(cfg.KEY_SKIP_FORWARD + " n",  "next track"),
+            row(cfg.KEY_SKIP_BACKWARD + " p", "previous track"),
             row(cfg.KEY_SEEK_FORWARD,  "forward " + std::to_string(cfg.SEEK_SECONDS) + " s"),
             row(cfg.KEY_SEEK_BACKWARD, "back " + std::to_string(cfg.SEEK_SECONDS) + " s"),
             row(cfg.KEY_VOLUME_UP,     "volume up"),

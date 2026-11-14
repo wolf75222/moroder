@@ -1293,7 +1293,12 @@ void services::Player::updateSocialData() {
         // Once per track: this runs on stream start and on skips alike.
         if (cfg.ENABLE_NOTIFICATIONS && song->ref.id != last_notified_id) {
             last_notified_id = song->ref.id;
-            notifyTrack(song->ref.title, song->album.title.empty() ? artist : artist + " — " + song->album.title);
+            // Album only when it adds something: singles are often named
+            // after the track ("Get Lucky (feat. ...)" under "Get Lucky").
+            const std::string t = utils::lower(song->ref.title), a = utils::lower(song->album.title);
+            const std::string head = t.substr(0, std::min<size_t>(t.size(), 8));
+            const bool redundant = a.empty() || a.rfind(head, 0) == 0 || t.find(a) != std::string::npos;
+            notifyTrack(song->ref.title, redundant ? artist : artist + "  \u00b7  " + song->album.title);
         }
 
         std::string status_label =

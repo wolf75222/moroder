@@ -69,6 +69,14 @@ using namespace ftxui;
 
 int ui::anim_frame = 0;
 
+// Video id of the track playing now, for the "now playing" marks in lists.
+static std::string playing_id;
+
+static void updatePlayingId(services::Player::PlayerState* state) {
+    playing_id.clear();
+    if (auto s = std::dynamic_pointer_cast<music::Song>(state->current)) playing_id = s->ref.id;
+}
+
 namespace {
 
 bool buildError(services::Player::PlayerState* state, const std::string& key, std::deque<ui::ContentEntry>& main_content_items, ftxui::Component main_content, std::function<void()> on_retry) {
@@ -250,6 +258,8 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
         return;
     }
 
+    updatePlayingId(state);
+
     std::vector<std::string> incoming_categories;
 
     for (auto& search_result : state->search_results) {
@@ -329,7 +339,8 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
         item.result   = search_result;
 
         ButtonOption opt;
-        opt.transform = [top_cap = top, bottom_cap = bottom, url_cap = url](const EntryState& s) {
+        opt.transform = [top_cap = top, bottom_cap = bottom, url_cap = url, id_cap = category](const EntryState& s) {
+            const bool now = !id_cap.empty() && id_cap == playing_id;
             Element thumb = url_cap.empty()
                 ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
                 : image_view(url_cap) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
@@ -338,9 +349,12 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                 thumb,
                 text("  "),
                 vbox({
-                    text(top_cap) | (s.focused
-                        ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
-                        : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                    hbox({
+                        now ? text("\uf028  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : emptyElement(),
+                        text(top_cap) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
+                                       : s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                                       : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                    }),
                     text(bottom_cap) | (s.focused
                         ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY))
                         : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
@@ -689,6 +703,8 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     auto playlist = state->open_playlist;
     if (!playlist) return;
 
+    updatePlayingId(state);
+
     const bool loading = state->flags["open_playlist"] == services::Player::Flags::Ongoing;
     const auto tracks = playlist->getStreamables();
 
@@ -795,17 +811,22 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         item.result.data = song->ref;
 
         ButtonOption opt;
-        opt.transform = [top, bottom, url, number](const EntryState& s) {
+        const std::string id = song->ref.id;
+        opt.transform = [top, bottom, url, number, id](const EntryState& s) {
             Element thumb = url.empty()
                 ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
                 : image_view(url) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+            const bool now = !id.empty() && id == playing_id;
             return hbox({
-                text(number) | size(WIDTH, EQUAL, 6) | align_right | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                // The playing track shows a speaker in the accent colour.
+                (now ? text("\uf028") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
+                     : text(number) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | size(WIDTH, EQUAL, 6) | align_right,
                 text("  "),
                 thumb,
                 text("  "),
                 vbox({
-                    text(top) | (s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                    text(top) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
+                               : s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
                                            : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
                     text(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
                                                    : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
@@ -816,6 +837,12 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const int index = static_cast<int>(i);
         item.component = CatchEvent(Button(opt), [on_track, index](const Event& e) { return on_track(e, index); });
         main_content->Add(item.component);
+    }
+
+    // Opening a playlist lands on its first track, not on the header's
+    // buttons (where left/right only flipped between Play and Add to queue).
+    if (focused_track < 0 && !loading && main_content_items.size() > 1) {
+        main_content_items[1].component->TakeFocus();
     }
 
     // Keep the focus on the row it was on when a page was added.
