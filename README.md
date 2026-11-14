@@ -12,11 +12,8 @@ Keyboard, mouse or trackpad. macOS and Linux.
 
 <img src="docs/assets/app.gif" alt="Moroder playing Get Lucky with synced lyrics" width="760">
 
-| 🎧 Playback | 🎤 Lyrics | 🖱️ Controls |
-|:--|:--|:--|
-| Gapless, starts fast | Synced, sung along | Click, swipe, scroll |
-| Queue, radio, shuffle | Album art in color | Right-click menus |
-| Your library and playlists | Full-screen view | Media keys, Now Playing |
+Fast, gapless playback · synced lyrics · album art<br>
+Playlists, radio, search, queue · clicks, swipes, menus
 
 </div>
 
@@ -28,10 +25,16 @@ Keyboard, mouse or trackpad. macOS and Linux.
 curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh | sh
 ```
 
-**2.** Sign in, once (uses your browser's YouTube Music session):
+**2.** Sign in, once. It takes the YouTube Music session from your browser, and how depends on which one: see the [sign-in guide](docs/sign-in.md).
 
 ```bash
-moroder setup
+moroder setup --browser chrome    # or arc, brave, edge, firefox, safari...
+```
+
+Or skip it and play without an account (no library):
+
+```bash
+moroder -a
 ```
 
 **3.** Play:
@@ -40,16 +43,9 @@ moroder setup
 moroder
 ```
 
-No account? `moroder -a` plays without one. New releases are offered at launch.
+New releases are offered at launch (`moroder update` anytime, `moroder doctor` if something is off).
 
-## Commands
-
-| Command | Does |
-|:--|:--|
-| `moroder search daft punk` | open on search results |
-| `moroder update` | install the latest release |
-| `moroder doctor` | check yt-dlp, mpv, sign-in, terminal |
-| `moroder uninstall` | remove it (asks before deleting settings) |
+<div align="center">
 
 ## Keys
 
@@ -64,11 +60,9 @@ No account? `moroder -a` plays without one. New releases are offered at launch.
 | right-click | everything else |
 | hold <kbd>h</kbd> | all the keys |
 
-<div align="center">
-
 <br>
 
-[Install](docs/install.md) · [Usage](docs/usage.md) · [Configuration](docs/configuration.md) · [Integrations](docs/integrations.md) · [Internals](docs/internals.md) · [Troubleshooting](docs/troubleshooting.md)
+[Install](docs/install.md) · [Sign in](docs/sign-in.md) · [Usage](docs/usage.md) · [Configuration](docs/configuration.md) · [Integrations](docs/integrations.md) · [Internals](docs/internals.md) · [Troubleshooting](docs/troubleshooting.md)
 
 <br>
 

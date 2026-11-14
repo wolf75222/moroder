@@ -1,4 +1,4 @@
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · **Integrations** · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · **Integrations** · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
 
 # Integrations
 
@@ -41,4 +41,4 @@ position, so the progress bar in Discord follows seeks and pauses.
 
 ---
 
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · **Integrations** · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · **Integrations** · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)

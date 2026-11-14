@@ -1,4 +1,4 @@
-[README](../README.md) · [Install](install.md) · **Usage** · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · **Usage** · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
 
 # Usage
 
@@ -341,4 +341,4 @@ For keybind remapping, a [list](https://arthursonzogni.github.io/FTXUI/event_8cp
 
 ---
 
-[README](../README.md) · [Install](install.md) · **Usage** · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · **Usage** · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)

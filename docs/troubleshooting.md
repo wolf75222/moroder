@@ -1,4 +1,4 @@
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · **Troubleshooting**
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · **Troubleshooting**
 
 # Troubleshooting
 
@@ -86,4 +86,4 @@ D-Bus error. A second instance cannot claim the name while the first holds it.
 
 ---
 
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · **Troubleshooting**
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · **Troubleshooting**

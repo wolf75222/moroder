@@ -1,4 +1,4 @@
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · **Internals** · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · **Internals** · [Troubleshooting](troubleshooting.md)
 
 # Internals
 
@@ -127,4 +127,4 @@ implementation is adapted from [mpris-server](https://github.com/chrg127/mpris-s
 
 ---
 
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · **Internals** · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · **Internals** · [Troubleshooting](troubleshooting.md)

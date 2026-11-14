@@ -1,4 +1,4 @@
-[README](../README.md) · **Install** · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · **Install** · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
 
 # Install
 
@@ -177,4 +177,4 @@ the `.so` on Linux (`-DMORODER_ENABLE_DISCORD=OFF` to build without it).
 
 ---
 
-[README](../README.md) · **Install** · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · **Install** · [Sign in](sign-in.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)

@@ -1,4 +1,4 @@
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · **Configuration** · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · **Configuration** · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
 
 # Configuration
 
@@ -104,4 +104,4 @@ When disabled, no Discord client is created and no background thread runs.
 
 ---
 
-[README](../README.md) · [Install](install.md) · [Usage](usage.md) · **Configuration** · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
+[README](../README.md) · [Install](install.md) · [Sign in](sign-in.md) · [Usage](usage.md) · **Configuration** · [Integrations](integrations.md) · [Internals](internals.md) · [Troubleshooting](troubleshooting.md)
