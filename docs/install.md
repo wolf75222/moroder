@@ -28,7 +28,7 @@ elsewhere, `MORODER_NO_PATH=1` leaves your shell files alone,
 
 ## Updates
 
-At launch, at most twice a day, Moroder asks GitHub for the latest release
+At launch, at most once an hour, Moroder asks GitHub for the latest release
 (nothing about you is sent). When a newer one is out it asks
 `Update now? [Y/n]` before starting: yes installs it and restarts into it; no
 is remembered for that version. `moroder update` installs the latest anytime

@@ -120,7 +120,7 @@ public:
     std::string KEY_MUTE              = "m";
     std::string KEY_SLEEP_TIMER       = "t";
     bool NORMALIZE_VOLUME             = true;   // level tracks with YouTube's loudness figure
-    bool CHECK_FOR_UPDATES            = true;   // at launch, at most twice a day: offer a new release
+    bool CHECK_FOR_UPDATES            = true;   // at launch, at most once an hour: offer a new release
     int FADE_SECONDS                  = 0;      // fade out / in between tracks (0: off)
     std::string LASTFM_API_SECRET     = "";     // with LASTFM_API_KEY: scrobbling (see README)
 

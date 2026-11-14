@@ -1,5 +1,5 @@
 /* UPDATES AND HOUSEKEEPING COMMANDS
-- At launch (CHECK_FOR_UPDATES, at most twice a day, 1.5 s at most, before the
+- At launch (CHECK_FOR_UPDATES, at most once an hour, 1.5 s at most, before the
   interface starts): if a newer release is out, ask "Update now? [Y/n]"; yes
   runs the installer and restarts into the new version; no is remembered for
   that version (`moroder update` still installs it)
