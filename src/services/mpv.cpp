@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "../../include/services/mpv.hpp"
 
 #include "../../include/config/config.hpp"
@@ -84,6 +85,9 @@ services::MPV::MPV() {
     mpv_set_option_string(mpv, "cache", "yes");
 
     mpv_set_option_string(mpv, "prefetch-playlist", "yes");
+
+    // MORODER_AO=null: no sound (demos, tests); any mpv audio output name works.
+    if (const char* ao = std::getenv("MORODER_AO")) mpv_set_option_string(mpv, "ao", ao);
     mpv_set_option_string(mpv, "playlist-start", "0");
 
     mpv_set_option_string(mpv, "ytdl", "yes");
