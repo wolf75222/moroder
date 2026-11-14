@@ -10,10 +10,13 @@ Keyboard, mouse or trackpad. macOS and Linux.
 <img alt="Linux" src="https://img.shields.io/badge/Linux-161b22?style=for-the-badge&logo=linux&logoColor=white">
 <img alt="YouTube Music" src="https://img.shields.io/badge/YouTube%20Music-161b22?style=for-the-badge&logo=youtubemusic&logoColor=FF0000">
 
-<img src="docs/assets/app.gif" alt="Moroder" width="760">
+<img src="docs/assets/app.gif" alt="Moroder playing Get Lucky with synced lyrics" width="760">
 
-Fast, gapless playback · synced lyrics · album art<br>
-Playlists, radio, search, queue · clicks, swipes, menus
+| 🎧 Playback | 🎤 Lyrics | 🖱️ Controls |
+|:--|:--|:--|
+| Gapless, starts fast | Synced, sung along | Click, swipe, scroll |
+| Queue, radio, shuffle | Album art in color | Right-click menus |
+| Your library and playlists | Full-screen view (<kbd>v</kbd>) | Media keys, Now Playing |
 
 </div>
 
@@ -37,11 +40,18 @@ moroder setup
 moroder
 ```
 
-Updates are offered when a new release is out (`moroder update` anytime).
+No account? `moroder -a` plays without one. New releases are offered at launch.
+
+## Commands
+
+| | |
+|:--|:--|
+| `moroder search daft punk` | open on search results |
+| `moroder update` | install the latest release |
+| `moroder doctor` | check yt-dlp, mpv, sign-in, terminal |
+| `moroder uninstall` | remove it (asks before deleting settings) |
 
 ## Keys
-
-<div align="center">
 
 | Key | Does |
 |:--|:--|
@@ -53,6 +63,8 @@ Updates are offered when a new release is out (`moroder update` anytime).
 | <kbd>Esc</kbd> · <kbd>]</kbd> | back · forward |
 | right-click | everything else |
 | hold <kbd>h</kbd> | all the keys |
+
+<div align="center">
 
 <br>
 
