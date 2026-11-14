@@ -148,6 +148,7 @@ set(SOURCES
     src/services/scrobble.cpp
 
     src/setup/setup.cpp
+    src/setup/browser_window.cpp
 
     src/ui/components/carousel.cpp
     src/ui/components/chips.cpp
@@ -179,6 +180,9 @@ elseif(APPLE)
     # Same role as MPRIS: Now Playing in Control Center + media keys
     enable_language(OBJCXX)
     list(APPEND SOURCES src/services/mpris_macos.mm)
+elseif(WIN32)
+    # Media keys (play / pause, next, previous)
+    list(APPEND SOURCES src/services/mpris_windows.cpp)
 else()
     list(APPEND SOURCES src/services/mpris_stub.cpp)
 endif()
@@ -354,4 +358,19 @@ if(APPLE)
 
     # Next to the binary's prefix: <prefix>/share/moroder/Moroder.app
     install(DIRECTORY ${MORODER_HELPER_APP} DESTINATION share/moroder USE_SOURCE_PERMISSIONS)
+endif()
+
+# Tests: cmake -DMORODER_TESTS=ON, then run the binaries (CI does, on Windows).
+option(MORODER_TESTS "Build the tests" OFF)
+if(MORODER_TESTS)
+    if(WIN32)
+        set(MORODER_PLATFORM_SOURCE src/platform/windows.cpp)
+    else()
+        set(MORODER_PLATFORM_SOURCE src/platform/posix.cpp)
+    endif()
+    add_executable(browser_window_test tests/browser_window_test.cpp src/setup/browser_window.cpp ${MORODER_PLATFORM_SOURCE})
+    target_link_libraries(browser_window_test PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+    if(WIN32)
+        target_link_libraries(browser_window_test PRIVATE shell32)
+    endif()
 endif()

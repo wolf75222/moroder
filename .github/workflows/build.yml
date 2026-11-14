@@ -1,8 +1,10 @@
-name: Windows
+name: Build
 
-# Builds Moroder for Windows with MSYS2 (UCRT64: GCC, libmpv, libcurl,
-# libjpeg-turbo, libpng), packages moroder.exe with every DLL it needs, and on
-# a v* tag attaches the zip to that release (install.ps1 downloads it).
+# Moroder on all three systems, on every push: builds, runs the binary, and
+# runs the tests (tests/, with the Chrome / Edge the runners have).
+# Windows: MSYS2 (UCRT64: GCC, libmpv, libcurl, libjpeg-turbo, libpng),
+# moroder.exe packaged with every DLL it needs; on a v* tag the zip is
+# attached to that release (install.ps1 downloads it).
 on:
   push:
     branches: [main]
@@ -14,7 +16,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     defaults:
       run:
@@ -51,7 +53,10 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_VERSION="${{ steps.ver.outputs.version }}"
+        # The native pkgconf, not MSYS2's own (it answers with /ucrt64/... paths).
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_VERSION="${{ steps.ver.outputs.version }}" \
+                -DPKG_CONFIG_EXECUTABLE="$(cygpath -m /ucrt64/bin/pkgconf.exe)" -DMORODER_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel
@@ -61,6 +66,14 @@ jobs:
           ./build/moroder.exe --version
           ./build/moroder.exe --help
           ./build/moroder.exe nope || true
+
+      - name: Tests
+        run: ./build/browser_window_test.exe
+
+      - name: WinRT headers available (for the Now Playing panel)
+        continue-on-error: true
+        run: |
+          ls /ucrt64/include | grep -iE '^windows\.(media|foundation)|systemmediatransportcontrolsinterop|roapi|winstring' || echo "none"
 
       - name: Package
         id: pkg
@@ -98,3 +111,41 @@ jobs:
           # The release is published by hand right after the tag: wait for it.
           for i in $(seq 1 30); do gh release view "${GITHUB_REF#refs/tags/}" >/dev/null 2>&1 && break; sleep 20; done
           gh release upload "${GITHUB_REF#refs/tags/}" dist/*.zip dist/*.zip.sha256 --clobber
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake ninja-build pkg-config libmpv-dev libcurl4-openssl-dev \
+            libjpeg-dev libpng-dev libsystemd-dev
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_TESTS=ON
+          cmake --build build --parallel
+      - name: Smoke test
+        run: |
+          ./build/moroder --version
+          ./build/moroder --help
+      - name: Tests
+        run: ./build/browser_window_test
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: brew install mpv jpeg-turbo libpng pkg-config ninja
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_TESTS=ON
+          cmake --build build --parallel
+      - name: Smoke test
+        run: |
+          ./build/moroder --version
+          ./build/moroder --help
+      - name: Tests
+        run: ./build/browser_window_test
+

@@ -193,6 +193,7 @@ public:
     explicit Mpris(std::string_view player_name);
     
     void startLoopAsync();
+    void mediaKey(int virtual_key);     // Windows: a media key was pressed
     void startLoop();
 
     void setMetadata(const std::map<Field, sdbus::Variant> &value);

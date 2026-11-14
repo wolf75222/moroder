@@ -5,6 +5,7 @@
 #include "../../include/utils/utils.hpp"
 #include "../../include/services/cli_ui.hpp"
 #include "../../include/utils/platform.hpp"
+#include "../../include/setup/browser_window.hpp"
 #include "../../include/ytm/ytmusic.hpp"
 
 #include <nlohmann/json.hpp>
@@ -678,6 +679,7 @@ std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
 
 // The Python yt-dlp runs on (its shebang), so its cookie reader can be used.
 std::string ytdlpPython() {
+    if (std::getenv("MORODER_YTDLP_CLI")) return "";      // force the Python-free path (tests, debugging)
 #ifdef _WIN32
     // yt-dlp is an .exe there: a Python that can import yt_dlp, if any.
     for (const char* candidate : {"python", "py"})
@@ -696,6 +698,49 @@ std::string ytdlpPython() {
 #endif
 }
 
+/* cookiesViaYtdlpCli
+- The same with no Python at hand (yt-dlp.exe on Windows, a standalone
+  build): yt-dlp itself saves the browser's cookies to a file on its way out,
+  after an empty search that never touches the network
+*/
+std::string cookiesViaYtdlpCli(const FoundBrowser& b, std::string& error) {
+    const fs::path file = fs::temp_directory_path() / ("moroder-cookies-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
+    platform::Process p;
+    if (!p.start({ "yt-dlp", "--cookies-from-browser", b.ytdlp_spec, "--cookies", file.string(),
+                   "--skip-download", "--no-warnings", "--quiet", "ytsearch0:moroder" })) { error = "couldn't start yt-dlp"; return ""; }
+    p.closeStdin();
+    std::string ignored;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (p.read(ignored, 200) >= 0) { ignored.clear(); if (std::chrono::steady_clock::now() > deadline) { p.kill(); break; } }
+    p.wait();
+
+    // Netscape format: domain, subdomains, path, secure, expiry, name, value.
+    std::ifstream in(file);
+    std::map<std::string, std::string> jar;
+    std::vector<std::string> order;
+    for (std::string line; std::getline(in, line); ) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("#HttpOnly_", 0) == 0) line.erase(0, 10);
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> f;
+        std::stringstream ss(line);
+        for (std::string x; std::getline(ss, x, '\t'); ) f.push_back(x);
+        if (f.size() < 7) continue;
+        std::string domain = f[0];
+        if (!domain.empty() && domain[0] == '.') domain.erase(0, 1);
+        if (domain != "youtube.com" && domain != "music.youtube.com" && domain != "www.youtube.com") continue;
+        if (!jar.count(f[5])) { order.push_back(f[5]); jar[f[5]] = f[6]; }
+    }
+    in.close();
+    std::error_code ec;
+    fs::remove(file, ec);
+
+    std::string header;
+    for (const auto& name : order) header += (header.empty() ? "" : "; ") + name + "=" + jar[name];
+    if (header.empty()) error = "couldn't read its cookies";
+    return header;
+}
+
 /* cookiesViaYtdlp
 - yt-dlp knows how to open every browser's cookie store (Firefox's sqlite,
   Chromium's encrypted one with the system keyring): the youtube.com cookies
@@ -703,7 +748,7 @@ std::string ytdlpPython() {
 */
 std::string cookiesViaYtdlp(const FoundBrowser& b, std::string& error) {
     const std::string python = ytdlpPython();
-    if (python.empty()) { error = "yt-dlp's Python not found"; return ""; }
+    if (python.empty()) return cookiesViaYtdlpCli(b, error);
     static const char* script =
         "import sys\n"
         "from yt_dlp.cookies import extract_cookies_from_browser\n"
@@ -1170,12 +1215,18 @@ int setup::run(int argc, char* argv[]) {
             const bool several = std::count_if(sources.begin(), sources.end(), [&](const Source& o) { return o.fb.name == s.fb.name; }) > 1;
             options.push_back({prettyBrowser(s.fb.name), several ? s.profile_name : ""});
         }
+        // A browser window of its own: for browsers whose cookies are locked
+        // (Chrome / Edge on Windows), or to use another account.
+        const std::string window_browser = browserWindowName();
+        const int window = window_browser.empty() ? -1 : static_cast<int>(options.size());
+        if (window >= 0) options.push_back({"New window", "sign in there, in " + window_browser + " (its own profile)"});
         const int sign_in = static_cast<int>(options.size());
         options.push_back({"Sign in first", "opens music.youtube.com, then looks again"});
         const int by_hand = static_cast<int>(options.size());
         options.push_back({"Paste headers", "copied from your browser by hand"});
 
-        const int pick = cli::select(sources.empty() ? "No browser is signed in. Now what?" : "Use which browser?", options, sources.empty() ? sign_in : 0);
+        const int pick = cli::select(sources.empty() ? "No browser is signed in. Now what?" : "Use which browser?", options,
+                                     sources.empty() ? (window >= 0 ? window : sign_in) : 0);
         if (pick < 0) { std::cout << "\n"; return 1; }
         if (pick == by_hand) { paste = true; break; }
         if (pick == sign_in) {
@@ -1186,9 +1237,25 @@ int setup::run(int argc, char* argv[]) {
             continue;
         }
 
-        Source s = sources[static_cast<size_t>(pick)];
+        Source s;
+        if (pick == window) {
+            std::string cookie, error;
+            {
+                cli::Live live;
+                const size_t id = live.add(window_browser);
+                live.set(id, cli::State::Run, "sign in to YouTube Music in the window that opened");
+                live.start();
+                cookie = signInWithBrowserWindow(cookies_dir / "browser-profile", [] { return false; }, error);
+                live.set(id, cookie.empty() ? cli::State::Warn : cli::State::Ok, cookie.empty() ? error : "signed in");
+                live.finish();
+            }
+            if (cookie.empty()) continue;
+            s = {FoundBrowser{utils::lower(window_browser), utils::lower(window_browser), {}}, "", "", false, cookie, 0};
+        } else {
+            s = sources[static_cast<size_t>(pick)];
+        }
         std::string spec = s.fb.name;
-        if (s.native) {
+        if (s.native && s.cookie.empty()) {
             if (s.profile_dir != "Default") spec += ":" + s.profile_dir;
             std::string error;
             s.cookie = services::readYouTubeCookies(spec, error);

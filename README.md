@@ -32,13 +32,11 @@ On Windows (PowerShell):
 irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
 ```
 
-**2.** Sign in with your browser, once ([guide](docs/sign-in.md)):
+**2.** Sign in with your browser, once ([sign-in](docs/sign-in.md)):
 
 ```bash
 moroder setup
 ```
-
-It finds the session in your browser (asking first).
 
 Or skip it and play without an account (no library):
 
