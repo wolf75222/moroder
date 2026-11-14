@@ -253,7 +253,10 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
         main_content->DetachAllChildren();
         for (auto& [rank, item] : ordered) main_content->Add(item->component);
 
+        // Nothing focused yet: start at the top. A stale index here made the
+        // windowed render (main.cpp) begin a few shelves down, hiding the first.
         if (focused_child) main_content->SetActiveChild(focused_child);
+        else main_content->SetActiveChild(ordered.front().second->component);
     }
 
     for (auto& item : main_content_items) {

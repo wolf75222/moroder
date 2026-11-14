@@ -233,6 +233,10 @@ public:
     // Load a playlist's tracks for the playlist view (state.open_playlist).
     void openPlaylist(const music::PlaylistRef& ref);
 
+    // Save / restore the listening session (see the private notes).
+    void saveSession();
+    bool restoreSession();
+
     // Shuffle everything after the current track (queue and mpv together).
     void shuffleUpcoming();
 
@@ -317,6 +321,15 @@ private:
     void worker_loop();
 
     std::string last_notified_id;   // track already announced by notifyTrack
+
+    /* History, session
+    - Recently played: last 50 tracks, shown as the first home shelf
+    - Session: current track, position and what follows, restored paused
+      at launch ("resume where you left off")
+    */
+    void recordHistory(const music::SongRef& song);
+    void mergeHistoryShelf();               // caller holds state_mutex
+    double resume_at = -1;                  // seconds; >= 0 while a restore is pending
 
     // Resolve the next track's stream ahead of time (yt-dlp), see preloadNext.
     void preloadNext();

@@ -25,6 +25,18 @@ struct SongRef {
 
     std::vector<ArtistRef> artists;
 
+    // Inverse of from_json (search-result shape), for history / session files.
+    nlohmann::json to_json() const {
+        nlohmann::json j;
+        j["resultType"] = "song";
+        j["videoId"] = id;
+        j["title"] = title;
+        j["artists"] = nlohmann::json::array();
+        for (const auto& a : artists) j["artists"].push_back({{"name", a.name}, {"id", a.id}});
+        j["thumbnails"] = nlohmann::json::array({ {{"url", thumbnail_small}}, {{"url", thumbnail_large}} });
+        return j;
+    }
+
     static SongRef from_json(const nlohmann::json& j) {
         SongRef s;
 

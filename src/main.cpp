@@ -24,6 +24,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <nlohmann/json.hpp>
+#include <fstream>
 #include <atomic>
 #include <cstdlib>
 #include <chrono>
@@ -172,6 +174,9 @@ int main(int argc, char *argv[]) {
 
     player.isLoggedIn();
     player.getHome();
+
+    // Resume where the last session stopped (paused, same track and position).
+    player.restoreSession();
     player.getLibraryPlaylists();
     player.getLibraryAlbums();
     player.getLibraryArtists();
@@ -471,8 +476,26 @@ int main(int argc, char *argv[]) {
         screen.PostEvent(Event::Custom);
     };
 
-    search_bar_data.onSearch = [&current_state, &player, &main_content_items, &main_content, &screen, &close_search](const std::string& value) {
+    // Search history survives restarts (~/.cache/moroder/searches.json).
+    const fs::path searches_file = [] {
+        const char* home = std::getenv("HOME");
+        return home ? fs::path(home) / ".cache" / "moroder" / "searches.json" : fs::path();
+    }();
+    {
+        std::ifstream in(searches_file);
+        if (in.is_open()) {
+            nlohmann::json j = nlohmann::json::parse(in, nullptr, false);
+            if (j.is_array()) for (const auto& v : j) if (v.is_string()) search_bar_data.history.push_back(v);
+        }
+    }
+
+    search_bar_data.onSearch = [&current_state, &player, &main_content_items, &main_content, &screen, &close_search, &search_bar_data, searches_file](const std::string& value) {
         spdlog::info("SEARCHBAR: enter pressed with value, " + value);
+        if (!searches_file.empty()) {
+            std::error_code ec;
+            fs::create_directories(searches_file.parent_path(), ec);
+            std::ofstream(searches_file, std::ios::trunc) << nlohmann::json(search_bar_data.history).dump();
+        }
         close_search();
         current_state = ui::State::SEARCH;
 
@@ -1281,6 +1304,7 @@ int main(int argc, char *argv[]) {
       playing, or touch mutexes torn down during exit and abort
     */
     auto finish = [&player] {
+        player.saveSession();
         player.detachUI();
         player.pause();
         spdlog::shutdown();

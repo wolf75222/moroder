@@ -7,6 +7,8 @@
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
+#include <nlohmann/json.hpp>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <random>
@@ -102,6 +104,35 @@ std::filesystem::path volumeFile() {
 
 }
 
+namespace {
+
+std::filesystem::path cachePath(const std::string& name) {
+    const char* home = std::getenv("HOME");
+    if (!home) return {};
+    return std::filesystem::path(home) / ".cache" / "moroder" / name;
+}
+
+nlohmann::json readJson(const std::string& name) {
+    std::ifstream in(cachePath(name));
+    if (!in.is_open()) return nlohmann::json();
+    nlohmann::json j = nlohmann::json::parse(in, nullptr, false);
+    return j.is_discarded() ? nlohmann::json() : j;
+}
+
+void writeJson(const std::string& name, const nlohmann::json& j) {
+    const auto file = cachePath(name);
+    if (file.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    const auto tmp = file.string() + ".tmp";
+    { std::ofstream out(tmp, std::ios::trunc); if (!out.is_open()) return; out << j.dump(); }
+    std::filesystem::rename(tmp, file, ec);
+}
+
+const char* RECENT_SHELF = "Recently played";
+
+}
+
 services::Player::Player(const std::string_view& app_name, const std::string_view& app_name_human, const uint64_t app_id) {
     this->app_name = app_name;
 
@@ -141,6 +172,7 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
             state.library_playlists = std::move(cached_lists);
             state.flags["library_playlists"] = Flags::Done;
         }
+        mergeHistoryShelf();
         spdlog::info("PLAYER: cache, {} home shelves, {} playlists", state.home.size(), state.library_playlists.size());
     }
 
@@ -312,6 +344,23 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         this->updateSocialData();
         this->startPositionTick();
         this->preloadNext();
+
+        // Resuming a saved session: back to where it was, paused.
+        if (resume_at >= 0) {
+            mpv_service->setPosition(static_cast<uint64_t>(resume_at * 1000000.0));
+            resume_at = -1;
+            this->pause();
+        }
+
+        {
+            std::shared_ptr<music::Song> song;
+            {
+                std::lock_guard lock(state_mutex);
+                song = std::dynamic_pointer_cast<music::Song>(state.current);
+            }
+            if (song) recordHistory(song->ref);
+        }
+        this->saveSession();
 
         if (on_stream_start) {
             on_stream_start();
@@ -808,6 +857,7 @@ void services::Player::worker_loop() {
                         state.flags["home"] = Flags::Done;
                         state.home = user_home;
                         state.home_order = music_service->homeOrder();
+                        mergeHistoryShelf();
                     }
                 }
 
@@ -1863,6 +1913,88 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
     }
 
     command_cv.notify_one();
+}
+
+void services::Player::recordHistory(const music::SongRef& song) {
+    if (song.id.empty() || Config::anonymous) return;
+
+    nlohmann::json list = readJson("history.json");
+    if (!list.is_array()) list = nlohmann::json::array();
+
+    nlohmann::json fresh = nlohmann::json::array({ song.to_json() });
+    for (const auto& j : list) {
+        if (j.value("videoId", std::string()) != song.id && fresh.size() < 50) fresh.push_back(j);
+    }
+    writeJson("history.json", fresh);
+
+    std::lock_guard lock(state_mutex);
+    mergeHistoryShelf();
+}
+
+void services::Player::mergeHistoryShelf() {
+    if (Config::anonymous) return;
+
+    nlohmann::json list = readJson("history.json");
+    if (!list.is_array() || list.empty()) return;
+
+    std::vector<music::ApiResult> shelf;
+    for (const auto& j : list) {
+        if (shelf.size() == 20) break;
+        shelf.push_back(music::ApiResult::from_json(j));
+    }
+
+    state.home[RECENT_SHELF] = std::move(shelf);
+    auto& order = state.home_order;
+    order.erase(std::remove(order.begin(), order.end(), RECENT_SHELF), order.end());
+    order.insert(order.begin(), RECENT_SHELF);
+}
+
+void services::Player::saveSession() {
+    if (Config::anonymous) return;
+
+    nlohmann::json session;
+    {
+        std::lock_guard lock(state_mutex);
+        auto current = std::dynamic_pointer_cast<music::Song>(state.current);
+        if (!current) return;
+
+        session["current"] = current->ref.to_json();
+        session["upcoming"] = nlohmann::json::array();
+        for (size_t i = static_cast<size_t>(std::max(0, state.queue_position)) + 1; i < state.user_queue.size() && session["upcoming"].size() < 200; i++) {
+            if (auto s = std::dynamic_pointer_cast<music::Song>(state.user_queue[i])) session["upcoming"].push_back(s->ref.to_json());
+        }
+    }
+    session["position"] = static_cast<double>(mpv_service->getStreamPosition()) / 1000000.0;
+    writeJson("session.json", session);
+}
+
+bool services::Player::restoreSession() {
+    if (Config::anonymous) return false;
+
+    nlohmann::json session = readJson("session.json");
+    if (!session.is_object() || !session.contains("current")) return false;
+
+    auto list = std::make_shared<music::Playlist>();
+    music::PlaylistRef ref;
+    ref.id = "__resume__";
+    ref.title = "Resumed session";
+    list->setRef(ref);
+
+    auto add = [&](const nlohmann::json& j) {
+        auto s = std::make_shared<music::Song>();
+        s->setRef(music::SongRef::from_json(j));
+        if (!s->ref.id.empty()) list->addStreamable(s);
+    };
+    add(session["current"]);
+    if (session.contains("upcoming") && session["upcoming"].is_array())
+        for (const auto& j : session["upcoming"]) add(j);
+    if (list->getStreamables().empty()) return false;
+
+    resume_at = session.value("position", 0.0);
+    mpv_service->pause();       // loads paused: no blip of sound before the seek
+    queue(std::static_pointer_cast<music::IStreamableContainer>(list), true, true);
+    spdlog::info("PLAYER: resuming {} track(s) at {:.0f}s", list->getStreamables().size(), resume_at);
+    return true;
 }
 
 std::string services::Player::streamUrlFor(const std::string& url) {
