@@ -275,8 +275,19 @@ if(WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+if(WIN32)
+    # MSYS2's pkg-config answers with /ucrt64/... paths the compiler can't
+    # use: find libmpv directly (CMake knows the real prefix).
+    find_path(MPV_INCLUDE_DIR mpv/client.h REQUIRED)
+    find_library(MPV_LIBRARY NAMES mpv libmpv REQUIRED)
+    add_library(PkgConfig::MPV INTERFACE IMPORTED)
+    set_target_properties(PkgConfig::MPV PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${MPV_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "${MPV_LIBRARY}")
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+endif()
 find_package(CURL REQUIRED)
 
 target_link_libraries(${PROJECT_NAME}

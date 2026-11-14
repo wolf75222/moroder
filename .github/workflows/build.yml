@@ -53,10 +53,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Configure
-        # The native pkgconf, not MSYS2's own (it answers with /ucrt64/... paths).
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_VERSION="${{ steps.ver.outputs.version }}" \
-                -DPKG_CONFIG_EXECUTABLE="$(cygpath -m /ucrt64/bin/pkgconf.exe)" -DMORODER_TESTS=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_VERSION="${{ steps.ver.outputs.version }}" -DMORODER_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel
