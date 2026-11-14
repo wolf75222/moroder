@@ -71,6 +71,10 @@ private:
 
     struct ShuffleCommand {};
 
+    struct PrefetchPlaylistCommand {
+        music::PlaylistRef ref;
+    };
+
     struct MoveCommand {
         size_t from = 0, to = 0;
     };
@@ -233,6 +237,9 @@ public:
     // Load a playlist's tracks for the playlist view (state.open_playlist).
     void openPlaylist(const music::PlaylistRef& ref);
 
+    // Fetch a playlist's tracks ahead (it's selected), so opening it is instant.
+    void prefetchPlaylist(const music::PlaylistRef& ref);
+
     // Save / restore the listening session (see the private notes).
     void saveSession();
     bool restoreSession();
@@ -303,7 +310,8 @@ private:
         OpenArtistCommand,
         ShuffleCommand,
         MoveCommand,
-        PreloadedCommand
+        PreloadedCommand,
+        PrefetchPlaylistCommand
     >;
 
     std::queue<Command> command_queue;
@@ -321,6 +329,9 @@ private:
     void worker_loop();
 
     std::string last_notified_id;   // track already announced by notifyTrack
+
+    // Playlists already fetched (prefetch or open), by id; under state_mutex.
+    std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_cache;
 
     /* History, session
     - Recently played: last 50 tracks, shown as the first home shelf

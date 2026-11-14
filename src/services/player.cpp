@@ -1001,6 +1001,19 @@ void services::Player::worker_loop() {
             } else if constexpr (std::is_same_v<T, RefreshSessionCommand>) {
                 if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
 
+            } else if constexpr (std::is_same_v<T, PrefetchPlaylistCommand>) {
+                {
+                    std::lock_guard lock(state_mutex);
+                    if (playlist_cache.count(c.ref.id)) return;
+                }
+                music::Playlist playlist = music_service->getPlaylist(c.ref);
+                if (music_service->lastError().failed || playlist.getStreamables().empty()) return;
+
+                std::lock_guard lock(state_mutex);
+                if (playlist_cache.size() > 40) playlist_cache.clear();
+                playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(playlist);
+                spdlog::info("PLAYER: prefetched playlist {}", c.ref.title);
+
             } else if constexpr (std::is_same_v<T, OpenPlaylistCommand>) {
                 spdlog::info("PLAYER: OpenPlaylistCommand, {}", c.ref.title);
 
@@ -1008,6 +1021,8 @@ void services::Player::worker_loop() {
                 const services::RequestError& err = music_service->lastError();
 
                 std::lock_guard lock(state_mutex);
+                if (!err.failed && !playlist.getStreamables().empty())
+                    playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(playlist);
 
                 // A newer open replaced this one while it loaded: drop it.
                 if (!state.open_playlist || state.open_playlist->ref.id != c.ref.id) return;
@@ -1896,9 +1911,32 @@ void services::Player::changeVolume(int delta) {
     std::ofstream(volumeFile(), std::ios::trunc) << volume << "\n";
 }
 
+void services::Player::prefetchPlaylist(const music::PlaylistRef& ref) {
+    if (ref.id.empty()) return;
+    {
+        std::lock_guard lock(state_mutex);
+        if (playlist_cache.count(ref.id)) return;
+    }
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PrefetchPlaylistCommand{ref});
+    }
+    command_cv.notify_one();
+}
+
 void services::Player::openPlaylist(const music::PlaylistRef& ref) {
     {
         std::lock_guard lock(state_mutex);
+
+        // Already fetched (selected a moment ago): show it at once.
+        if (auto it = playlist_cache.find(ref.id); it != playlist_cache.end()) {
+            state.open_playlist = it->second;
+            state.open_kind = "playlist";
+            state.flags["open_playlist"] = Flags::Done;
+            state.errors.erase("open_playlist");
+            return;
+        }
+
         auto placeholder = std::make_shared<music::Playlist>();
         placeholder->setRef(ref);
         state.open_playlist = placeholder;

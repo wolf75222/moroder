@@ -569,6 +569,27 @@ int main(int argc, char *argv[]) {
             audio_playing = state_copy.flags["audio"] == services::Player::Flags::Ongoing;
         }
 
+        /* Prefetch the playlist under the selection (sidebar, or a shelf /
+        search item), so opening it is instant.
+        */
+        {
+            static std::string last_prefetch;
+            const music::PlaylistRef* ref = nullptr;
+            if (sidebar_focused && sidebar_selected > 2 && static_cast<size_t>(sidebar_selected - 3) < sidebar_data.results.size()) {
+                ref = &sidebar_data.results[sidebar_selected - 3].ref;
+            } else if (ui::ContentEntry* e = [&]() -> ui::ContentEntry* {
+                           for (auto& item : main_content_items) if (item.component && item.component->Focused()) return &item;
+                           return nullptr; }()) {
+                const music::ApiResult* r = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
+                    ? &e->carousel_data.results[e->selected] : &e->result;
+                ref = std::get_if<music::PlaylistRef>(&r->data);
+            }
+            if (ref && ref->id != last_prefetch) {
+                last_prefetch = ref->id;
+                player.prefetchPlaylist(*ref);
+            }
+        }
+
         const auto p1 = std::chrono::steady_clock::now();
         spinner_frame++;
         ui::anim_frame = spinner_frame;

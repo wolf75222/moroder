@@ -6,6 +6,7 @@
 
 #include "spdlog/spdlog.h"
 #include "image_view.hpp"
+#include "../../../include/ui/cover_cache.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -355,7 +356,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
             const bool now = !id_cap.empty() && id_cap == playing_id;
             Element thumb = url_cap.empty()
                 ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
-                : image_view(url_cap) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
 
             auto row = hbox({
                 thumb,
@@ -534,7 +535,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
 
                 Element thumb = url_cap.empty()
                     ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
-                    : image_view(url_cap) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                    : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
 
                 auto row_el = hbox({
                     thumb,
@@ -601,7 +602,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
             filler(),
             vbox({
                 filler(),
-                image_view(thumbnail_url) | size(WIDTH, EQUAL, 60) | size(HEIGHT, EQUAL, 30),
+                image_view(ui::cover(thumbnail_url)) | size(WIDTH, EQUAL, 60) | size(HEIGHT, EQUAL, 30),
                 filler()
             }),
             filler(),
@@ -784,7 +785,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         head.component = Renderer(actions, [actions, title, sub, count, thumb, loading, kind] {
             Element cover = thumb.empty()
                 ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
-                : image_view(thumb) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
+                : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
             return vbox({
                 text(" "),
                 hbox({
@@ -829,7 +830,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         opt.transform = [top, bottom, url, number, id](const EntryState& s) {
             Element thumb = url.empty()
                 ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
-                : image_view(url) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                : image_view(ui::cover(url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             const bool now = !id.empty() && id == playing_id;
             return hbox({
                 // The playing track shows a speaker in the accent colour.
@@ -896,7 +897,7 @@ void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEnt
         head.component = Renderer([name, thumb, loading] {
             Element picture = thumb.empty()
                 ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
-                : image_view(thumb) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
+                : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
             return vbox({
                 text(" "),
                 hbox({

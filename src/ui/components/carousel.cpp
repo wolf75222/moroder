@@ -1,6 +1,7 @@
 #include "../../../include/ui/components/carousel.hpp"
 #include "../../../include/ui/constants/colors.hpp"
 #include "image_view.hpp"
+#include "../../../include/ui/cover_cache.hpp"
 
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/component/component.hpp>
@@ -102,7 +103,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
             thumb = filler() | size(WIDTH, EQUAL, 20) | size(HEIGHT, EQUAL, 10) | border;
         } else {
             try {
-                thumb = image_view(item.image_url)
+                thumb = image_view(ui::cover(item.image_url))
                     | size(WIDTH, EQUAL, 20)
                     | size(HEIGHT, EQUAL, 10)
                     | borderStyled(BorderStyle::EMPTY);

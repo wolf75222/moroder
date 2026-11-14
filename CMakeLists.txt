@@ -130,6 +130,7 @@ set(SOURCES
     src/ui/components/sidebar.cpp
 
     src/ui/constants/colors.cpp
+    src/ui/cover_cache.cpp
 
     src/ytm/http.cpp
     src/ytm/metadata.cpp

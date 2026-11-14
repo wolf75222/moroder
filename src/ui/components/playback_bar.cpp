@@ -6,6 +6,7 @@
 #include <chrono>
 
 #include "image_view.hpp"
+#include "../../../include/ui/cover_cache.hpp"
 
 using namespace ftxui;
 
@@ -94,7 +95,7 @@ Component ui::PlaybackBar(PlaybackData* data) {
             });
         } else {
             track_info = hbox({
-                image_view(data->image_url)
+                image_view(ui::cover(data->image_url))
                     | size(WIDTH, EQUAL, 2)
                     | size(HEIGHT, EQUAL, 1),
 

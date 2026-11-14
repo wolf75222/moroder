@@ -5,6 +5,7 @@
 #include "ftxui-grid-container/grid-container.hpp"
 #include "spdlog/spdlog.h"
 #include "image_view.hpp"
+#include "../../../include/ui/cover_cache.hpp"
 
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/component/component.hpp>
@@ -237,7 +238,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
 
                 Element cover = item.image_url.empty()
                     ? filler() | size(WIDTH, EQUAL, ui::GRID_TILE_COVER_WIDTH) | size(HEIGHT, EQUAL, ui::GRID_TILE_COVER_HEIGHT)
-                    : image_view(item.image_url) | size(WIDTH, EQUAL, ui::GRID_TILE_COVER_WIDTH) | size(HEIGHT, EQUAL, ui::GRID_TILE_COVER_HEIGHT);
+                    : image_view(ui::cover(item.image_url)) | size(WIDTH, EQUAL, ui::GRID_TILE_COVER_WIDTH) | size(HEIGHT, EQUAL, ui::GRID_TILE_COVER_HEIGHT);
 
                 return hbox({
                     vbox({
@@ -281,7 +282,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             if (item.image_url.empty()) {
                 thumb = filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             } else {
-                thumb = image_view(item.image_url) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                thumb = image_view(ui::cover(item.image_url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             }
 
             return hbox({
