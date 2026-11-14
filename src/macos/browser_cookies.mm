@@ -12,6 +12,8 @@
 #include <map>
 #include <mutex>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -53,7 +55,12 @@ fs::path keyFile(const BrowserInfo& info) {
 }
 
 bool readKeyFile(const BrowserInfo& info, std::vector<uint8_t>& key) {
-    std::ifstream in(keyFile(info), std::ios::binary);
+    // Only a plain file of ours that nobody else can read (not a symlink).
+    struct stat st{};
+    const fs::path file = keyFile(info);
+    if (lstat(file.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 077) != 0) return false;
+
+    std::ifstream in(file, std::ios::binary);
     if (!in.is_open()) return false;
     std::vector<uint8_t> k((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (k.size() != kCCKeySizeAES128) return false;
@@ -66,11 +73,17 @@ void writeKeyFile(const BrowserInfo& info, const std::vector<uint8_t>& key) {
     if (file.empty()) return;
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
-    {
-        std::ofstream out(file, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(key.data()), static_cast<std::streamsize>(key.size()));
-    }
-    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
+
+    // Created 0600 from the start (no window where it is world-readable), and
+    // never through a symlink.
+    const fs::path tmp = file.string() + ".tmp";
+    unlink(tmp.c_str());
+    const int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    if (fd < 0) return;
+    fchmod(fd, 0600);
+    const bool written = write(fd, key.data(), key.size()) == static_cast<ssize_t>(key.size());
+    close(fd);
+    if (!written || rename(tmp.c_str(), file.c_str()) != 0) unlink(tmp.c_str());
 }
 
 // The AES key: from memory, else the key file, else the Keychain (once).
@@ -170,10 +183,15 @@ std::string services::readYouTubeCookies(const std::string& browser, std::string
     std::vector<uint8_t> key;
     if (!storeKey(info, key, error)) return "";
 
-    // The browser keeps the database open and locked: read a private copy.
-    const fs::path tmp = fs::temp_directory_path() / ("moroder-cookies-" + std::to_string(getpid()) + ".db");
+    // The browser keeps the database open and locked: read a private copy,
+    // in a unique 0600 temp file.
+    std::string tmpl = (fs::temp_directory_path() / "moroder-cookies-XXXXXX.db").string();
+    const int tfd = mkstemps(tmpl.data(), 3);
+    if (tfd < 0) { error = "could not create a temp file"; return ""; }
+    close(tfd);
+    const fs::path tmp = tmpl;
     fs::copy_file(store, tmp, fs::copy_options::overwrite_existing, ec);
-    if (ec) { error = "could not copy " + store.string() + ": " + ec.message(); return ""; }
+    if (ec) { error = "could not copy " + store.string() + ": " + ec.message(); fs::remove(tmp, ec); return ""; }
     struct Cleanup { fs::path p; ~Cleanup() { std::error_code e; fs::remove(p, e); } } cleanup{tmp};
 
     sqlite3* db = nullptr;

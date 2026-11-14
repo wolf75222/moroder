@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "../utils/json_str.hpp"
+
 #include "../interfaces/streamable.hpp"
 #include "../interfaces/container.hpp"
 #include "artist.hpp"
@@ -28,15 +30,15 @@ struct AlbumRef {
 
     static AlbumRef from_json(const nlohmann::json& j) {
         AlbumRef a;
-        a.id = j.value("browseId", "");
-        a.title = j.value("title", "");
-        a.year = j.value("year", "");
+        a.id = utils::jstr(j, "browseId");
+        a.title = utils::jstr(j, "title");
+        a.year = utils::jstr(j, "year");
 
         if (j.contains("artists") && j["artists"].is_array()) {
             for (const auto& artist : j["artists"]) {
                 ArtistRef ref;
 
-                ref.name = artist.value("name", "");
+                ref.name = utils::jstr(artist, "name");
 
                 if (artist.contains("id") && artist["id"].is_string()) {
                     ref.id = artist["id"].get<std::string>();
@@ -49,8 +51,8 @@ struct AlbumRef {
         }
 
         if (j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty()) {
-            a.thumbnail_large = j["thumbnails"].back().value("url", "");
-            a.thumbnail_small = j["thumbnails"].front().value("url", "");
+            a.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");
+            a.thumbnail_small = utils::jstr(j["thumbnails"].front(), "url");
         } else {
             a.thumbnail_large = "";
             a.thumbnail_small = "";

@@ -63,7 +63,8 @@ std::filesystem::path writeSessionCookies(const Config& cfg) {
     }
 
     // Same sensitivity as browser.json.
-    fs::permissions(out_path, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+    std::error_code perm_ec;
+    fs::permissions(out_path, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, perm_ec);
     return out_path;
 }
 

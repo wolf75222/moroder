@@ -358,7 +358,7 @@ json YTMusic::sendRequest(const std::string& endpoint, const json& body, const s
     Http::Response r = http.post(url, payload.dump(), buildHeaders());
 
     if (!r.error.empty()) {
-        setError(r.error == "aborted" ? Error::Kind::Cancelled : Error::Kind::Network, "transport: " + r.error);
+        setError(r.error.find("aborted") != std::string::npos ? Error::Kind::Cancelled : Error::Kind::Network, "transport: " + r.error);
         return json::object();
     }
 
@@ -410,6 +410,9 @@ json YTMusic::sendRequest(const std::string& endpoint, const json& body, const s
 
 json YTMusic::getContinuations(json results, const std::string& continuationType, int limit, const std::string& endpoint, const json& body, const std::function<json(const json&)>& parseFunc) {
     json items = json::array();
+
+    // 0 means "the first page already had enough"; only negative means all.
+    if (limit == 0) return items;
 
     while (results.contains("continuations") && (limit < 0 || static_cast<int>(items.size()) < limit)) {
         std::string ctoken = str(nav(results, {"continuations", 0, "next" + std::string("ContinuationData"), "continuation"}));
@@ -519,7 +522,7 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
             cardContents = *raw;
 
             // "More from YouTube" isn't parseable; drop it and take its label.
-            if (!cardContents.empty() && cardContents[0].contains("messageRenderer")) {
+            if (cardContents.is_array() && !cardContents.empty() && cardContents[0].contains("messageRenderer")) {
                 category = navJson(cardContents[0], Path{"messageRenderer"} + TEXT_RUN_TEXT);
                 cardContents.erase(cardContents.begin());
             }
@@ -532,7 +535,7 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
 
         } else if (res.contains("itemSectionRenderer")) {
             shelfContents = nav(res, {"itemSectionRenderer", "contents"});
-            if (!shelfContents || shelfContents->empty() || !(*shelfContents)[0].contains(MRLIR)) continue;
+            if (!shelfContents || !shelfContents->is_array() || shelfContents->empty() || !(*shelfContents)[0].contains(MRLIR)) continue;
 
         } else {
             continue;
@@ -565,7 +568,7 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
         }
 
         if (!internalFilter.empty() && res.contains("musicShelfRenderer")) {
-            int remaining = limit - static_cast<int>(results.size());
+            int remaining = std::max(0, limit - static_cast<int>(results.size()));
 
             json more = getContinuations(
                 res["musicShelfRenderer"], "musicShelfContinuation", remaining, "search", body,
@@ -626,7 +629,7 @@ json YTMusic::getHome(int limit) {
 
     const json* sectionList = nav(response, SINGLE_COLUMN_TAB + SECTION);
     if (sectionList && sectionList->contains("continuations")) {
-        int remaining = limit < 0 ? -1 : limit - static_cast<int>(home.size());
+        int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(home.size()));
 
         json more = getContinuations(*sectionList, "sectionListContinuation", remaining, "browse", body, [](const json& rows) { return parse::mixedContent(rows); });
 
@@ -821,7 +824,7 @@ json YTMusic::getLibraryPlaylists(int limit) {
     json playlists = parse::contentList(rest, [](const json& d) { return parse::playlist(d); });
 
     if (results->contains("continuations")) {
-        int remaining = limit < 0 ? -1 : limit - static_cast<int>(playlists.size());
+        int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(playlists.size()));
 
         json more = getContinuations(*results, "gridContinuation", remaining, "browse", body,
                                      [](const json& contents) {
@@ -855,7 +858,7 @@ json YTMusic::getLibraryAlbums(int limit) {
     json albums = parse::libraryAlbums((*results)["items"]);
 
     if (results->contains("continuations")) {
-        int remaining = limit < 0 ? -1 : limit - static_cast<int>(albums.size());
+        int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(albums.size()));
 
         json more = getContinuations(*results, "gridContinuation", remaining, "browse", body, [](const json& contents) { return parse::libraryAlbums(contents); });
 
@@ -887,7 +890,7 @@ json YTMusic::getLibrarySongs(int limit) {
     json songs = parse::playlistItems(contents);
 
     if (results->contains("continuations")) {
-        int remaining = limit < 0 ? -1 : limit - static_cast<int>(songs.size());
+        int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(songs.size()));
 
         json more = getContinuations(*results, "musicShelfContinuation", remaining, "browse", body,
                                      [](const json& c) { return parse::playlistItems(c); });
@@ -915,7 +918,7 @@ json YTMusic::getLibraryArtists(int limit) {
     json artists = parse::libraryArtists((*results)["contents"]);
 
     if (results->contains("continuations")) {
-        int remaining = limit < 0 ? -1 : limit - static_cast<int>(artists.size());
+        int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(artists.size()));
 
         json more = getContinuations(*results, "musicShelfContinuation", remaining, "browse", body, [](const json& c) { return parse::libraryArtists(c); });
 
@@ -952,7 +955,7 @@ json YTMusic::getLibraryPodcasts(int limit) {
     json podcasts = parsePodcasts(rest);
 
     if (results->contains("continuations")) {
-        int remaining = limit < 0 ? -1 : limit - static_cast<int>(podcasts.size());
+        int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(podcasts.size()));
 
         json more = getContinuations(*results, "gridContinuation", remaining, "browse", body, parsePodcasts);
 

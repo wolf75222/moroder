@@ -69,6 +69,24 @@ std::string librarySignature(services::Player::PlayerState* state, const std::st
 using namespace ftxui;
 
 int ui::anim_frame = 0;
+bool ui::suppress_click = false;
+
+namespace {
+class MouseGateBase : public ftxui::ComponentBase {
+public:
+    MouseGateBase(ftxui::Component child, std::shared_ptr<bool> shown) : shown_(std::move(shown)) { Add(std::move(child)); }
+    bool OnEvent(ftxui::Event e) override {
+        if (e.is_mouse() && !*shown_) return false;
+        return ChildAt(0)->OnEvent(e);
+    }
+private:
+    std::shared_ptr<bool> shown_;
+};
+}
+
+ftxui::Component ui::MouseGate(ftxui::Component child, std::shared_ptr<bool> shown) {
+    return ftxui::Make<MouseGateBase>(std::move(child), std::move(shown));
+}
 
 // Video id of the track playing now, for the "now playing" marks in lists.
 static std::string playing_id;
@@ -193,13 +211,17 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
         return;
     }
 
-    // A refreshed page (after the cached one) may have dropped some shelves.
-    for (auto it = main_content_items.begin(); it != main_content_items.end();) {
-        if (!it->category.empty() && it->category.rfind("__", 0) != 0 && !state->home.count(it->category)) {
-            it = main_content_items.erase(it);
-        } else {
-            ++it;
-        }
+    /* A refreshed page (after the cached one) may have dropped some shelves.
+    Components hold raw pointers into their ContentEntry, and erasing from the
+    middle of a deque moves the others, so rebuild everything instead.
+    */
+    const bool stale = std::any_of(main_content_items.begin(), main_content_items.end(), [&](const ContentEntry& e) {
+        return !e.category.empty() && e.category.rfind("__", 0) != 0 && !state->home.count(e.category);
+    });
+    if (stale) {
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+        main_content->Add(Renderer([] { return emptyElement(); }));
     }
 
     for (auto& [category, _] : state->home) {
@@ -223,9 +245,9 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
 
         if (utils::lower(category) == "quick picks") {
             ui::getGridData(state, category, &item.grid_data);
-            item.component = Grid(&item.grid_data, &item.selected, &item.focused, 4, on_press);
+            item.component = MouseGate(Grid(&item.grid_data, &item.selected, &item.focused, 4, on_press), item.shown);
         } else {
-            item.component = Carousel(&item.carousel_data, &item.selected, &item.focused, on_press);
+            item.component = MouseGate(Carousel(&item.carousel_data, &item.selected, &item.focused, on_press), item.shown);
         }
     }
 
@@ -760,7 +782,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 
         auto pill = [](const std::string& label, std::function<void()> fn) {
             ButtonOption opt;
-            opt.on_click = std::move(fn);
+            opt.on_click = [fn = std::move(fn)] { if (!ui::suppress_click) fn(); };
             opt.transform = [label](const EntryState& s) {
                 auto e = text(" " + label + " ") | borderRounded;
                 return s.focused ? e | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY))
@@ -918,7 +940,7 @@ void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEnt
             ContentEntry& item = main_content_items.back();
             item.category = category;
             item.selected = 0;
-            item.component = Carousel(&item.carousel_data, &item.selected, &item.focused, on_press);
+            item.component = MouseGate(Carousel(&item.carousel_data, &item.selected, &item.focused, on_press), item.shown);
             main_content->Add(item.component);
         }
 

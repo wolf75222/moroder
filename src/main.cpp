@@ -175,9 +175,6 @@ int main(int argc, char *argv[]) {
 
     player.isLoggedIn();
     player.getHome();
-
-    // Resume where the last session stopped (paused, same track and position).
-    player.restoreSession();
     player.getLibraryPlaylists();
     player.getLibraryAlbums();
     player.getLibraryArtists();
@@ -222,37 +219,42 @@ int main(int argc, char *argv[]) {
     ui::State before_now_playing = ui::State::HOME;
     auto playback_bar = ui::PlaybackBar(&playback_bar_data);
 
+    /* These run on player / mpv threads while the UI thread reads
+    playback_bar_data every frame: hand the writes to the UI thread
+    (screen.Post) instead of racing it.
+    */
     player.setOnPositionTick([&screen, &playback_bar_data](uint64_t position, uint64_t duration) {
-        last_tick_at = std::chrono::steady_clock::now();
-        playback_bar_data.position = position / 1000000ULL;
-        playback_bar_data.duration = duration / 1000000ULL;
+        int progress = -1;
+        // Remove two seconds to account for UI refresh period, so the bar
+        // reaches the end. duration is unsigned: guard before subtracting.
+        if (duration > services::Player::LOOP_REWIND_EPSILON) {
+            const uint64_t d = duration - services::Player::LOOP_REWIND_EPSILON;
+            progress = std::clamp(static_cast<int>((position * 100) / d), 0, 100);
+        }
 
-        // Remove two seconds to account for UI refresh period
-        // This is just a fix so that the UI progress bar actually reaches song end.
-        // duration is unsigned: guard before subtracting, or it wraps around.
-        if (duration <= services::Player::LOOP_REWIND_EPSILON) return;
-        duration -= services::Player::LOOP_REWIND_EPSILON;
-
-        int progress = (position * 100) / duration;
-        progress = std::clamp(progress, 0, 100);
-
-        playback_bar_data.progress = progress;
+        screen.Post([&playback_bar_data, position, duration, progress] {
+            last_tick_at = std::chrono::steady_clock::now();
+            playback_bar_data.position = position / 1000000ULL;
+            playback_bar_data.duration = duration / 1000000ULL;
+            if (progress >= 0) playback_bar_data.progress = progress;
+        });
         screen.PostEvent(Event::Custom);
     });
 
-    player.setOnStreamStart([&screen, &playback_bar_data] {
-        playback_bar_data.progress = 0;
-        playback_bar_data.position = 0;
-        playback_bar_data.duration = 0;
+    auto reset_bar = [&screen, &playback_bar_data] {
+        screen.Post([&playback_bar_data] {
+            playback_bar_data.progress = 0;
+            playback_bar_data.position = 0;
+            playback_bar_data.duration = 0;
+        });
         screen.PostEvent(Event::Custom);
-    });
+    };
+    player.setOnStreamStart(reset_bar);
+    player.setOnStreamEnd(reset_bar);
 
-    player.setOnStreamEnd([&screen, &playback_bar_data] {
-        playback_bar_data.progress = 0;
-        playback_bar_data.position = 0;
-        playback_bar_data.duration = 0;
-        screen.PostEvent(Event::Custom);
-    });
+    // Resume where the last session stopped (paused, same track and position);
+    // after the callbacks above are set, which the restored track will fire.
+    player.restoreSession();
 
     std::deque<ui::ContentEntry> main_content_items;
     auto main_content = Container::Vertical({ Renderer([]{ return emptyElement(); }) });
@@ -531,7 +533,10 @@ int main(int argc, char *argv[]) {
         // Shelves are tall (a window of 7), list rows are 2-3 lines (60).
         const int before = home ? 2 : 30;
         const int after  = home ? 5 : 30;
-        if (n <= before + after) return main_content->Render();
+        if (n <= before + after) {
+            for (auto& item : main_content_items) *item.shown = true;
+            return main_content->Render();
+        }
 
         int active = 0;
         Component a = main_content->ActiveChild();
@@ -539,6 +544,13 @@ int main(int argc, char *argv[]) {
 
         const int lo = std::max(0, active - before);
         const int hi = std::min(n, active + after);
+
+        // Only the drawn ones may take clicks (the others' areas are stale).
+        for (auto& item : main_content_items) {
+            bool drawn = false;
+            for (int i = lo; i < hi && !drawn; i++) drawn = main_content->ChildAt(i) == item.component;
+            *item.shown = drawn;
+        }
 
         Elements shown;
         for (int i = lo; i < hi; i++) shown.push_back(main_content->ChildAt(i)->Render());
@@ -635,7 +647,13 @@ int main(int argc, char *argv[]) {
             ui::buildHome(&state_copy, main_content_items, main_content, on_item_press, [&player, &main_content, &main_content_items, &screen]{
                 player.getHome();
 
-                if(player.state.flags["library_playlists"] != services::Player::Flags::Done) {
+                bool lists_done;
+                {
+                    std::lock_guard lock(player.state_mutex);   // read under the lock, without inserting
+                    auto it = player.state.flags.find("library_playlists");
+                    lists_done = it != player.state.flags.end() && it->second == services::Player::Flags::Done;
+                }
+                if(!lists_done) {
                     player.getLibraryPlaylists();
                 }
 
@@ -825,10 +843,16 @@ int main(int argc, char *argv[]) {
 
             // Shown as soon as something is launched, so the loading state
             // has somewhere to appear (it used to pop in only once audio began).
-            state_copy.current
-                ? playback_bar->Render()
-                : emptyElement(),
-
+            // When it isn't drawn, its click areas must not linger (or sit at
+            // 0,0 before the first play, where a click skipped backwards).
+            [&]() -> Element {
+                if (state_copy.current) return playback_bar->Render();
+                const Box none{-1, -1, -1, -1};
+                for (Box* b : { &playback_bar_data.box_progress, &playback_bar_data.box_prev, &playback_bar_data.box_play,
+                                &playback_bar_data.box_next, &playback_bar_data.box_like, &playback_bar_data.box_volume,
+                                &playback_bar_data.box_loop, &playback_bar_data.box_shuffle, &playback_bar_data.box_track }) *b = none;
+                return emptyElement();
+            }(),
             Config::get().EXTRA_BOTTOM_PADDING ? text("") : emptyElement()
         });
 
@@ -1009,7 +1033,10 @@ int main(int argc, char *argv[]) {
                 // Focus what is under the pointer, as a left press would.
                 Event left = Event::Mouse(event.input(), m);
                 left.mouse().button = Mouse::Left;
-                if(!layout->OnEvent(left) || search_bar->Focused()) return true;
+                ui::suppress_click = true;      // focus only: Play / Retry must not fire
+                const bool hit = layout->OnEvent(left);
+                ui::suppress_click = false;
+                if(!hit || search_bar->Focused()) return true;
 
                 ctx.items.clear();
                 ctx.title.clear();

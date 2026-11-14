@@ -6,8 +6,17 @@
 
 namespace ui {
 
+// Set while the UI replays a mouse press only to move the focus (right-click):
+// buttons that act on a click (Play, Retry) must ignore that press.
+extern bool suppress_click;
+
+// Mouse events skip a component whose `shown` is false (not drawn this frame,
+// so its click areas are stale): see render_page in main.cpp.
+ftxui::Component MouseGate(ftxui::Component child, std::shared_ptr<bool> shown);
+
 struct ContentEntry {
     std::string category;
+    std::shared_ptr<bool> shown = std::make_shared<bool>(true);
 
     ui::CarouselData carousel_data;
     ui::GridData grid_data;

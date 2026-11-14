@@ -16,6 +16,7 @@ using namespace ftxui;
 void ui::getSidebarData(services::Player::PlayerState* state, ui::SidebarData* data) {
     data->entries.clear();
     data->entries_spoof.clear();
+    data->results.clear();      // rebuilt each frame; it used to grow forever and go stale
 
     data->entries = {
         {"  Home", ""},
@@ -97,15 +98,15 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
         } else if(data->entries_spoof[*selected] == "02") {
             data->onLibrary();
 
-        } else if (*selected > 2) {
-            spdlog::info("SIDEBAR: pressed enter on playlist, " + data->results[*selected].ref.title);
+        } else if (*selected > 2 && static_cast<size_t>(*selected - 3) < data->results.size()) {
+            spdlog::info("SIDEBAR: pressed enter on playlist, " + data->results[*selected - 3].ref.title);
         }
     };
 
     auto menu = Menu(&data->entries_spoof, selected, options);
 
     return CatchEvent(menu, [data, selected, on_press](const ftxui::Event& event) {
-        if (*selected > 2 && !data->results.empty()) {
+        if (*selected > 2 && static_cast<size_t>(*selected - 3) < data->results.size()) {
             return on_press(event, data->results[(*selected - 3)]);
         }
         return false;

@@ -232,9 +232,11 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
         if (style == GridStyle::Tile) {
             auto self = std::make_shared<std::weak_ptr<ftxui::ComponentBase>>();
 
-            option.transform = [item, self](const EntryState&) {
+            option.transform = [item, self, selected, index](const EntryState&) {
                 auto cell = self->lock();
                 bool active = cell && cell->Focused();
+                // Report the focused tile, for the context menu and prefetch.
+                if (active && selected) *selected = index;
 
                 Element cover = item.image_url.empty()
                     ? filler() | size(WIDTH, EQUAL, ui::GRID_TILE_COVER_WIDTH) | size(HEIGHT, EQUAL, ui::GRID_TILE_COVER_HEIGHT)
@@ -276,7 +278,9 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             continue;
         }
 
-        option.transform = [item, focused](const EntryState& state) {
+        option.transform = [item, focused, selected, index](const EntryState& state) {
+            // Report the focused tile, for the context menu and prefetch.
+            if (state.focused && *focused && selected) *selected = index;
             Element thumb;
 
             if (item.image_url.empty()) {

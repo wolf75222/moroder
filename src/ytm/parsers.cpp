@@ -119,7 +119,7 @@ json descriptionRuns(const json* runsList, std::string& descriptionOut) {
     if (!runsList || !runsList->is_array()) return out;
 
     for (const json& run : *runsList) {
-        std::string text = run.value("text", std::string());
+        std::string text = str(nav(run, {"text"}));
         descriptionOut += text;
 
         json entry = json::object();
@@ -214,7 +214,10 @@ int parseDuration(const std::string& duration) {
 
     int seconds = 0;
     for (size_t i = 0; i < parts.size() && i < 3; ++i) {
-        seconds += multipliers[i] * std::stoi(parts[parts.size() - 1 - i]);
+        // A malformed long number would make stoi throw out_of_range.
+        const std::string& part = parts[parts.size() - 1 - i];
+        if (part.empty() || part.size() > 6) return 0;
+        seconds += multipliers[i] * std::stoi(part);
     }
 
     return seconds;
@@ -270,7 +273,7 @@ json artistsRuns(const json& runs) {
         if (idx >= runs.size()) break;
 
         json a = json::object();
-        a["name"] = runs[idx].value("text", std::string());
+        a["name"] = str(nav(&runs[idx], {"text"}));
         a["id"] = navJson(runs[idx], NAVIGATION_BROWSE_ID);
 
         artists.push_back(a);
@@ -728,7 +731,7 @@ json mixedContent(const json& rows) {
         }
 
         json entry = json::object();
-        entry["title"] = title;
+        entry["title"] = title.is_string() ? title : json("");   // a null title crashed callers
         entry["contents"] = contents;
 
         items.push_back(entry);

@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "../utils/json_str.hpp"
+
 #include "../interfaces/streamable.hpp"
 #include "podcast.hpp"
 
@@ -28,20 +30,20 @@ struct EpisodeRef {
     static EpisodeRef from_json(const nlohmann::json& j) {
         EpisodeRef e;
 
-        e.id = j.value("videoId", "");
-        e.title = j.value("title", "");
+        e.id = utils::jstr(j, "videoId");
+        e.title = utils::jstr(j, "title");
 
         if (j.contains("podcast") && j["podcast"].is_object()) {
-            e.podcast.id = j["podcast"].value("id", "");
-            e.podcast.name = j["podcast"].value("name", "");
+            e.podcast.id = utils::jstr(j["podcast"], "id");
+            e.podcast.name = utils::jstr(j["podcast"], "name");
         } else {
             e.podcast.id = "";
             e.podcast.name = "";
         }
 
         if (j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty()) {
-            e.thumbnail_large = j["thumbnails"].back().value("url", "");
-            e.thumbnail_small = j["thumbnails"].front().value("url", "");
+            e.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");
+            e.thumbnail_small = utils::jstr(j["thumbnails"].front(), "url");
         } else {
             e.thumbnail_large = "";
             e.thumbnail_small = "";

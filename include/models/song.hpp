@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "../utils/json_str.hpp"
+
 #include "../interfaces/streamable.hpp"
 #include "artist.hpp"
 #include "album.hpp"
@@ -40,14 +42,14 @@ struct SongRef {
     static SongRef from_json(const nlohmann::json& j) {
         SongRef s;
 
-        s.id = j.value("videoId", "");
-        s.title = j.value("title", "");
+        s.id = utils::jstr(j, "videoId");
+        s.title = utils::jstr(j, "title");
 
         if (j.contains("artists") && j["artists"].is_array()) {
             for (const auto& a : j["artists"]) {
                 ArtistRef ref;
 
-                ref.name = a.value("name", "");
+                ref.name = utils::jstr(a, "name");
 
                 if (a.contains("id") && a["id"].is_string()) {
                     ref.id = a["id"].get<std::string>();
@@ -65,12 +67,12 @@ struct SongRef {
         - Don't ask me why that is
         */
         if ((j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty())) {
-            s.thumbnail_large = j["thumbnails"].back().value("url", "");
-            s.thumbnail_small = j["thumbnails"].front().value("url", "");
+            s.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");
+            s.thumbnail_small = utils::jstr(j["thumbnails"].front(), "url");
 
         } else if (j.contains("thumbnail")  && j["thumbnail"].is_array() && !j["thumbnail"].empty()) {
-            s.thumbnail_large = j["thumbnail"].back().value("url", "");
-            s.thumbnail_small = j["thumbnail"].front().value("url", "");
+            s.thumbnail_large = utils::jstr(j["thumbnail"].back(), "url");
+            s.thumbnail_small = utils::jstr(j["thumbnail"].front(), "url");
 
         } else {
             s.thumbnail_large = "";
@@ -97,13 +99,13 @@ struct Song : IStreamable {
         if (j.contains("album")) {
             if (j["album"].is_object()) {
                 const auto& album_json = j["album"];
-                s.album.title = album_json.value("name", "");
-                s.album.id = album_json.value("id", "");
+                s.album.title = utils::jstr(album_json, "name");
+                s.album.id = utils::jstr(album_json, "id");
 
             } else if (j["album"].is_array() && !j["album"].empty()) {
                 const auto& album_json = j["album"].front();
-                s.album.title = album_json.value("name", "");
-                s.album.id = album_json.value("id", "");
+                s.album.title = utils::jstr(album_json, "name");
+                s.album.id = utils::jstr(album_json, "id");
 
             } else if (j["album"].is_string()) {
                 s.album.title = j["album"].get<std::string>();

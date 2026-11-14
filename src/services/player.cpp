@@ -7,6 +7,14 @@
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
+#include <unordered_set>
+#include <csignal>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <sys/wait.h>
+#include <spawn.h>
+#include <regex>
 #include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <cstdio>
@@ -104,6 +112,8 @@ std::filesystem::path volumeFile() {
 
 }
 
+extern char** environ;
+
 namespace {
 
 std::filesystem::path cachePath(const std::string& name) {
@@ -188,10 +198,16 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
             command_queue.push(RefreshSessionCommand{});
         }
 
+        // Every 10 minutes, through the worker like everything else that
+        // writes browser.json / cookies.txt, so writes never overlap.
         std::thread([this] {
             while (true) {
                 std::this_thread::sleep_for(std::chrono::minutes(10));
-                if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
+                {
+                    std::lock_guard lock(command_mutex);
+                    command_queue.push(RefreshSessionCommand{});
+                }
+                command_cv.notify_one();
             }
         }).detach();
     }
@@ -233,32 +249,11 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         mpris_service->setPlaybackStatus(services::PlaybackStatus::Paused);
     });
 
-    mpris_service->onToggle([&] {
-        bool is_playing;
-
-        {
-            std::lock_guard lock(state_mutex);
-
-            if(state.flags["audio"] == Flags::Ongoing) {
-                state.flags["audio"] = Flags::Done;
-                state.flags["paused"] = Flags::True;
-                is_playing = false;
-            } else {
-                state.flags["audio"] = Flags::Ongoing;
-                state.flags["paused"] = Flags::False;
-                is_playing = true;
-            }
-        }
-
-        if(is_playing) {
-            mpv_service->pause();
-            social_service->pause();
-        } else {
-            mpv_service->resume();
-            social_service->resume();
-        }
-
-        mpris_service->setPlaybackStatus(is_playing ? services::PlaybackStatus::Playing : services::PlaybackStatus::Paused);
+    // Media keys / AirPods / Control Center play-pause. This used to flip the
+    // flags and then send mpv the opposite of what they said (pause when it
+    // meant play), so the first press did nothing and the state went inverted.
+    mpris_service->onToggle([this] {
+        togglePause();
     });
 
     mpris_service->onStop([&] {
@@ -333,7 +328,7 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         uint64_t song_duration = mpv_service->getStreamDuration();
         {
             std::lock_guard lock(state_mutex);
-            state.current->setDuration(song_duration);
+            if (state.current) state.current->setDuration(song_duration);
             state.flags["audio"] = Flags::Ongoing;
             state.flags["paused"] = Flags::False;
         }
@@ -345,11 +340,28 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         this->startPositionTick();
         this->preloadNext();
 
-        // Resuming a saved session: back to where it was, paused.
-        if (resume_at >= 0) {
-            mpv_service->setPosition(static_cast<uint64_t>(resume_at * 1000000.0));
+        // Resuming a saved session: back to where it was, paused; only for the
+        // restored track (another one started first gets nothing of it).
+        {
+            std::string resumed;
+            bool other_first = false;
+            double at = -1;
+            {
+                std::lock_guard lock(state_mutex);
+                auto s = std::dynamic_pointer_cast<music::Song>(state.current);
+                at = resume_at;
+                if (s && at >= 0 && s->ref.id == resume_id) resumed = s->ref.id;
+                other_first = at >= 0 && resumed.empty();
+            }
+            if (!resumed.empty()) {
+                mpv_service->setPosition(static_cast<uint64_t>(at * 1000000.0));
+                this->pause();
+            } else if (other_first) {
+                mpv_service->resume();      // the restore had paused mpv
+            }
+            std::lock_guard lock(state_mutex);
             resume_at = -1;
-            this->pause();
+            resume_id.clear();
         }
 
         {
@@ -462,18 +474,6 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
             }
         }
 
-        if(start_next_radio) {
-            {
-                std::unique_lock lock(command_mutex);
-                command_queue.push(QueueNextRadioCommand{
-                    .radio=state_radio,
-                    .auto_play=true
-                });
-            }
-
-            command_cv.notify_one();
-        }
-
         if(to_radio_skip) {
             {
                 std::unique_lock lock(command_mutex);
@@ -485,6 +485,20 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
                     .queue_in_radio=false,
                 });
             }
+            command_cv.notify_one();
+        }
+
+        // After the track that plays next: refilling the radio is a network
+        // fetch and used to delay the next track's start.
+        if(start_next_radio) {
+            {
+                std::unique_lock lock(command_mutex);
+                command_queue.push(QueueNextRadioCommand{
+                    .radio=state_radio,
+                    .auto_play=true
+                });
+            }
+
             command_cv.notify_one();
         }
 
@@ -514,24 +528,27 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         spdlog::warn("PLAYER: Stream error");
 
         this->stopPositionTick();
-        int current_pos;
 
-        {
-            std::lock_guard lock(state_mutex);
-            state.user_queue.pop_back();
-            current_pos = state.queue_position;
-            state.queue_position = state.user_queue.size() - 1;
+        /* Drop the track that failed, not the last one (pop_back did), and keep
+        the position: mpv has already moved on to the entry that slides into
+        this index, so the queue and mpv's playlist stay in step.
+        */
+        std::lock_guard lock(state_mutex);
+        const int pos = state.queue_position;
+        if (pos < 0 || static_cast<size_t>(pos) >= state.user_queue.size()) return;
+
+        state.user_queue.erase(state.user_queue.begin() + pos);
+        mpv_service->removeAt(static_cast<uint16_t>(pos));
+
+        if (static_cast<size_t>(pos) < state.user_queue.size()) {
+            state.current = state.user_queue[pos];
+        } else {
+            state.queue_position = static_cast<int>(state.user_queue.size()) - 1;
+            state.flags["audio"] = Flags::Done;
         }
 
-        if(current_pos < 0) {
-            current_pos = 0;
-        }
-
-        mpv_service->removeAt(current_pos);
-        this->skipForward();
-
-        // We do this because mpv automatically skips on stream error
-        mpv_service->skipTo(current_pos);
+        state.notice = "Couldn't play that track, skipped it";
+        state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
     });
 }
 
@@ -598,7 +615,10 @@ void services::Player::worker_loop() {
 
                 {
                     std::lock_guard lock(state_mutex);
-                    should_queue = state.flags["audio"] == Flags::Ongoing;
+                    // Something is loaded (playing, or paused) -> append behind it.
+                    // Checking only "playing" made a track added while paused
+                    // become the current one in the UI while mpv kept the old one.
+                    should_queue = state.flags["audio"] == Flags::Ongoing || state.flags["paused"] == Flags::True;
                     is_queue_empty = state.user_queue.empty() && state.radio_queue.empty();
                 }
 
@@ -643,6 +663,7 @@ void services::Player::worker_loop() {
                         state.queue_position = 0;
                         state.current = streamable;
                     }
+                    should_queue = false;
                 }
 
                 if(c.start_radio) {
@@ -671,7 +692,7 @@ void services::Player::worker_loop() {
                 }
 
                 if(!c.queue_in_radio) {
-                    mpv_service->load(streamable->getStreamUrl());
+                    mpv_service->load(streamUrlFor(streamable->getStreamUrl()));
                 }
 
                 if(should_queue) {
@@ -915,6 +936,8 @@ void services::Player::worker_loop() {
                 size_t pos = 0, count = 0;
 
                 {
+                    // Queue and mpv change under one lock, so a track ending
+                    // halfway can't advance one against the other.
                     std::lock_guard lock(state_mutex);
                     pos = static_cast<size_t>(std::max(0, state.queue_position));
                     count = state.user_queue.size();
@@ -926,11 +949,11 @@ void services::Player::worker_loop() {
 
                     state.notice = "Queue shuffled (" + std::to_string(urls.size()) + " tracks)";
                     state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-                }
 
-                // Rebuild mpv's tail in the new order; the current track plays on.
-                for (size_t i = count - 1; i > pos; i--) mpv_service->removeAt(static_cast<uint16_t>(i));
-                for (const auto& url : urls) mpv_service->load(url);
+                    // Rebuild mpv's tail in the new order; the current track plays on.
+                    for (size_t i = count - 1; i > pos; i--) mpv_service->removeAt(static_cast<uint16_t>(i));
+                    for (const auto& url : urls) mpv_service->load(url);
+                }
                 preloadNext();
 
             } else if constexpr (std::is_same_v<T, MoveCommand>) {
@@ -943,10 +966,10 @@ void services::Player::worker_loop() {
                     auto item = state.user_queue[c.from];
                     state.user_queue.erase(state.user_queue.begin() + c.from);
                     state.user_queue.insert(state.user_queue.begin() + c.to, item);
-                }
 
-                // playlist-move puts the entry before the target index.
-                mpv_service->move(static_cast<uint16_t>(c.from), static_cast<uint16_t>(c.to > c.from ? c.to + 1 : c.to));
+                    // playlist-move puts the entry before the target index.
+                    mpv_service->move(static_cast<uint16_t>(c.from), static_cast<uint16_t>(c.to > c.from ? c.to + 1 : c.to));
+                }
                 preloadNext();
 
             } else if constexpr (std::is_same_v<T, PreloadedCommand>) {
@@ -964,10 +987,11 @@ void services::Player::worker_loop() {
                     // Still the same track at the same place, and not playing yet?
                     if (c.index >= state.user_queue.size() || static_cast<int>(c.index) <= state.queue_position) return;
                     if (state.user_queue[c.index]->getStreamUrl() != c.expected_url) return;
-                }
 
-                mpv_service->insertAt(c.stream_url, static_cast<uint16_t>(c.index));
-                mpv_service->removeAt(static_cast<uint16_t>(c.index + 1));
+                    // Same lock as the check: the entry can't start in between.
+                    mpv_service->insertAt(c.stream_url, static_cast<uint16_t>(c.index));
+                    mpv_service->removeAt(static_cast<uint16_t>(c.index + 1));
+                }
                 spdlog::info("PLAYER: next track preloaded");
 
             } else if constexpr (std::is_same_v<T, OpenAlbumCommand>) {
@@ -1619,22 +1643,14 @@ void services::Player::removeFromRadioQueue(uint16_t index) {
 }
 
 void services::Player::startPositionTick() {
-    {
-        std::lock_guard lock(position_tick_mutex);
-        position_tick_running = false;
-    }
-
-    position_tick_cv.notify_all();
-
-    if (position_tick_thread.joinable()) {
-        position_tick_thread.join();
-    }
+    stopPositionTick();
 
     {
         std::lock_guard lock(position_tick_mutex);
         position_tick_running = true;
     }
 
+    std::lock_guard thread_lock(position_tick_thread_mutex);
     position_tick_thread = std::thread([this] {
         uint64_t last_position = 0;
 
@@ -1673,25 +1689,28 @@ void services::Player::startPositionTick() {
     });
 }
 
+/* stopPositionTick
+- Signal, then take the thread object out under its own mutex and join it
+  with no lock held: joining while holding position_tick_mutex could deadlock
+  (the thread needs it to see the stop), and the object was touched from the
+  mpv and UI threads unguarded
+*/
 void services::Player::stopPositionTick() {
     {
         std::lock_guard lock(position_tick_mutex);
-        if (!position_tick_running) {
-            if (position_tick_thread.joinable())
-                position_tick_thread.join();
-            return;
-        }
         position_tick_running = false;
     }
-
     position_tick_cv.notify_all();
 
-    if (position_tick_thread.joinable()) {
-        if (position_tick_thread.get_id() != std::this_thread::get_id()) {
-            position_tick_thread.join();
-        } else {
-            position_tick_thread.detach();
-        }
+    std::thread t;
+    {
+        std::lock_guard thread_lock(position_tick_thread_mutex);
+        t = std::move(position_tick_thread);
+    }
+
+    if (t.joinable()) {
+        if (t.get_id() != std::this_thread::get_id()) t.join();
+        else t.detach();
     }
 }
 
@@ -1986,13 +2005,14 @@ void services::Player::recordHistory(const music::SongRef& song) {
     writeJson("history.json", fresh);
 
     std::lock_guard lock(state_mutex);
-    mergeHistoryShelf();
+    mergeHistoryShelf(&fresh);
 }
 
-void services::Player::mergeHistoryShelf() {
+void services::Player::mergeHistoryShelf(const nlohmann::json* known) {
     if (Config::anonymous) return;
 
-    nlohmann::json list = readJson("history.json");
+    // Callers holding state_mutex pass the list they have: no disk read under it.
+    nlohmann::json list = known ? *known : readJson("history.json");
     if (!list.is_array() || list.empty()) return;
 
     std::vector<music::ApiResult> shelf;
@@ -2048,7 +2068,12 @@ bool services::Player::restoreSession() {
         for (const auto& j : session["upcoming"]) add(j);
     if (list->getStreamables().empty()) return false;
 
-    resume_at = session.value("position", 0.0);
+    {
+        std::lock_guard lock(state_mutex);
+        resume_at = session.value("position", 0.0);
+        auto first = std::dynamic_pointer_cast<music::Song>(list->getStreamables().front());
+        resume_id = first ? first->ref.id : "";
+    }
     mpv_service->pause();       // loads paused: no blip of sound before the seek
     queue(std::static_pointer_cast<music::IStreamableContainer>(list), true, true);
     spdlog::info("PLAYER: resuming {} track(s) at {:.0f}s", list->getStreamables().size(), resume_at);
@@ -2106,19 +2131,66 @@ void services::Player::preloadNext() {
 
     if (url.rfind("http", 0) != 0 || url.find("youtube.com") == std::string::npos) return;
 
+    // Only plain YouTube video ids, and one resolution per track at a time.
+    static const std::regex video(R"(watch\?v=[A-Za-z0-9_-]{11}(&|$))");
+    if (!std::regex_search(url, video)) return;
+    {
+        std::lock_guard lock(preloaded_mutex);
+        if (preloading.count(url) || preloaded.count(url)) return;
+        preloading.insert(url);
+    }
+
     std::thread([this, index, url] {
         const Config& cfg = Config::get();
-        std::string cmd = "yt-dlp --no-warnings -f 'bestaudio/best' -g ";
+
+        // argv, no shell: nothing in the URL or paths is ever interpreted.
+        std::vector<std::string> args = { "yt-dlp", "--no-warnings", "-f", "bestaudio/best", "-g" };
         const std::filesystem::path cookies = cfg.YTM_COOKIES_PATH / "cookies.txt";
         std::error_code ec;
-        if (!Config::anonymous && std::filesystem::exists(cookies, ec)) cmd += "--cookies '" + cookies.string() + "' ";
-        cmd += "'" + url + "' 2>/dev/null";
+        if (!Config::anonymous && std::filesystem::exists(cookies, ec)) { args.push_back("--cookies"); args.push_back(cookies.string()); }
+        args.push_back(url);
+
+        std::vector<char*> argv;
+        for (auto& a : args) argv.push_back(a.data());
+        argv.push_back(nullptr);
 
         std::string out;
-        if (FILE* pipe = popen(cmd.c_str(), "r")) {
-            char buf[4096];
-            while (fgets(buf, sizeof(buf), pipe)) out += buf;
-            pclose(pipe);
+        int fds[2];
+        if (pipe(fds) == 0) {
+            posix_spawn_file_actions_t actions;
+            posix_spawn_file_actions_init(&actions);
+            posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
+            posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+            posix_spawn_file_actions_addclose(&actions, fds[0]);
+
+            pid_t pid = 0;
+            const bool started = posix_spawnp(&pid, "yt-dlp", &actions, nullptr, argv.data(), environ) == 0;
+            posix_spawn_file_actions_destroy(&actions);
+            close(fds[1]);
+
+            if (started) {
+                // Read with a deadline: a stuck yt-dlp is killed after 25 s.
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+                char buf[4096];
+                while (true) {
+                    fd_set set; FD_ZERO(&set); FD_SET(fds[0], &set);
+                    timeval tv{0, 200000};
+                    if (select(fds[0] + 1, &set, nullptr, nullptr, &tv) > 0) {
+                        const ssize_t n = read(fds[0], buf, sizeof(buf));
+                        if (n <= 0) break;
+                        out.append(buf, static_cast<size_t>(n));
+                    }
+                    if (std::chrono::steady_clock::now() > deadline) { kill(pid, SIGKILL); break; }
+                }
+                int status = 0;
+                waitpid(pid, &status, 0);
+            }
+            close(fds[0]);
+        }
+
+        {
+            std::lock_guard lock(preloaded_mutex);
+            preloading.erase(url);
         }
 
         const std::string stream = out.substr(0, out.find('\n'));

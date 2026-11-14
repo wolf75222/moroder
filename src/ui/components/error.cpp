@@ -1,4 +1,5 @@
 #include "../../../include/ui/components/error.hpp"
+#include "../../../include/ui/components/content.hpp"
 #include "../../../include/ui/constants/colors.hpp"
 
 #include <ftxui/dom/elements.hpp>
@@ -36,7 +37,7 @@ ftxui::Component ui::ErrorBox(const std::string& message, std::function<void()> 
         });
     };
 
-    Component button = Button("", std::move(on_retry), opt);
+    Component button = Button("", [retry = std::move(on_retry)] { if (!ui::suppress_click && retry) retry(); }, opt);
 
     return Renderer(button, [message, title, button] {
         return vbox({

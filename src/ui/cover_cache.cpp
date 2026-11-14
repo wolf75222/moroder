@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -16,21 +17,33 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::mutex m;
-std::unordered_map<std::string, std::string> resolved;   // url -> local path ("" = not on disk yet)
-std::unordered_set<std::string> downloading;
+/* State
+- Heap-allocated and never freed: detached download threads may still touch
+  it while the process exits, after static destructors would have run
+- Per URL: a local path, "pending" (download running or waiting for a slot),
+  or "failed until T" (retried after a minute), so a frame never repeats the
+  disk checks for a cover it already looked up
+*/
+struct Entry {
+    std::string path;                                    // set once on disk
+    bool pending = false;
+    std::chrono::steady_clock::time_point retry_after{};
+};
+
+std::mutex& m = *new std::mutex;
+std::unordered_map<std::string, Entry>& entries = *new std::unordered_map<std::string, Entry>;
 std::atomic<int> in_flight{0};
 constexpr int MAX_IN_FLIGHT = 4;
 
 const fs::path& dir() {
-    static const fs::path d = [] {
+    static const fs::path* d = [] {
         const char* home = std::getenv("HOME");
-        fs::path p = home ? fs::path(home) / ".cache" / "moroder" / "covers" : fs::path();
+        auto* p = new fs::path(home ? fs::path(home) / ".cache" / "moroder" / "covers" : fs::path());
         std::error_code ec;
-        if (!p.empty()) fs::create_directories(p, ec);
+        if (!p->empty()) fs::create_directories(*p, ec);
         return p;
     }();
-    return d;
+    return *d;
 }
 
 size_t collect(char* data, size_t size, size_t n, void* out) {
@@ -53,6 +66,7 @@ void download(std::string url, fs::path target) {
     }
 
     // JPEG or PNG only (what the decoder handles); name by actual format.
+    std::string saved;
     const bool jpeg = body.size() > 3 && (unsigned char)body[0] == 0xFF && (unsigned char)body[1] == 0xD8;
     const bool png = body.size() > 8 && body.compare(1, 3, "PNG") == 0;
     if (jpeg || png) {
@@ -61,11 +75,14 @@ void download(std::string url, fs::path target) {
         { std::ofstream out(tmp, std::ios::binary); out.write(body.data(), (std::streamsize)body.size()); }
         std::error_code ec;
         fs::rename(tmp, target, ec);
-        if (!ec) { std::lock_guard lock(m); resolved[url] = target.string(); }
+        if (!ec) saved = target.string();
     }
 
     std::lock_guard lock(m);
-    downloading.erase(url);
+    Entry& e = entries[url];
+    e.pending = false;
+    if (!saved.empty()) e.path = saved;
+    else e.retry_after = std::chrono::steady_clock::now() + std::chrono::minutes(1);
     in_flight--;
 }
 
@@ -75,25 +92,27 @@ std::string ui::cover(const std::string& url) {
     if (url.rfind("http", 0) != 0 || dir().empty()) return url;
 
     std::lock_guard lock(m);
+    const auto now = std::chrono::steady_clock::now();
 
-    if (auto it = resolved.find(url); it != resolved.end()) {
-        return it->second.empty() ? url : it->second;
+    auto [it, fresh] = entries.try_emplace(url);
+    Entry& e = it->second;
+
+    if (!e.path.empty()) return e.path;
+
+    // First sight: maybe on disk from an earlier run (one lookup, ever).
+    if (fresh) {
+        const fs::path base = dir() / std::to_string(std::hash<std::string>{}(url));
+        std::error_code ec;
+        for (const char* ext : {".jpg", ".png"}) {
+            fs::path p = base; p.replace_extension(ext);
+            if (fs::exists(p, ec)) { e.path = p.string(); return e.path; }
+        }
     }
 
-    const fs::path base = dir() / std::to_string(std::hash<std::string>{}(url));
-    std::error_code ec;
-    for (const char* ext : {".jpg", ".png"}) {
-        fs::path p = base; p.replace_extension(ext);
-        if (fs::exists(p, ec)) { resolved[url] = p.string(); return p.string(); }
-    }
-
-    resolved[url] = "";
-    if (!downloading.count(url) && in_flight < MAX_IN_FLIGHT) {
-        downloading.insert(url);
+    if (!e.pending && now >= e.retry_after && in_flight < MAX_IN_FLIGHT) {
+        e.pending = true;
         in_flight++;
-        std::thread(download, url, base).detach();
-    } else {
-        resolved.erase(url);    // try again on a later frame
+        std::thread(download, url, dir() / std::to_string(std::hash<std::string>{}(url))).detach();
     }
-    return url;
+    return url;     // image_view fetches it meanwhile, as before
 }

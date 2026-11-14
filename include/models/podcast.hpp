@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "../utils/json_str.hpp"
+
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -19,12 +21,12 @@ struct PodcastRef {
 
     static PodcastRef from_json(const nlohmann::json& j) {
         PodcastRef a;
-        a.id = j.value("browseId", "");
-        a.name = j.value("title", "");
+        a.id = utils::jstr(j, "browseId");
+        a.name = utils::jstr(j, "title");
 
         if (j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty()) {
-            a.thumbnail_large = j["thumbnails"].back().value("url", "");
-            a.thumbnail_small = j["thumbnails"].front().value("url", "");
+            a.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");
+            a.thumbnail_small = utils::jstr(j["thumbnails"].front(), "url");
         } else {
             a.thumbnail_large = "";
             a.thumbnail_small = "";

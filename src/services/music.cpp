@@ -1,5 +1,8 @@
 #include "../../include/services/music.hpp"
+#include "../../include/utils/json_str.hpp"
 #include <fstream>
+#include <unistd.h>
+#include <fcntl.h>
 #include <cstdlib>
 #include "../../include/services/browser_cookies.hpp"
 
@@ -179,7 +182,7 @@ music::Radio services::Music::getRadio(const std::string id, const std::string t
         */
         if (startsWith(pid, "MPRE")) {
             nlohmann::json album = ytm->getAlbum(pid);
-            std::string    audio = album.value("audioPlaylistId", std::string());
+            std::string    audio = utils::jstr(album, "audioPlaylistId");   // null without a play button
 
             if (audio.empty()) {
                 captureError("radio");
@@ -371,7 +374,7 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     ipc::HomeResponse response;
 
     for (const nlohmann::json& section : sections) {
-        std::string category = section.value("title", std::string());
+        std::string category = utils::jstr(section, "title");
 
         if (!section.contains("contents")) continue;
 
@@ -395,13 +398,13 @@ services::Music::ArtistPage services::Music::getArtist(const music::ArtistRef& a
     nlohmann::json data = ytm->getArtist(artist.id);
     captureError("artist");
 
-    if (data.value("name", std::string()) != "") page.ref.name = data["name"];
-    if (data.value("thumbnail", std::string()) != "") page.ref.thumbnail_large = data["thumbnail"];
+    if (!utils::jstr(data, "name").empty()) page.ref.name = utils::jstr(data, "name");
+    if (!utils::jstr(data, "thumbnail").empty()) page.ref.thumbnail_large = utils::jstr(data, "thumbnail");
 
     ipc::HomeResponse response;
     if (data.contains("sections") && data["sections"].is_array()) {
         for (const nlohmann::json& section : data["sections"]) {
-            const std::string category = section.value("title", std::string());
+            const std::string category = utils::jstr(section, "title");
             if (!section.contains("contents") || !section["contents"].is_array()) continue;
             for (const nlohmann::json& item : section["contents"]) {
                 tryAdd(item, "artist", [&] { response.addItem(category, item); });
@@ -417,6 +420,9 @@ services::Music::ArtistPage services::Music::getArtist(const music::ArtistRef& a
 bool services::Music::refreshCookies() {
     const Config& cfg = Config::get();
     if (Config::anonymous || cfg.COOKIE_BROWSER.empty()) return false;
+
+    // For automated tests: use the saved session, never touch the Keychain.
+    if (std::getenv("MORODER_NO_COOKIE_REFRESH")) return false;
 
     std::string error;
     const std::string cookie = services::readYouTubeCookies(cfg.COOKIE_BROWSER, error);
@@ -442,12 +448,19 @@ bool services::Music::refreshCookies() {
     if (!headers.contains("user-agent")) headers["user-agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
     if (!headers.contains("origin")) { headers["origin"] = "https://music.youtube.com"; headers["x-origin"] = "https://music.youtube.com"; }
 
+    // Atomic and 0600 from creation: a reader never sees half a file, and the
+    // session is never briefly world-readable.
     {
-        std::ofstream out(file, std::ios::trunc);
-        out << headers.dump(4);
+        const fs::path tmp = file.string() + ".tmp";
+        ::unlink(tmp.c_str());
+        const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+        if (fd >= 0) {
+            const std::string body = headers.dump(4);
+            const bool ok = ::write(fd, body.data(), body.size()) == static_cast<ssize_t>(body.size());
+            ::close(fd);
+            if (!ok || ::rename(tmp.c_str(), file.c_str()) != 0) ::unlink(tmp.c_str());
+        }
     }
-    std::error_code ec;
-    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
 
     spdlog::info("MUSIC: session refreshed from {}", cfg.COOKIE_BROWSER);
     return true;

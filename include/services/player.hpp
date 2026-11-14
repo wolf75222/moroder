@@ -8,6 +8,8 @@
 #pragma once
 
 #include <chrono>
+#include <nlohmann/json.hpp>
+#include <unordered_set>
 
 #include "social.hpp"
 #include "mpris.hpp"
@@ -128,7 +130,7 @@ public:
     };
 
     struct PlayerState {
-        int queue_position;
+        int queue_position = -1;
 
         std::deque<std::shared_ptr<music::IStreamable>> user_queue;
         std::deque<std::shared_ptr<music::IStreamable>> radio_queue;
@@ -344,8 +346,9 @@ private:
       at launch ("resume where you left off")
     */
     void recordHistory(const music::SongRef& song);
-    void mergeHistoryShelf();               // caller holds state_mutex
-    double resume_at = -1;                  // seconds; >= 0 while a restore is pending
+    void mergeHistoryShelf(const nlohmann::json* known = nullptr);   // caller holds state_mutex
+    double resume_at = -1;                  // seconds; >= 0 while a restore is pending (state_mutex)
+    std::string resume_id;                  // the restored track it applies to
 
     // Resolve the next track's stream ahead of time (yt-dlp), see preloadNext.
     void preloadNext();
@@ -353,6 +356,7 @@ private:
     // Pre-resolved stream URLs by YouTube URL, for tracks not in mpv yet
     // (autoplay radio); taken by streamUrlFor().
     std::unordered_map<std::string, std::string> preloaded;
+    std::unordered_set<std::string> preloading;             // in flight
     std::mutex preloaded_mutex;
     std::string streamUrlFor(const std::string& url);
 
@@ -377,6 +381,7 @@ private:
     std::function<void()> on_request_completed;
     std::function<void(uint64_t position, uint64_t duration)> on_position_tick;
 
+    std::mutex position_tick_thread_mutex;    // guards position_tick_thread itself
     std::thread position_tick_thread;
     std::mutex position_tick_mutex;
     std::condition_variable position_tick_cv;

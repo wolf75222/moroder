@@ -19,6 +19,7 @@ void ui::getCarouselData(services::Player::PlayerState* state, std::string categ
 void ui::getCarouselDataFrom(const std::unordered_map<std::string, std::vector<music::ApiResult>>& shelves, std::string category, CarouselData* data) {
     data->entries_spoof.clear();
     data->entries.clear();
+    data->results.clear();      // rebuilt each frame; it used to grow forever and go stale
 
     auto it = shelves.find(category);
     if (it == shelves.end())
@@ -136,6 +137,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
     auto menu = Menu(&data->entries_spoof, selected, options);
 
     menu = CatchEvent(menu, [data, selected, on_press](const ftxui::Event& event) {
+        if (*selected < 0 || static_cast<size_t>(*selected) >= data->results.size()) return false;
         return on_press(event, data->results[*selected]);
     });
 

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "../utils/json_str.hpp"
+
 #include "../interfaces/container.hpp"
 
 #include <nlohmann/json.hpp>
@@ -32,7 +34,7 @@ struct PlaylistRef {
             p.id = "";
         }
 
-        p.title = j.value("title", "");
+        p.title = utils::jstr(j, "title");
 
         // author can be string / array if there are multiple artists.
         if (j.contains("author")) {
@@ -56,8 +58,8 @@ struct PlaylistRef {
         }
 
         if (j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty()) {
-            p.thumbnail_large = j["thumbnails"].back().value("url", "");
-            p.thumbnail_small = j["thumbnails"].front().value("url", "");
+            p.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");
+            p.thumbnail_small = utils::jstr(j["thumbnails"].front(), "url");
         } else {
             p.thumbnail_large = "";
             p.thumbnail_small = "";
