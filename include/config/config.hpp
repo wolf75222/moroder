@@ -112,6 +112,8 @@ public:
     std::string KEY_HELP              = "?";
     int SEEK_SECONDS                  = 10;
     bool ENABLE_NOTIFICATIONS         = true;
+    bool ENABLE_LYRICS                = true;
+    std::string KEY_NOW_PLAYING       = "v";
     int VOLUME_STEP                   = 5;
 
     /* Lazy initialization using a lambda:
@@ -665,6 +667,8 @@ private:
             {"KEY_HELP",             makeSetter(&Config::KEY_HELP),              true},
             {"SEEK_SECONDS",         makeSetter(&Config::SEEK_SECONDS),          true},
             {"ENABLE_NOTIFICATIONS", makeSetter(&Config::ENABLE_NOTIFICATIONS),  true},
+            {"ENABLE_LYRICS",        makeSetter(&Config::ENABLE_LYRICS),         true},
+            {"KEY_NOW_PLAYING",      makeSetter(&Config::KEY_NOW_PLAYING),       true},
             {"VOLUME_STEP",          makeSetter(&Config::VOLUME_STEP),           true},
         };
 

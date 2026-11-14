@@ -12,6 +12,7 @@
 #include "social.hpp"
 #include "mpris.hpp"
 #include "music.hpp"
+#include "lyrics.hpp"
 #include "mpv.hpp"
 
 #include <cstdint>
@@ -168,6 +169,10 @@ public:
 
         // Artist page shown in the artist view.
         std::shared_ptr<services::Music::ArtistPage> open_artist;
+
+        // Lyrics of the current track (Now Playing view), and whose they are.
+        std::shared_ptr<services::Lyrics> lyrics;
+        std::string lyrics_id;
 
         // Short message for the playback bar (e.g. why a like failed).
         std::string notice;

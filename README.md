@@ -521,7 +521,36 @@ vertically; a sideways swipe, or Shift+wheel, moves along a carousel.
 Hovering doesn't move the selection.
 
 Playlists open in their own view: header with Play and Add to queue, then
-every track; playing a track continues with the rest of the playlist. The playback bar shows elapsed / total time and the volume.
+every track; playing a track continues with the rest of the playlist.
+
+### Pages and views
+
+- **Playlists and albums** open in their own page (Play, Add to queue, every
+  track); playing a track continues with the rest. A playlist is fetched as
+  soon as it is selected, so opening it is instant.
+- **Artists** open a page with their Top songs, Albums, Singles, Playlists and
+  related artists. Right-click a song for *Go to artist* or *Start radio*.
+- **Now Playing** (<kbd>v</kbd>, or click the title in the playback bar): large
+  cover, progress and the lyrics, highlighted in time with the music when
+  synced. Lyrics come from [LRCLIB](https://lrclib.net): the track's title,
+  artist and duration are sent there; `ENABLE_LYRICS = false` turns it off.
+- **Recently played** is the first home shelf.
+
+### Queue
+
+- <kbd>S</kbd> (or the shuffle icon) shuffles what comes after the current track.
+- In the queue view, <kbd>K</kbd> / <kbd>J</kbd> move a track up / down (also in
+  the right-click menu).
+- The next track is resolved while the current one plays, so skipping or
+  moving on starts at once.
+
+### Picking up where you left off
+
+- The current track, its position and the queue are saved; the next launch
+  brings them back paused at the same spot.
+- Searches are remembered: <kbd>Up</kbd> / <kbd>Down</kbd> in the search bar.
+- The last home page, your playlists and the covers are cached in
+  `~/.cache/moroder`, so the app shows them at once while fresh copies load. The playback bar shows elapsed / total time and the volume.
 
 The volume is remembered between launches. Each new track raises a desktop notification (`notify-send` on Linux); on macOS it comes from a small helper app installed with Moroder (`share/moroder/Moroder.app`), so it carries Moroder's icon and the track's cover. Set `ENABLE_NOTIFICATIONS = false` to turn it off.
 

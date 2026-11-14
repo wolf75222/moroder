@@ -162,7 +162,7 @@ Component ui::PlaybackBar(PlaybackData* data) {
                 // A transient notice (like result, errors) briefly takes the
                 // track's place, where the eye already is.
                 data->notice.empty()
-                    ? track_info
+                    ? track_info | reflect(data->box_track)
                     : text(data->notice) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 filler(),
                 right_controls,

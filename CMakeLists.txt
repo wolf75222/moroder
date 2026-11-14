@@ -117,6 +117,7 @@ set(SOURCES
     src/services/music.cpp
     src/services/player.cpp
     src/services/notify.cpp
+    src/services/lyrics.cpp
 
     src/setup/setup.cpp
 
@@ -126,6 +127,7 @@ set(SOURCES
     src/ui/components/error.cpp
     src/ui/components/grid.cpp
     src/ui/components/playback_bar.cpp
+    src/ui/components/now_playing.cpp
     src/ui/components/search_bar.cpp
     src/ui/components/sidebar.cpp
 

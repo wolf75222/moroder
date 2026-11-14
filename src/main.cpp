@@ -1,4 +1,5 @@
 #include "../include/ui/components/playback_bar.hpp"
+#include "../include/ui/components/now_playing.hpp"
 #include "../include/ui/components/search_bar.hpp"
 #include "../include/ui/components/sidebar.hpp"
 #include "../include/ui/components/content.hpp"
@@ -187,10 +188,16 @@ int main(int argc, char *argv[]) {
 
     // ~12 fps redraws while `animating` (spinners), none otherwise.
     static std::atomic<bool> animating{false};
+    static std::atomic<int> anim_period_ms{80};     // spinners 80 ms, lyrics 250 ms
     std::thread([&screen] {
+        auto last = std::chrono::steady_clock::now();
         while (true) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(80));
-            if (animating) screen.PostEvent(Event::Custom);
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            const auto now = std::chrono::steady_clock::now();
+            if (animating && now - last >= std::chrono::milliseconds(anim_period_ms.load())) {
+                last = now;
+                screen.PostEvent(Event::Custom);
+            }
         }
     }).detach();
     int sidebar_selected = 0;
@@ -211,9 +218,12 @@ int main(int argc, char *argv[]) {
     auto search_gate = Make<FocusGate>(search_bar, &search_active);
 
     ui::PlaybackData playback_bar_data = {};
+    static std::chrono::steady_clock::time_point last_tick_at{};   // when the position last ticked
+    ui::State before_now_playing = ui::State::HOME;
     auto playback_bar = ui::PlaybackBar(&playback_bar_data);
 
     player.setOnPositionTick([&screen, &playback_bar_data](uint64_t position, uint64_t duration) {
+        last_tick_at = std::chrono::steady_clock::now();
         playback_bar_data.position = position / 1000000ULL;
         playback_bar_data.duration = duration / 1000000ULL;
 
@@ -603,9 +613,19 @@ int main(int argc, char *argv[]) {
                 auto it = state_copy.flags.find(k);
                 return it != state_copy.flags.end() && it->second == services::Player::Flags::Ongoing;
             };
+            // Lyrics only need a few frames a second; spinners want more.
+            const bool spinner_on = ongoing("home") || ongoing("search") || ongoing("open_playlist")
+                     || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
+                     || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
+                     || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"));
+            anim_period_ms = spinner_on ? 80 : 250;
+
             animating = ongoing("home") || ongoing("search") || ongoing("open_playlist")
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
-                     || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0);
+                     || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
+                     // Synced lyrics scroll smoothly while playing.
+                     || (current_state == ui::State::NOWPLAYING && playback_bar_data.is_playing && state_copy.lyrics && !state_copy.lyrics->lines.empty())
+                     || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"));
         }
 
         ui::getSidebarData(&state_copy, &sidebar_data);
@@ -771,6 +791,17 @@ int main(int argc, char *argv[]) {
                                 && state_copy.flags["is_logged_in"] == services::Player::Flags::Done
                                 && !state_copy.is_logged_in;
 
+                            if (current_state == ui::State::NOWPLAYING) {
+                                const bool playing = playback_bar_data.is_playing;
+                                double pos = static_cast<double>(playback_bar_data.position);
+                                if (playing && last_tick_at != std::chrono::steady_clock::time_point{}) {
+                                    // Between the 1 s ticks, so synced lyrics move on time.
+                                    pos += std::min(1.0, std::chrono::duration<double>(std::chrono::steady_clock::now() - last_tick_at).count());
+                                }
+                                return ui::renderNowPlaying(&state_copy, pos, static_cast<double>(playback_bar_data.duration),
+                                                            playing, screen.dimx(), screen.dimy() - 8) | flex;
+                            }
+
                             return (has_error || notice)
                                 ? render_page() | yframe | flex
                                 : current_state != ui::State::QUEUE
@@ -898,6 +929,10 @@ int main(int argc, char *argv[]) {
                 if(in(playback_bar_data.box_like))   { player.toggleLikeCurrent(); return true; }
                 if(in(playback_bar_data.box_loop))   { player.cycleLoop();         return true; }
                 if(in(playback_bar_data.box_shuffle)){ player.shuffleUpcoming();   return true; }
+                if(in(playback_bar_data.box_track))  {
+                    ui->OnEvent(Config::keyEvent(cfg.KEY_NOW_PLAYING));
+                    return true;
+                }
                 if(in(playback_bar_data.box_volume)) {
                     // Mute, and unmute back to the level it had.
                     static int before_mute = 100;
@@ -1108,6 +1143,21 @@ int main(int argc, char *argv[]) {
             return false;
         }
 
+        // v: full-screen Now Playing, and back.
+        if(Config::isKey(event, cfg.KEY_NOW_PLAYING) || (event == Event::Escape && current_state == ui::State::NOWPLAYING)) {
+            if (current_state == ui::State::NOWPLAYING) {
+                current_state = before_now_playing;
+            } else if (event != Event::Escape) {
+                before_now_playing = current_state;
+                current_state = ui::State::NOWPLAYING;
+            }
+            main_content_items.clear();
+            main_content->DetachAllChildren();
+            main_content->Add(Renderer([] { return emptyElement(); }));
+            if (current_state == ui::State::HOME) player.getHome();
+            return true;
+        }
+
         // Esc elsewhere goes back to Home, like a browser's back.
         if(event == Event::Escape && current_state != ui::State::HOME) {
             sidebar_data.onHome();
@@ -1237,6 +1287,7 @@ int main(int argc, char *argv[]) {
             row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
             row(cfg.KEY_LIKE,          "like / unlike current track"),
             row(cfg.KEY_SHUFFLE,       "shuffle what comes next"),
+            row(cfg.KEY_NOW_PLAYING,   "now playing: cover + lyrics"),
             text(""),
             heading("On the selected item"),
             row(cfg.KEY_PLAY_NOW,          "play now (starts a radio)"),

@@ -10,7 +10,8 @@ enum class State {
     QUEUE,
     LIBRARY,
     PLAYLIST,
-    ARTIST
+    ARTIST,
+    NOWPLAYING
 };
 
 }
