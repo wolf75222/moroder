@@ -118,6 +118,13 @@ URLs are redacted before being written: the InnerTube key and your last.fm key
 both travel in the query string, so both are stripped. The session cookie is
 never logged, only a short prefix and its length.
 
+
+## Credits
+
+The YouTube Music client is a C++ reimplementation of the endpoints and parsers
+in [ytmusicapi](https://github.com/sigma67/ytmusicapi). The MPRIS
+implementation is adapted from [mpris-server](https://github.com/chrg127/mpris-server).
+
 ---
 
 [README](../README.md) · [Install](install.md) · [Usage](usage.md) · [Configuration](configuration.md) · [Integrations](integrations.md) · **Internals** · [Troubleshooting](troubleshooting.md)

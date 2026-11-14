@@ -2,6 +2,34 @@
 
 # Install
 
+## One command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh | sh
+```
+
+- macOS (Apple silicon): installs `mpv`, `yt-dlp`, `jpeg-turbo` and `libpng`
+  with Homebrew, then the latest release's build (its checksum is checked)
+- Other Macs and Linux: builds the latest release from source (Linux: into
+  `~/.local`, after you install the build dependencies listed below)
+- Puts `moroder` on your `PATH` (adds a line to your shell's rc file if needed)
+
+Options: `MORODER_VERSION=1.2.0` installs a given version,
+`MORODER_FROM_SOURCE=1` always builds, `MORODER_PREFIX=~/opt` installs
+elsewhere, `MORODER_NO_PATH=1` leaves your shell files alone.
+
+## Updates
+
+At launch, at most twice a day, Moroder asks GitHub for the latest release
+(nothing about you is sent). When a newer one is out it asks
+`Update now? [Y/n]` before starting: yes installs it and restarts into it; no
+is remembered for that version. `moroder update` installs the latest anytime
+and also updates yt-dlp. `CHECK_FOR_UPDATES = false` in the config turns the
+check off.
+
+`moroder doctor` checks yt-dlp, mpv, sign-in, the terminal and updates;
+`moroder uninstall` removes Moroder (and, if you say so, your settings).
+
 ## Requirements
 
 ### Build

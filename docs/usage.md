@@ -29,6 +29,10 @@ moroder --anonymous     # or -a
 | `moroder` | starts the player |
 | `moroder setup` | signs in and fills in the config |
 | `moroder keys` | shows what your terminal sends for each key (Shift / Option + arrows) |
+| `moroder update` | installs the latest release and updates yt-dlp |
+| `moroder doctor` | checks yt-dlp, mpv, sign-in, terminal, updates |
+| `moroder uninstall` | removes Moroder (asks before deleting your settings) |
+| `moroder --version` | prints the version |
 | `moroder lastfm` | connects Last.fm scrobbling |
 | `moroder --anonymous`, `-a` | starts without an account |
 | `moroder --help`, `-h` | usage |

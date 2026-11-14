@@ -4,6 +4,7 @@
 #include "../include/ui/viewport.hpp"
 #include "../include/services/suggest.hpp"
 #include "../include/services/scrobble.hpp"
+#include "../include/services/update.hpp"
 #include "../include/ui/components/playback_bar.hpp"
 #include "../include/ui/components/now_playing.hpp"
 #include "../include/ui/components/search_bar.hpp"
@@ -187,6 +188,13 @@ int main(int argc, char *argv[]) {
     if (command == "lastfm") {
         return services::scrobble::connect();
     }
+    if (command == "--version" || command == "-v" || command == "version") {
+        std::cout << "moroder " << services::update::version() << "\n";
+        return 0;
+    }
+    if (command == "update")    return services::update::runUpdate();
+    if (command == "doctor")    return services::update::doctor();
+    if (command == "uninstall") return services::update::uninstall();
 
     /* Anonymous mode
     - Everything except the account works without a session: search, radio and
@@ -201,6 +209,10 @@ int main(int argc, char *argv[]) {
         std::cout << "usage: " << APP_NAME << " [command]\n\n"
                   << "  setup         sign in to YouTube Music and fill in the config\n"
                   << "  keys          show what your terminal sends for each key\n"
+                  << "  update        install the latest release (and update yt-dlp)\n"
+                  << "  doctor        check yt-dlp, mpv, sign-in, terminal, updates\n"
+                  << "  uninstall     remove moroder (asks before deleting your settings)\n"
+                  << "  --version     print the version\n"
                   << "  lastfm        connect Last.fm scrobbling (needs LASTFM_API_KEY / _SECRET)\n"
                   << "  --anonymous   run without an account, -a for short\n"
                   << "  --help        this text\n\n"
@@ -212,6 +224,16 @@ int main(int argc, char *argv[]) {
         std::cerr << "unknown command: " << command << "\n"
                   << "try `" << APP_NAME << " --help`\n";
         return 2;
+    }
+
+    // A newer release: offer it before the interface starts, then restart into it.
+    if (services::update::offerAtLaunch()) {
+        std::cout << "\nStarting the new version...\n";
+        setenv("MORODER_JUST_UPDATED", "1", 1);     // no second offer in the restarted one
+        // The installed one, found on the PATH (not necessarily argv[0]).
+        execvp("moroder", argv);
+        execvp(argv[0], argv);
+        return 0;
     }
 
     /* A missing browser.json means the user has not run setup, and every

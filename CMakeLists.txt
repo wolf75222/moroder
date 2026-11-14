@@ -130,6 +130,7 @@ set(SOURCES
     src/services/notify.cpp
     src/services/lyrics.cpp
     src/services/suggest.cpp
+    src/services/update.cpp
     src/services/scrobble.cpp
 
     src/setup/setup.cpp
@@ -213,8 +214,10 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
     INSTALL_RPATH "${MORODER_RPATH}"
 )
+set(MORODER_REPO "wolf75222/moroder" CACHE STRING "GitHub repository updates come from")
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     MORODER_VERSION="${MORODER_VERSION}"
+    MORODER_REPO="${MORODER_REPO}"
 )
 add_dependencies(${PROJECT_NAME} generate_${PROJECT_NAME}_conf_header)
 
