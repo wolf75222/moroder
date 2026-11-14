@@ -1,4 +1,5 @@
 #include "../../include/ui/cover_cache.hpp"
+#include "../../include/utils/utils.hpp"
 
 #include <curl/curl.h>
 
@@ -41,7 +42,7 @@ constexpr int MAX_IN_FLIGHT = 4;
 
 const fs::path& dir() {
     static const fs::path* d = [] {
-        const char* home = std::getenv("HOME");
+        const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
         auto* p = new fs::path(home ? fs::path(home) / ".cache" / "moroder" / "covers" : fs::path());
         std::error_code ec;
         if (!p->empty()) fs::create_directories(*p, ec);

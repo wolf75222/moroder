@@ -14,9 +14,8 @@
 #include <iostream>
 #include <mutex>
 #include <string>
-#include <sys/ioctl.h>
 #include <thread>
-#include <unistd.h>
+#include "../utils/platform.hpp"
 #include <vector>
 
 namespace cli {
@@ -24,7 +23,12 @@ namespace cli {
 inline bool fancy() {
     static const bool on = [] {
         const char* term = std::getenv("TERM");
-        return isatty(STDOUT_FILENO) && !std::getenv("NO_COLOR") && term && std::string(term) != "dumb";
+#ifdef _WIN32
+        (void)term;   // Windows Terminal / conhost with VT: no TERM there
+        return platform::isTerminal(1) && !std::getenv("NO_COLOR");
+#else
+        return platform::isTerminal(1) && !std::getenv("NO_COLOR") && term && std::string(term) != "dumb";
+#endif
     }();
     return on;
 }
@@ -37,10 +41,7 @@ inline std::string dim()    { return sgr("2"); }
 inline std::string bold()   { return sgr("1"); }
 inline std::string reset()  { return sgr("0"); }
 
-inline int columns() {
-    winsize w{};
-    return ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 20 ? w.ws_col : 80;
-}
+inline int columns() { return platform::terminalColumns(); }
 
 // At most n columns, never cutting a UTF-8 character in half.
 inline std::string clip(std::string s, size_t n) {
@@ -74,11 +75,83 @@ inline bool ask(const std::string& question, bool yes_by_default = true) {
               << dim() << (yes_by_default ? " [Y/n] " : " [y/N] ") << reset() << std::flush;
     std::string answer;
     if (!std::getline(std::cin, answer)) { std::cout << "\n"; return false; }
-    if (!isatty(STDIN_FILENO)) std::cout << answer << "\n";
+    if (!platform::isTerminal(0)) std::cout << answer << "\n";
     if (answer.empty()) return yes_by_default;
     const char c = answer[0];
     return c == 'y' || c == 'Y' || c == 'o' || c == 'O';
 }
+
+/* select
+- A list picked with the arrow keys (or j/k, or its number), Enter to
+  choose, Esc / q to cancel (-1). Collapses to one line once chosen
+- Not a terminal: the default, without asking
+*/
+struct Option { std::string label, detail; };
+
+inline int select(const std::string& question, const std::vector<Option>& options, int initial = 0) {
+    if (options.empty()) return -1;
+    initial = std::clamp(initial, 0, static_cast<int>(options.size()) - 1);
+    if (!fancy() || !platform::isTerminal(0)) return initial;
+
+    platform::RawInput raw;
+    if (!raw.ok()) return initial;
+
+    size_t width = 0;
+    for (const auto& o : options) width = std::max(width, o.label.size());
+
+    int at = initial;
+    const int n = static_cast<int>(options.size());
+    auto draw = [&](bool first) {
+        std::string out;
+        if (!first) out += "\033[" + std::to_string(n + 1) + "A";
+        out += "\r\033[2K  " + bold() + "?" + reset() + "  " + question + "  " + dim() + "↑↓ Enter" + reset() + "\r\n";
+        for (int i = 0; i < n; i++) {
+            std::string label = options[i].label;
+            label.resize(width + 2, ' ');
+            out += "\r\033[2K  " + (i == at ? red() + "❯" + reset() + "  " + bold() + label + reset()
+                                            : std::string("   ") + label)
+                 + dim() + options[i].detail + reset() + "\r\n";
+        }
+        platform::writeTerminal(out);
+    };
+
+    std::cout << std::flush;
+    platform::writeTerminal("\033[?25l");
+    draw(true);
+    int chosen = -2;
+    std::string pending;
+    while (chosen == -2) {
+        char buf[32];
+        const int got = raw.read(buf, sizeof buf, 1000);
+        if (got < 0) { chosen = -1; break; }
+        pending.append(buf, static_cast<size_t>(got));
+        while (!pending.empty() && chosen == -2) {
+            if (pending.rfind("\033[A", 0) == 0 || pending.rfind("\033OA", 0) == 0) { at = (at + n - 1) % n; pending.erase(0, 3); }
+            else if (pending.rfind("\033[B", 0) == 0 || pending.rfind("\033OB", 0) == 0) { at = (at + 1) % n; pending.erase(0, 3); }
+            else if (pending[0] == '\033' && pending.size() >= 3 && pending[1] == '[') pending.erase(0, 3);   // other keys
+            else if (pending[0] == '\033' && pending.size() == 1) { chosen = -1; }                             // Esc alone
+            else {
+                const char c = pending[0];
+                pending.erase(0, 1);
+                if (c == '\r' || c == '\n') chosen = at;
+                else if (c == 'k') at = (at + n - 1) % n;
+                else if (c == 'j') at = (at + 1) % n;
+                else if (c == 'q' || c == 3) chosen = -1;                 // q, Ctrl-C
+                else if (c >= '1' && c <= '9' && c - '1' < n) at = c - '1';
+            }
+        }
+        if (chosen == -2) draw(false);
+    }
+
+    // Collapse to the answer: clear the list, one line in its place.
+    std::string out = "\033[" + std::to_string(n + 1) + "A\033[J\r";
+    out += "  " + (chosen >= 0 ? green() + "✓" : dim() + "–") + reset() + "  " + question + "  "
+         + (chosen >= 0 ? bold() + options[chosen].label + reset() : dim() + "cancelled" + reset()) + "\r\n";
+    out += "\033[?25h";
+    platform::writeTerminal(out);
+    return chosen;
+}
+
 
 enum class State { Wait, Run, Ok, Warn, Fail, Skip };
 

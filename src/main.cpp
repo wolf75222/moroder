@@ -849,7 +849,7 @@ int main(int argc, char *argv[]) {
 
     // Search history survives restarts (~/.cache/moroder/searches.json).
     const fs::path searches_file = [] {
-        const char* home = std::getenv("HOME");
+        const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
         return home ? fs::path(home) / ".cache" / "moroder" / "searches.json" : fs::path();
     }();
     {

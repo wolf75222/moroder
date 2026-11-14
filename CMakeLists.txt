@@ -184,6 +184,13 @@ else()
     list(APPEND SOURCES src/services/browser_cookies_stub.cpp)
 endif()
 
+# What differs between POSIX and Windows (include/utils/platform.hpp)
+if(WIN32)
+    list(APPEND SOURCES src/platform/windows.cpp)
+else()
+    list(APPEND SOURCES src/platform/posix.cpp)
+endif()
+
 if(MORODER_ENABLE_DISCORD)
     list(APPEND SOURCES src/services/social.cpp)
 else()
@@ -200,10 +207,10 @@ set(GENERATED_HEADER ${CMAKE_CURRENT_BINARY_DIR}/gen/${GENERATED_HEADER_NAME}.hp
 add_custom_command(
     OUTPUT ${GENERATED_HEADER}
 
-    COMMAND xxd -i -n ${PROJECT_NAME}_default ${DEFAULT_CONF} > ${GENERATED_HEADER}.tmp
-    COMMAND sed -E "s/^(unsigned )/inline \\1/" ${GENERATED_HEADER}.tmp > ${GENERATED_HEADER}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${DEFAULT_CONF} -DOUTPUT=${GENERATED_HEADER} -DNAME=${PROJECT_NAME}_default
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
 
-    DEPENDS ${DEFAULT_CONF}
+    DEPENDS ${DEFAULT_CONF} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
     COMMENT "Embedding default config into ${GENERATED_HEADER}"
     VERBATIM
 )

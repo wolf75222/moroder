@@ -1,4 +1,5 @@
 #include "../../include/services/update.hpp"
+#include "../../include/utils/utils.hpp"
 #include "../../include/config/config.hpp"
 #include "../../include/services/cli_ui.hpp"
 #include "../../include/ytm/ytmusic.hpp"
@@ -33,7 +34,7 @@ namespace {
 const std::string INSTALLER = "https://raw.githubusercontent.com/" MORODER_REPO "/main/install.sh";
 
 fs::path cacheFile() {
-    const char* home = std::getenv("HOME");
+    const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
     return home ? fs::path(home) / ".cache" / "moroder" / "update.json" : fs::path();
 }
 
@@ -169,10 +170,7 @@ fs::path privateYtdlp() {
     return fs::exists(venv / "bin" / "pip", ec) ? venv : fs::path();
 }
 
-fs::path home() {
-    const char* h = std::getenv("HOME");
-    return h ? fs::path(h) : fs::path();
-}
+fs::path home() { return utils::home(); }
 
 std::string tilde(const fs::path& p) {
     const std::string h = home().string(), s = p.string();

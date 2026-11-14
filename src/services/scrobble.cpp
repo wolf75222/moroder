@@ -1,4 +1,5 @@
 #include "../../include/services/scrobble.hpp"
+#include "../../include/utils/utils.hpp"
 #include "../../include/services/cli_ui.hpp"
 #include "../../include/services/notify.hpp"
 #include "../../include/config/config.hpp"
@@ -74,7 +75,7 @@ std::string md5(const std::string& message) {
 }
 
 fs::path sessionFile() {
-    const char* home = std::getenv("HOME");
+    const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
     return home ? fs::path(home) / ".config" / "moroder" / "lastfm.json" : fs::path();
 }
 

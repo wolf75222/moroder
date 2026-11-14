@@ -11,18 +11,17 @@ is typed into it and nothing is sent anywhere except YouTube.
 
 ## What setup does
 
-1. Lists your browsers (Chrome, Arc, Brave, Edge, Vivaldi, Chromium, Firefox,
-   Zen, LibreWolf, and Opera / Floorp on Linux) and asks which one you use
-   YouTube Music in, or all of them
-2. Reads the YouTube session there and asks YouTube Music who it is: each
-   account is shown with its name, @handle and number of playlists. Several
-   Google accounts in one browser are all listed
-3. You pick the account (the one with the most playlists is suggested); with a
-   single one, setup shows it and asks to confirm
+1. Finds which of your browsers are signed in to YouTube (Chrome, Arc,
+   Brave, Edge, Vivaldi, Chromium, Firefox, Zen, LibreWolf, and Opera /
+   Floorp on Linux), every profile included, without asking for anything
+2. Lists them, the one you used last first: pick with the arrow keys and Enter
+3. Reads that one only, asks YouTube Music whose account it is, and shows its
+   name, @handle and playlists. A browser with several Google accounts lists
+   them all, to pick from the same way
 4. Checks it and saves it. `moroder doctor` shows which account is in use
 
-None signed in? Setup offers to open music.youtube.com so you can sign in,
-then looks again.
+None signed in? Pick "Sign in first": music.youtube.com opens, and setup
+looks again once you're signed in.
 
 On macOS, Chrome, Arc, Brave, Edge, Vivaldi and Chromium keep their cookies
 encrypted: macOS asks to let moroder use the browser's "Safe Storage", choose

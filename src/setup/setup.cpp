@@ -4,6 +4,7 @@
 #include "../../include/config/config.hpp"
 #include "../../include/utils/utils.hpp"
 #include "../../include/services/cli_ui.hpp"
+#include "../../include/utils/platform.hpp"
 #include "../../include/ytm/ytmusic.hpp"
 
 #include <nlohmann/json.hpp>
@@ -11,6 +12,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <mutex>
+#include <thread>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -178,28 +181,22 @@ bool checkDependencies() {
         {"curl",   "not required at runtime, libcurl is linked in",     false},
     };
 
+    std::string present;
     for (const Dependency& dep : deps) {
+        if (!dep.required) continue;
         if (haveCommand(dep.name)) {
             // Just the version: "mpv v0.42.0 Copyright ..." -> "v0.42.0".
             std::string version;
             std::istringstream words(commandVersion(dep.name));
             for (std::string w; words >> w; )
                 if (std::isdigit(static_cast<unsigned char>(w[w[0] == 'v' && w.size() > 1 ? 1 : 0]))) { version = w; break; }
-
-            std::string name = dep.name;
-            while (name.size() < 8) name += ' ';
-            ok(name + dim() + version + reset());
+            present += (present.empty() ? "" : dim() + " · " + reset()) + dep.name + " " + dim() + version + reset();
             continue;
         }
-
-        if (!dep.required) {
-            note(std::string(dep.name) + " is not installed, " + dep.why);
-            continue;
-        }
-
         warn(std::string(dep.name) + " is not installed, it " + dep.why);
         complete = false;
     }
+    if (complete) ok(present);
 
     if (!complete) {
         note("Install the missing ones with your package manager, for example:");
@@ -627,7 +624,7 @@ bool checkStructure(const Credentials& creds) {
         return false;
     }
 
-    ok("cookie carries SAPISID");
+
     return true;
 }
 
@@ -641,7 +638,7 @@ bool checkStructure(const Credentials& creds) {
 - Each is a name and the directory yt-dlp is pointed at (Firefox forks are
   read as Firefox from their own profile directory)
 */
-struct FoundBrowser { std::string name; std::string ytdlp_spec; };
+struct FoundBrowser { std::string name; std::string ytdlp_spec; fs::path dir; };
 
 std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
     const fs::path h = utils::home();
@@ -676,7 +673,7 @@ std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
         for (const auto& d : dirs) {
             if (!fs::is_directory(d, ec)) continue;
             const bool ff = std::find(firefox_like.begin(), firefox_like.end(), name) != firefox_like.end();
-            out.push_back({name, ff ? "firefox:" + d.string() : name});
+            out.push_back({name, ff ? "firefox:" + d.string() : name, d});
             break;
         }
     }
@@ -779,7 +776,16 @@ std::vector<Account> accountsIn(const std::string& browser, bool native, const s
         if (!writeHeaders(scratch, credentialsFor(a))) break;
         ytm::YTMusic client(scratch);
         const json info = client.getAccountInfo();
-        if (!info.is_object()) break;
+        if (!info.is_object()) {
+            // The account menu didn't say; a library that answers still proves the sign-in.
+            if (authuser > 0) break;
+            const json lists = client.getLibraryPlaylists(50);
+            if (!lists.is_array() || lists.empty()) break;
+            a.name = "YouTube account";
+            a.playlists = static_cast<long>(lists.size());
+            out.push_back(a);
+            break;
+        }
         a.name = info.value("name", std::string());
         a.handle = info.value("handle", std::string());
         const bool seen = std::any_of(out.begin(), out.end(), [&](const Account& o) { return o.name == a.name && o.handle == a.handle; });
@@ -793,11 +799,30 @@ std::vector<Account> accountsIn(const std::string& browser, bool native, const s
     return out;
 }
 
-std::string describe(const Account& a) {
-    std::string s = a.name;
-    if (!a.handle.empty()) s += "  " + dim() + a.handle + reset();
-    if (a.playlists >= 0) s += "  " + dim() + (a.playlists >= 50 ? std::string("50+") : std::to_string(a.playlists)) + (a.playlists == 1 ? " playlist" : " playlists") + reset();
+// A YouTube login: SAPISID, or the __Secure- ones recent Chromium keeps instead.
+bool hasLogin(const std::string& cookie) {
+    return contains(cookie, "SAPISID=") || contains(cookie, "3PAPISID=") || contains(cookie, "1PAPISID=");
+}
+
+std::string prettyBrowser(const std::string& name) {
+    static const std::map<std::string, std::string> names = {
+        {"arc", "Arc"}, {"chrome", "Chrome"}, {"brave", "Brave"}, {"edge", "Edge"}, {"vivaldi", "Vivaldi"},
+        {"chromium", "Chromium"}, {"firefox", "Firefox"}, {"zen", "Zen"}, {"librewolf", "LibreWolf"},
+        {"floorp", "Floorp"}, {"opera", "Opera"}, {"safari", "Safari"},
+    };
+    auto it = names.find(utils::lower(name));
+    return it == names.end() ? name : it->second;
+}
+
+std::string accountDetail(const Account& a) {
+    std::string s = a.handle;
+    if (a.playlists >= 0) s += (s.empty() ? "" : " · ") + (a.playlists >= 50 ? std::string("50+") : std::to_string(a.playlists)) + (a.playlists == 1 ? " playlist" : " playlists");
     return s;
+}
+
+std::string accountLine(const Account& a) {
+    const std::string d = accountDetail(a);
+    return a.name + (d.empty() ? "" : "  " + d);
 }
 
 // ---------------------------------------------------------------------------
@@ -918,7 +943,7 @@ bool writeHeaders(const fs::path& target, const Credentials& creds) {
 - Goes through YTMusic so the check exercises the same auth path the app uses,
   SAPISIDHASH included, against a file written exactly as the app will read it
 */
-bool verify(const fs::path& headers_file) {
+bool verify(const fs::path& headers_file, bool show = true) {
     ytm::YTMusic client(headers_file);
 
     if (!client.lastError().empty()) {
@@ -942,13 +967,17 @@ bool verify(const fs::path& headers_file) {
     }
 
     const json account = client.getAccountInfo();
+    if (!account.is_object() && !playlists.empty()) {
+        if (show) ok("signed in, " + std::to_string(playlists.size()) + (playlists.size() == 1 ? " playlist" : " playlists"));
+        return true;
+    }
     if (!account.is_object()) {
         fail("YouTube Music sees no signed-in account with this session");
         note("Sign in at music.youtube.com in that browser, then run moroder setup again.");
         return false;
     }
     const std::string who = account.value("name", std::string()) + (account.value("handle", std::string()).empty() ? "" : " " + account.value("handle", std::string()));
-    ok("signed in as " + bold() + who + reset() + ", " + std::to_string(playlists.size()) + (playlists.size() == 1 ? " playlist" : " playlists") + (playlists.size() >= 5 ? "+" : ""));
+    if (show) ok("signed in as " + bold() + who + reset() + ", " + std::to_string(playlists.size()) + (playlists.size() == 1 ? " playlist" : " playlists") + (playlists.size() >= 5 ? "+" : ""));
     return true;
 }
 
@@ -978,23 +1007,6 @@ bool recordPaths(const fs::path& cookies_dir, const BrowserSpec& browser) {
         return false;
     }
 
-    ok("BROWSER           = " + browser.name);
-    ok("YTM_COOKIES_PATH  = " + utils::tildify(cookies_dir));
-
-    if (updates.size() > 2) {
-        ok("MPV_COOKIES_PATH  = " + utils::tildify(browser.profile));
-
-    } else if (browser.chromium_family) {
-        note("MPV_COOKIES_PATH left empty. yt-dlp finds the default " + browser.name);
-        note("profile on its own, so stream cookies still work. Set it only if you");
-        note("keep the session in a non-default profile.");
-
-    } else {
-        note("MPV_COOKIES_PATH left alone, no browser profile was located.");
-        note("Set it by hand to your browser profile directory if streams fail.");
-    }
-
-    ok("saved to " + utils::tildify(fs::path(Config::path())));
     return true;
 }
 
@@ -1066,159 +1078,160 @@ int setup::run(int argc, char* argv[]) {
     const fs::path headers_file = cookies_dir / "browser.json";
 
     std::cout << "\n  " << bold() << red() << "▶ Moroder setup" << reset() << "  " << dim() << "sign in to YouTube Music, once" << reset() << "\n\n";
-    info("Uses the session your browser already has: no password, and nothing");
-    info("is sent anywhere but YouTube.");
-    std::cout << "\n";
-    auto where = [](const std::string& label, const std::string& path, const std::string& what) {
-        std::string pad = label;
-        while (pad.size() < 10) pad += ' ';
-        std::cout << "     " << dim() << pad << reset() << path << "  " << dim() << what << reset() << "\n";
-    };
-    where("session", utils::tildify(headers_file), "like a password: delete it to sign out");
-    where("settings", utils::tildify(fs::path(Config::path())), "browser and cookie paths");
-    note("Help: https://github.com/" MORODER_REPO "/blob/main/docs/sign-in.md");
 
-    step("Checking what is installed");
     checkDependencies();
 
     Credentials creds;
     bool got = false;
     bool from_store = false;
+    std::string cookie_spec;          // what the app re-reads to stay signed in (COOKIE_BROWSER)
 
-    /* First, the sessions the browsers already hold: no copy-paste. You pick
-    the browser, then the account when it has several (or there are several
-    browsers): each is shown by name, @handle and playlists, so it's clear
-    which one Moroder will use. macOS + Chromium is read natively and stays
-    fresh later (COOKIE_BROWSER); other browsers through yt-dlp's reader.
-    */
+    // Piped in (pbpaste | moroder setup): the headers are on stdin, use them.
+    const bool interactive = platform::isTerminal(0);
+
     std::vector<FoundBrowser> found = installedBrowsers(browser);
     if (browser_given) {
         found.erase(std::remove_if(found.begin(), found.end(), [&](const FoundBrowser& b) { return b.name != utils::lower(browser); }), found.end());
-        if (found.empty()) found.push_back({utils::lower(browser), utils::lower(browser)});
+        if (found.empty()) found.push_back({utils::lower(browser), utils::lower(browser), {}});
     }
-
-    const fs::path scratch = headers_file.string() + ".probe";
-
-    // Piped in (pbpaste | moroder setup): the headers are on stdin, use them.
-    const bool interactive = isatty(fileno(stdin));
     if (!interactive) found.clear();
 
-    for (int round = 0; round < 2 && !got && !found.empty(); round++) {
-        step(round == 0 ? "Finding your YouTube Music account" : "Looking again");
-
-        // Which browsers to read (each Chromium one is a Keychain prompt on macOS).
-        std::vector<FoundBrowser> chosen = found;
-        if (found.size() > 1) {
-            for (size_t i = 0; i < found.size(); i++)
-                std::cout << "     " << bold() << (i + 1) << reset() << "  " << found[i].name << "\n";
-            std::cout << "     " << bold() << (found.size() + 1) << reset() << "  " << dim() << "all of them" << reset() << "\n";
-            const size_t pick = choose("Which browser are you signed in to YouTube Music with?", found.size() + 1, 0);
-            if (pick < found.size()) chosen = { found[pick] };
+    // When a browser last touched its cookies: the one you use comes first.
+    auto lastUsed = [](const fs::path& dir, const std::string& profile) -> long long {
+        long long newest = 0;
+        std::error_code ec;
+        if (dir.empty()) return 0;
+        if (!profile.empty()) {
+            for (const fs::path& p : {dir / profile / "Network" / "Cookies", dir / profile / "Cookies"})
+                newest = std::max(newest, platform::modifiedAt(p));
+            return newest;
         }
-        if (std::any_of(chosen.begin(), chosen.end(), [](const FoundBrowser& b) { return services::isCookieStoreBrowser(b.name); }))
-            note("macOS may ask to let moroder read the browser's \"Safe Storage\": choose Always Allow.");
+        for (auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (it.depth() > 2) { it.disable_recursion_pending(); continue; }
+            if (it->path().filename() == "cookies.sqlite") newest = std::max(newest, platform::modifiedAt(it->path()));
+        }
+        return newest;
+    };
+
+    const fs::path scratch = headers_file.string() + ".probe";
+    bool paste = !interactive;
+
+    /* The browsers signed in to YouTube, found without prompting (macOS
+    Chromium: the login cookie is there, nothing decrypted; others through
+    yt-dlp's reader). You pick one with the arrow keys; only that one is read
+    (one Keychain prompt on macOS), then YouTube Music says whose account it
+    is, and you pick the account when the browser has several.
+    */
+    while (!got && !paste && !found.empty()) {
+        struct Source { FoundBrowser fb; std::string profile_dir, profile_name; bool native; std::string cookie; long long used = 0; };
+        std::vector<Source> sources;
+        {
+            cli::Live live;
+            const size_t id = live.add("Browsers");
+            live.set(id, cli::State::Run, "looking for a YouTube Music sign-in");
+            live.start();
+            std::mutex m;
+            std::vector<std::thread> threads;
+            for (const auto& b : found) {
+                threads.emplace_back([&, b] {
+                    std::vector<Source> mine;
+                    if (services::isCookieStoreBrowser(b.name)) {
+                        for (const auto& [dir, name] : services::signedInProfiles(b.name)) mine.push_back({b, dir, name, true, ""});
+                    } else {
+                        std::string error;
+                        const std::string cookie = cookiesViaYtdlp(b, error);
+                        if (hasLogin(cookie)) mine.push_back({b, "", "", false, cookie});
+                    }
+                    std::lock_guard lock(m);
+                    sources.insert(sources.end(), mine.begin(), mine.end());
+                });
+            }
+            for (auto& t : threads) t.join();
+            // The most recently used first.
+            for (auto& src : sources) src.used = lastUsed(src.fb.dir, src.profile_dir);
+            std::stable_sort(sources.begin(), sources.end(), [](const Source& a, const Source& b) { return a.used > b.used; });
+            std::string names;
+            for (const auto& s : sources) if (names.find(prettyBrowser(s.fb.name)) == std::string::npos) names += (names.empty() ? "" : ", ") + prettyBrowser(s.fb.name);
+            live.set(id, sources.empty() ? cli::State::Warn : cli::State::Ok, sources.empty() ? "none signed in to YouTube" : "signed in: " + names);
+            live.finish();
+        }
+
+        std::vector<cli::Option> options;
+        for (const auto& s : sources) {
+            const bool several = std::count_if(sources.begin(), sources.end(), [&](const Source& o) { return o.fb.name == s.fb.name; }) > 1;
+            options.push_back({prettyBrowser(s.fb.name), several ? s.profile_name : ""});
+        }
+        const int sign_in = static_cast<int>(options.size());
+        options.push_back({"Sign in first", "opens music.youtube.com, then looks again"});
+        const int by_hand = static_cast<int>(options.size());
+        options.push_back({"Paste headers", "copied from your browser by hand"});
+
+        const int pick = cli::select(sources.empty() ? "No browser is signed in. Now what?" : "Use which browser?", options, sources.empty() ? sign_in : 0);
+        if (pick < 0) { std::cout << "\n"; return 1; }
+        if (pick == by_hand) { paste = true; break; }
+        if (pick == sign_in) {
+            openInBrowser("https://music.youtube.com/");
+            std::cout << "  " << bold() << "?" << reset() << "  Sign in there, then press Return " << std::flush;
+            std::string ignored;
+            std::getline(std::cin, ignored);
+            continue;
+        }
+
+        Source s = sources[static_cast<size_t>(pick)];
+        std::string spec = s.fb.name;
+        if (s.native) {
+            if (s.profile_dir != "Default") spec += ":" + s.profile_dir;
+            std::string error;
+            s.cookie = services::readYouTubeCookies(spec, error);
+            if (!hasLogin(s.cookie)) { warn(prettyBrowser(s.fb.name) + ": " + (error.empty() ? "couldn't read its session" : error)); continue; }
+        }
 
         std::vector<Account> accounts;
-        for (const auto& b : chosen) {
-            std::string error;
-            const bool native = services::isCookieStoreBrowser(b.name);
-            const std::string cookie = native ? services::readYouTubeCookies(b.name, error) : cookiesViaYtdlp(b, error);
-            if (!contains(cookie, "SAPISID=")) {
-                note(b.name + ": " + (cookie.empty() && !error.empty() ? error : "not signed in to YouTube"));
-                continue;
-            }
-            std::vector<Account> mine = accountsIn(b.name, native, cookie, scratch);
-            if (mine.empty()) note(b.name + ": a YouTube session, but YouTube Music doesn't recognise it (expired?)");
-            accounts.insert(accounts.end(), mine.begin(), mine.end());
+        {
+            cli::Live live;
+            const size_t id = live.add("Account");
+            live.set(id, cli::State::Run, "asking YouTube Music");
+            live.start();
+            accounts = accountsIn(s.fb.name, s.native, s.cookie, scratch);
+            if (accounts.size() == 1) live.set(id, cli::State::Ok, accountLine(accounts[0]));
+            else if (accounts.empty()) live.set(id, cli::State::Warn, "YouTube Music doesn't recognise this session: sign in again there");
+            else live.set(id, cli::State::Ok, std::to_string(accounts.size()) + " accounts in " + prettyBrowser(s.fb.name));
+            live.finish();
         }
+        if (accounts.empty()) continue;
 
-        if (accounts.size() == 1) {
-            const Account& a = accounts[0];
-            ok(a.browser + "  " + describe(a));
-            if (a.playlists == 0) note("No playlists on this account: if it isn't yours, sign in to the right one and run moroder setup again.");
-            if (ask("Use this account?")) {
-                creds = credentialsFor(a); browser = a.browser; from_store = a.native; got = true;
-            }
-        } else if (accounts.size() > 1) {
-            info("Signed in on:");
-            for (size_t i = 0; i < accounts.size(); i++)
-                std::cout << "     " << bold() << (i + 1) << reset() << "  " << dim() << accounts[i].browser << reset() << "  " << describe(accounts[i]) << "\n";
-            // The one with the most playlists first, as a likely guess.
+        size_t chosen = 0;
+        if (accounts.size() > 1) {
+            std::vector<cli::Option> list;
             size_t best = 0;
-            for (size_t i = 1; i < accounts.size(); i++) if (accounts[i].playlists > accounts[best].playlists) best = i;
-            const Account& a = accounts[choose("Which account?", accounts.size(), best)];
-            creds = credentialsFor(a); browser = a.browser; from_store = a.native; got = true;
-            ok("using " + a.name + (a.handle.empty() ? "" : " " + a.handle) + " from " + a.browser);
-        }
-
-        // None: sign in, then look again (once).
-        if (!got && round == 0) {
-            info("No signed-in YouTube Music account found there.");
-            if (!ask("Open music.youtube.com to sign in, then look again?")) break;
-            openInBrowser("https://music.youtube.com/");
-            if (isatty(fileno(stdin))) {
-                std::cout << "\n  " << bold() << "?" << reset() << "  Press Return once you are signed in " << std::flush;
-                std::string ignored;
-                std::getline(std::cin, ignored);
+            for (size_t i = 0; i < accounts.size(); i++) {
+                list.push_back({accounts[i].name, accountDetail(accounts[i])});
+                if (accounts[i].playlists > accounts[best].playlists) best = i;
             }
+            const int a = cli::select("Which account?", list, static_cast<int>(best));
+            if (a < 0) continue;
+            chosen = static_cast<size_t>(a);
         }
+        if (accounts[chosen].playlists == 0) note("No playlists on this account. Not yours? Run moroder setup again and pick another.");
+
+        creds = credentialsFor(accounts[chosen]);
+        browser = s.fb.name;
+        from_store = s.native;
+        cookie_spec = s.native ? spec : "";
+        got = true;
     }
 
-    // Otherwise: the headers pasted from a signed-in tab (Safari, or no browser found).
-    if (!got && found.empty() && interactive) {
-        step("Checking you are signed in");
-
-        if (ask("Open music.youtube.com in your browser to confirm?")) {
-            openInBrowser("https://music.youtube.com/");
-            info("Sign in there if you are not already, then come back here.");
-
-            if (isatty(fileno(stdin))) {
-                std::cout << "\n  " << bold() << "?" << reset() << "  Press Return once you are signed in " << std::flush;
-                std::string ignored;
-                std::getline(std::cin, ignored);
-            }
-        }
-    }
-
-    /* The profile is only for stream cookies, so it is looked up before the
-    paste and its failure never stops the sign-in.
-    */
-    step("Looking for your " + browser + " profile");
-
-    if (!browser_given) note("from BROWSER in " + utils::tildify(fs::path(Config::path())) + ", override with --browser");
-
+    // Stream cookies (age-restricted / Premium tracks): the browser's profile.
     BrowserSpec spec = resolveBrowser(browser, profile_override);
-
-    if (spec.resolved && !spec.profile.empty()) {
-        ok("found " + utils::tildify(spec.profile));
-        note("yt-dlp reads this when opening a stream, so age-restricted and");
-        note("premium tracks play. It is not where the session comes from.");
-
-    } else if (spec.resolved) {
-        note("no profile directory located, streams may still work");
-
-    } else {
-        warn(spec.problem);
-        note("Only stream cookies are affected. Pass --profile <dir> to set it,");
-        note("or fill in MPV_COOKIES_PATH by hand later.");
-    }
+    if (!spec.resolved) warn(spec.problem + " (only age-restricted tracks are affected; --profile DIR sets it)");
 
     if (!got) {
-        step("Pasting the headers");
+        step("Paste the headers");
         got = fromPaste(creds);
     }
 
-    if (!got) {
-        std::cout << "\n";
-        fail("setup did not complete, nothing was written");
-        return 1;
-    }
-
-    step("Checking the credentials");
-    note("cookie: " + preview(creds.cookie));
-    note("source: " + creds.source);
-
-    if (!checkStructure(creds)) {
+    if (!got || !checkStructure(creds)) {
         std::cout << "\n";
         fail("setup did not complete, nothing was written");
         return 1;
@@ -1229,62 +1242,40 @@ int setup::run(int argc, char* argv[]) {
     answered, which keeps a broken sign-in from replacing a working one.
     */
     const fs::path staged = headers_file.string() + ".new";
-
     if (!writeHeaders(staged, creds)) return 1;
 
-    step("Asking YouTube Music who you are");
-
     std::error_code ec;
-
-    const bool verified = verify(staged);
+    const bool verified = verify(staged, !from_store && creds.source == "pasted headers");
     if (!verified) {
         // Only on request: piped in, an unverified session is not kept.
         if (!interactive || !ask("Keep these credentials anyway?")) {
             fs::remove(staged, ec);
             std::cout << "\n";
             fail("setup did not complete, nothing was written");
-
-            if (fs::exists(headers_file)) note("Your previous browser.json is untouched.");
+            if (fs::exists(headers_file)) note("Your previous session is untouched.");
             return 1;
         }
     }
 
-    step("Saving");
-
-    if (fs::exists(headers_file)) {
-        fs::copy_file(headers_file, headers_file.string() + ".bak",
-                      fs::copy_options::overwrite_existing, ec);
-
-        if (!ec) note("previous session kept at " + headers_file.string() + ".bak");
-    }
-
+    if (fs::exists(headers_file)) fs::copy_file(headers_file, headers_file.string() + ".bak", fs::copy_options::overwrite_existing, ec);
     fs::rename(staged, headers_file, ec);
-
     if (ec) {
         fail("could not move the new session into place, " + ec.message());
         fs::remove(staged, ec);
         return 1;
     }
 
-    ok("wrote " + utils::tildify(headers_file) + " (0600)");
-
     if (!recordPaths(cookies_dir, spec)) return 1;
 
     // Remember where the session comes from, so the app keeps it fresh.
-    Config::setValues({{"COOKIE_BROWSER", Config::quote(from_store ? utils::lower(browser) : "")}});
-    if (from_store) ok("COOKIE_BROWSER    = " + utils::lower(browser) + "  (refreshed automatically)");
+    Config::setValues({{"COOKIE_BROWSER", Config::quote(cookie_spec)}});
 
     if (!verified) {
         std::cout << "\n  " << yellow() << "!" << reset() << " " << bold() << "Saved, unverified." << reset()
                   << " If your library stays empty, run " << bold() << "moroder setup" << reset() << " again.\n\n";
         return 0;
     }
-    std::cout << "\n  " << green() << "✓" << reset() << " " << bold() << "Signed in." << reset()
-              << " Run " << bold() << "moroder" << reset() << " and your library will load.\n\n";
-
-    note("If the library stops loading later, the session has expired.");
-    note("Run moroder setup again to replace it.");
-    std::cout << "\n";
-
+    std::cout << "\n  " << green() << "✓" << reset() << " " << bold() << "Done." << reset()
+              << " Run " << bold() << "moroder" << reset() << dim() << (from_store ? "  (stays signed in with " + prettyBrowser(browser) + ")" : "") << reset() << "\n\n";
     return 0;
 }

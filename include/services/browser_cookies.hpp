@@ -10,13 +10,25 @@
 #pragma once
 
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace services {
 
 // True for the browsers readCookieStore() knows (on this platform).
 bool isCookieStoreBrowser(const std::string& browser);
 
-// Cookie header for music.youtube.com, or empty with `error` set.
+/* Cookie header for music.youtube.com, or empty with `error` set.
+- browser is "arc", or "arc:Profile 1" for a profile other than the one
+  signed in first (Default, else the first profile that is)
+*/
 std::string readYouTubeCookies(const std::string& browser, std::string& error);
+
+/* signedInProfiles
+- The browser's profiles that hold a YouTube sign-in, {directory, name shown
+  in the browser}: only checks the login cookie is there, without decrypting
+  anything, so no Keychain prompt
+*/
+std::vector<std::pair<std::string, std::string>> signedInProfiles(const std::string& browser);
 
 }

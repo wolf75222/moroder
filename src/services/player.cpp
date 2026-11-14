@@ -5,17 +5,13 @@
 #include "../../include/services/scrobble.hpp"
 #include "../../include/utils/json_str.hpp"
 #include "../../include/utils/utils.hpp"
+#include "../../include/utils/platform.hpp"
 #include <fstream>
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <csignal>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/select.h>
-#include <sys/wait.h>
-#include <spawn.h>
 #include <regex>
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
@@ -27,7 +23,6 @@
 #include <thread>
 #include <algorithm>
 #include <type_traits>
-#include <sys/stat.h>
 #include <cstdint>
 #include <memory>
 #include <sstream>
@@ -116,12 +111,11 @@ std::filesystem::path volumeFile() {
 
 }
 
-extern char** environ;
 
 namespace {
 
 std::filesystem::path cachePath(const std::string& name) {
-    const char* home = std::getenv("HOME");
+    const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
     if (!home) return {};
     return std::filesystem::path(home) / ".cache" / "moroder" / name;
 }
@@ -3176,8 +3170,7 @@ for line in sys.stdin:
 
 struct Resolver {
     std::mutex mtx;
-    pid_t pid = 0;
-    int to = -1, from = -1;
+    platform::Process proc;
     std::string cookies;
     long long cookies_mtime = 0;    // yt-dlp reads the cookie file once: restart when it changes
     std::string pending;     // bytes read past the last answer
@@ -3185,9 +3178,21 @@ struct Resolver {
 
 Resolver resolvers[2];
 
-// The Python yt-dlp runs on (its shebang), so `import yt_dlp` works.
+/* ytdlpPython
+- The Python yt-dlp runs on (its shebang), so `import yt_dlp` works
+- Windows: yt-dlp is an .exe there, no shebang; a Python that can import
+  yt_dlp (pip install yt-dlp) is used when there is one, else none: each
+  track then spawns yt-dlp, about a second slower
+*/
 std::string ytdlpPython() {
     static const std::string python = [] {
+#ifdef _WIN32
+        for (const char* candidate : {"python", "py"}) {
+            if (platform::which(candidate).empty()) continue;
+            if (platform::shell(std::string(candidate) + " -c \"import yt_dlp\"" + platform::quietStderr(), nullptr) == 0) return std::string(candidate);
+        }
+        return std::string();
+#else
         const char* path = std::getenv("PATH");
         std::string p = path ? path : "";
         size_t start = 0;
@@ -3209,58 +3214,25 @@ std::string ytdlpPython() {
             start = end + 1;
         }
         return std::string();
+#endif
     }();
     return python;
 }
 
 void stopResolver(Resolver& r) {
-    if (r.pid > 0) { kill(r.pid, SIGKILL); waitpid(r.pid, nullptr, 0); }
-    if (r.to >= 0) close(r.to);
-    if (r.from >= 0) close(r.from);
-    r.pid = 0; r.to = r.from = -1; r.pending.clear();
+    r.proc.kill();
+    r.pending.clear();
 }
 
 bool startResolver(Resolver& r, const std::string& cookies) {
     const std::string python = ytdlpPython();
     if (python.empty()) return false;
 
-    int in[2], out[2];
-    if (pipe(in) != 0) return false;
-    if (pipe(out) != 0) { close(in[0]); close(in[1]); return false; }
-    fcntl(in[1], F_SETFD, FD_CLOEXEC);
-    fcntl(out[0], F_SETFD, FD_CLOEXEC);
-#ifdef F_SETNOSIGPIPE
-    fcntl(in[1], F_SETNOSIGPIPE, 1);
-#endif
-
     std::vector<std::string> args = { python, "-I", "-c", RESOLVER_SCRIPT };
     if (!cookies.empty()) args.push_back(cookies);
-    std::vector<char*> argv;
-    for (auto& a : args) argv.push_back(a.data());
-    argv.push_back(nullptr);
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, in[0], STDIN_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-
-    // Only the fds set up above reach the child (other spawns' pipes would
-    // keep their readers from ever seeing EOF).
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
-#endif
-    pid_t pid = 0;
-    const bool ok = posix_spawnp(&pid, python.c_str(), &actions, &attr, argv.data(), environ) == 0;   // p: "python3" from an env shebang
-    posix_spawnattr_destroy(&attr);
-    posix_spawn_file_actions_destroy(&actions);
-    close(in[0]);
-    close(out[1]);
-    if (!ok) { close(in[1]); close(out[0]); return false; }
-
-    r.pid = pid; r.to = in[1]; r.from = out[0]; r.cookies = cookies; r.pending.clear();
+    if (!r.proc.start(args)) return false;
+    r.cookies = cookies;
+    r.pending.clear();
     return true;
 }
 
@@ -3274,42 +3246,34 @@ void prestartResolvers() {
     const std::string cookies = resolverCookies();
     for (Resolver& r : resolvers) {
         std::lock_guard lock(r.mtx);
-        if (r.pid <= 0) startResolver(r, cookies);
+        if (!r.proc.running()) startResolver(r, cookies);
     }
 }
 
 // One answer line from the resolver, "" on failure (the resolver is then restarted next time).
 long long fileMtime(const std::string& path) {
-    struct stat st{};
-    return (!path.empty() && ::stat(path.c_str(), &st) == 0) ? static_cast<long long>(st.st_mtime) : 0;
+    return path.empty() ? 0 : platform::modifiedAt(path);
 }
 
 std::string askResolver(Resolver& r, const std::string& url, const std::string& cookies) {
     const long long mtime = fileMtime(cookies);
-    if (r.pid > 0 && (r.cookies != cookies || r.cookies_mtime != mtime)) stopResolver(r);
-    if (r.pid <= 0) r.cookies_mtime = mtime;
-    if (r.pid <= 0 && !startResolver(r, cookies)) return "";
+    if (r.proc.running() && (r.cookies != cookies || r.cookies_mtime != mtime)) stopResolver(r);
+    if (!r.proc.running()) r.cookies_mtime = mtime;
+    if (!r.proc.running() && !startResolver(r, cookies)) return "";
 
-    const std::string line = url + "\n";
-    if (write(r.to, line.data(), line.size()) != static_cast<ssize_t>(line.size())) { stopResolver(r); return ""; }
+    if (!r.proc.write(url + "\n")) { stopResolver(r); return ""; }
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
-    char buf[16384];
     while (true) {
         const size_t nl = r.pending.find('\n');
         if (nl != std::string::npos) {
             std::string answer = r.pending.substr(0, nl);
             r.pending.erase(0, nl + 1);
+            if (!answer.empty() && answer.back() == '\r') answer.pop_back();
             return answer;
         }
         if (std::chrono::steady_clock::now() > deadline) { stopResolver(r); return ""; }
-        fd_set set; FD_ZERO(&set); FD_SET(r.from, &set);
-        timeval tv{0, 200000};
-        if (select(r.from + 1, &set, nullptr, nullptr, &tv) > 0) {
-            const ssize_t n = read(r.from, buf, sizeof(buf));
-            if (n <= 0) { stopResolver(r); return ""; }
-            r.pending.append(buf, static_cast<size_t>(n));
-        }
+        if (r.proc.read(r.pending, 200) < 0) { stopResolver(r); return ""; }
     }
 }
 
@@ -3351,49 +3315,16 @@ std::string services::Player::resolveStream(const std::string& url, bool priorit
     }
     out.clear();
 
-    std::vector<char*> argv;
-    for (auto& a : args) argv.push_back(a.data());
-    argv.push_back(nullptr);
-
-    int fds[2];
-    if (pipe(fds) != 0) return "";
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-    posix_spawn_file_actions_addclose(&actions, fds[0]);
-
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
-#endif
-    pid_t pid = 0;
-    const bool started = posix_spawnp(&pid, "yt-dlp", &actions, &attr, argv.data(), environ) == 0;
-    posix_spawnattr_destroy(&attr);
-    posix_spawn_file_actions_destroy(&actions);
-    close(fds[1]);
-
-    if (started) {
+    platform::Process p;
+    if (p.start(args)) {
+        p.closeStdin();
         // A stuck yt-dlp is killed after 25 s.
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
-        char buf[16384];
-        while (true) {
-            fd_set set; FD_ZERO(&set); FD_SET(fds[0], &set);
-            timeval tv{0, 200000};
-            if (select(fds[0] + 1, &set, nullptr, nullptr, &tv) > 0) {
-                const ssize_t n = read(fds[0], buf, sizeof(buf));
-                if (n <= 0) break;
-                out.append(buf, static_cast<size_t>(n));
-            }
-            if (std::chrono::steady_clock::now() > deadline) { kill(pid, SIGKILL); break; }
+        while (p.read(out, 200) >= 0) {
+            if (std::chrono::steady_clock::now() > deadline) { p.kill(); break; }
         }
-        int status = 0;
-        waitpid(pid, &status, 0);
+        p.wait();
     }
-    close(fds[0]);
     const std::string r = parseResolved(out);
     rememberStream(url, r);
     return r;

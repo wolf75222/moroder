@@ -51,7 +51,9 @@ inline fs::path resolve_path(const char* path_macro) {
         return p;
     }
 
+    // HOME, or USERPROFILE on Windows.
     const char* home = std::getenv("HOME");
+    if (!home || !*home) home = std::getenv("USERPROFILE");
     if (!home) {
         throw std::runtime_error("HOME not set");
     }
@@ -84,6 +86,7 @@ inline void ensure_dir(const fs::path& path) {
 */
 inline fs::path home() {
     const char* h = std::getenv("HOME");
+    if (!h || !*h) h = std::getenv("USERPROFILE");     // Windows
     return h ? fs::path(h) : fs::path();
 }
 
@@ -108,7 +111,7 @@ inline std::string tildify(const fs::path& path) {
 
     if (full.rfind(prefix, 0) == 0) {
         if (full.size() == prefix.size()) return "~";
-        if (full[prefix.size()] == '/') return "~" + full.substr(prefix.size());
+        if (full[prefix.size()] == '/' || full[prefix.size()] == '\\') return "~" + full.substr(prefix.size());
     }
 
     return full;

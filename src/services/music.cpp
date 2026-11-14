@@ -1,4 +1,5 @@
 #include "../../include/services/music.hpp"
+#include "../../include/utils/utils.hpp"
 #include "../../include/utils/json_str.hpp"
 #include <fstream>
 #include <unistd.h>
@@ -332,7 +333,7 @@ namespace {
 
 // Only for a signed-in session: an anonymous home isn't worth keeping.
 fs::path cacheFile(const std::string& name) {
-    const char* home = std::getenv("HOME");
+    const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
     if (!home) return {};
     return fs::path(home) / ".cache" / "moroder" / (name + ".json");
 }

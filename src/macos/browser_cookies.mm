@@ -6,6 +6,7 @@
 #include <CommonCrypto/CommonCrypto.h>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -152,30 +153,109 @@ bool decrypt(const std::vector<uint8_t>& key, const void* blob, size_t n, bool h
 }
 
 bool services::isCookieStoreBrowser(const std::string& browser) {
-    return browsers().count(utils::lower(browser)) > 0;
+    return browsers().count(utils::lower(browser.substr(0, browser.find(':')))) > 0;
 }
 
-std::string services::readYouTubeCookies(const std::string& browser, std::string& error) {
+namespace {
+
+// A profile's cookie store: Network/Cookies (Chromium 96+), else Cookies.
+fs::path cookieStore(const fs::path& profile) {
+    std::error_code ec;
+    for (const fs::path& p : {profile / "Network" / "Cookies", profile / "Cookies"})
+        if (fs::exists(p, ec)) return p;
+    return {};
+}
+
+// Default first, then Profile 1, Profile 2...
+std::vector<fs::path> profileDirs(const fs::path& root) {
+    std::vector<fs::path> out;
+    std::error_code ec;
+    if (fs::is_directory(root / "Default", ec)) out.push_back(root / "Default");
+    std::vector<fs::path> more;
+    for (auto& e : fs::directory_iterator(root, ec))
+        if (e.is_directory(ec) && e.path().filename().string().rfind("Profile ", 0) == 0) more.push_back(e.path());
+    std::sort(more.begin(), more.end());
+    out.insert(out.end(), more.begin(), more.end());
+    return out;
+}
+
+// Whether the store has a YouTube login cookie (read from a private copy: the
+// browser keeps it locked). Names only, nothing decrypted.
+bool hasYouTubeLogin(const fs::path& store) {
+    std::string tmpl = (fs::temp_directory_path() / "moroder-probe-XXXXXX.db").string();
+    const int fd = mkstemps(tmpl.data(), 3);
+    if (fd < 0) return false;
+    close(fd);
+    std::error_code ec;
+    fs::copy_file(store, tmpl, fs::copy_options::overwrite_existing, ec);
+    bool found = false;
+    sqlite3* db = nullptr;
+    if (!ec && sqlite3_open_v2(tmpl.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+        sqlite3_stmt* st = nullptr;
+        const char* sql = "SELECT 1 FROM cookies WHERE host_key IN ('.youtube.com', 'youtube.com') "
+                          "AND name IN ('SAPISID', '__Secure-3PAPISID', '__Secure-1PAPISID') LIMIT 1";
+        if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) found = true;
+        sqlite3_finalize(st);
+    }
+    sqlite3_close(db);
+    fs::remove(tmpl, ec);
+    return found;
+}
+
+// The name the browser shows for a profile ("Personal", "Work"), from Local State.
+std::string profileName(const fs::path& root, const std::string& dir) {
+    NSString* path = [NSString stringWithUTF8String:(root / "Local State").c_str()];
+    NSData* data = [NSData dataWithContentsOfFile:path];
+    if (!data) return dir;
+    NSDictionary* json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]]) return dir;
+    id cache = json[@"profile"][@"info_cache"][[NSString stringWithUTF8String:dir.c_str()]];
+    if (![cache isKindOfClass:[NSDictionary class]]) return dir;
+    id name = cache[@"name"];
+    return [name isKindOfClass:[NSString class]] && [name length] ? std::string([name UTF8String]) : dir;
+}
+
+}
+
+std::vector<std::pair<std::string, std::string>> services::signedInProfiles(const std::string& browser) {
+    std::vector<std::pair<std::string, std::string>> out;
+    auto it = browsers().find(utils::lower(browser));
+    const fs::path home = utils::home();
+    if (it == browsers().end() || home.empty()) return out;
+    const fs::path root = home / "Library" / "Application Support" / it->second.dir;
+    for (const fs::path& dir : profileDirs(root)) {
+        const fs::path store = cookieStore(dir);
+        if (!store.empty() && hasYouTubeLogin(store))
+            out.push_back({dir.filename().string(), profileName(root, dir.filename().string())});
+    }
+    return out;
+}
+
+std::string services::readYouTubeCookies(const std::string& spec, std::string& error) {
+    const size_t colon = spec.find(':');
+    const std::string browser = spec.substr(0, colon);
+    const std::string wanted = colon == std::string::npos ? "" : spec.substr(colon + 1);
+
     auto it = browsers().find(utils::lower(browser));
     if (it == browsers().end()) { error = "unsupported browser '" + browser + "'"; return ""; }
     const BrowserInfo& info = it->second;
 
-    const char* home = getenv("HOME");
-    if (!home) { error = "HOME not set"; return ""; }
+    const fs::path home = utils::home();
+    if (home.empty()) { error = "HOME not set"; return ""; }
 
-    const fs::path root = fs::path(home) / "Library" / "Application Support" / info.dir;
+    const fs::path root = home / "Library" / "Application Support" / info.dir;
 
-    // The default profile, else the first one that has a cookie store.
+    // The profile asked for, else the first one signed in, else the first one.
     fs::path store;
     std::error_code ec;
-    if (fs::exists(root / "Default" / "Cookies", ec)) {
-        store = root / "Default" / "Cookies";
+    if (!wanted.empty()) {
+        store = cookieStore(root / wanted);
     } else {
-        for (auto& e : fs::directory_iterator(root, ec)) {
-            if (e.path().filename().string().rfind("Profile", 0) == 0 && fs::exists(e.path() / "Cookies", ec)) {
-                store = e.path() / "Cookies";
-                break;
-            }
+        for (const fs::path& dir : profileDirs(root)) {
+            const fs::path s = cookieStore(dir);
+            if (s.empty()) continue;
+            if (store.empty()) store = s;
+            if (hasYouTubeLogin(s)) { store = s; break; }
         }
     }
     if (store.empty()) { error = "no cookie store under " + root.string(); return ""; }
