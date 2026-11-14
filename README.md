@@ -25,7 +25,7 @@ Playlists, radio, search, queue · clicks, swipes, menus
 curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh | sh
 ```
 
-**2.** Sign in, once. It takes the YouTube Music session from your browser, and how depends on which one: see the [sign-in guide](docs/sign-in.md).
+**2.** Sign in with your browser, once ([guide](docs/sign-in.md)):
 
 ```bash
 moroder setup --browser chrome    # or arc, brave, edge, firefox, safari...
