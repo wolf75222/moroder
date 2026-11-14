@@ -1,5 +1,7 @@
 #include <termios.h>
 #include <unistd.h>
+#include <poll.h>
+#include <cctype>
 #include "../include/ui/cover_cache.hpp"
 #include "../include/ui/viewport.hpp"
 #include "../include/services/suggest.hpp"
@@ -164,6 +166,67 @@ static int keyTest() {
     return 0;
 }
 
+/* detectSyncOutput
+- Synchronized output (DEC mode 2026) makes the terminal show each frame only
+  once it has all of it: no half-drawn, flickering frames (see
+  cmake/patch_ftxui.cmake). Used only where the terminal says it has the mode,
+  so a terminal without it, or with a shaky one, draws as it always did
+- Asked with DECRQM ("CSI ? 2026 $ p"); the reply is "CSI ? 2026 ; Ps $ y",
+  Ps 1-3 meaning known. DA1 ("CSI c") follows as a fence: every terminal
+  answers it, so its reply means no answer about 2026 is coming
+- MORODER_SYNC_OUTPUT=0 or 1 in the environment decides instead
+*/
+static void detectSyncOutput() {
+    if (std::getenv("MORODER_SYNC_OUTPUT")) return;
+    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) return;
+
+    // Warp answers that it has the mode, but then held whole frames back:
+    // the page stayed blank for seconds after going back.
+    if (const char* term = std::getenv("TERM_PROGRAM"); term && std::string(term) == "WarpTerminal") {
+        spdlog::info("TERMINAL: synchronized output off (Warp)");
+        return;
+    }
+
+    termios old{};
+    if (tcgetattr(STDIN_FILENO, &old) != 0) return;
+    termios raw = old;
+    raw.c_lflag &= ~static_cast<tcflag_t>(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) return;
+
+    static const char query[] = "\033[?2026$p\033[c";
+    bool sent = write(STDOUT_FILENO, query, sizeof query - 1) == static_cast<ssize_t>(sizeof query - 1);
+
+    // The DA1 reply: ESC [ ? digits/semicolons c
+    auto fenced = [](const std::string& s) {
+        for (size_t at = s.find("\033[?"); at != std::string::npos; at = s.find("\033[?", at + 1)) {
+            size_t i = at + 3;
+            while (i < s.size() && (std::isdigit(static_cast<unsigned char>(s[i])) || s[i] == ';')) i++;
+            if (i < s.size() && s[i] == 'c') return true;
+        }
+        return false;
+    };
+
+    std::string got;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (sent && std::chrono::steady_clock::now() < deadline && !fenced(got)) {
+        pollfd p{STDIN_FILENO, POLLIN, 0};
+        if (poll(&p, 1, 20) > 0) {
+            char buf[256];
+            const ssize_t n = read(STDIN_FILENO, buf, sizeof buf);
+            if (n > 0) got.append(buf, static_cast<size_t>(n));
+        }
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &old);
+
+    const size_t at = got.find("\033[?2026;");
+    const char ps = at != std::string::npos && at + 8 < got.size() ? got[at + 8] : '0';
+    const bool supported = ps == '1' || ps == '2' || ps == '3';
+    if (supported) setenv("MORODER_SYNC_OUTPUT", "1", 1);
+    spdlog::info("TERMINAL: synchronized output {}", supported ? "supported, used" : "not reported, off");
+}
+
 int main(int argc, char *argv[]) {
     Config::app_name = APP_NAME;
 
@@ -280,6 +343,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    detectSyncOutput();
     auto screen = ScreenInteractive::Fullscreen();
 
     // Mouse: click items and controls, wheel to scroll (see the handler below).
