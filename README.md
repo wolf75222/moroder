@@ -16,7 +16,7 @@ Keyboard, mouse or trackpad. macOS and Linux.
 |:--|:--|:--|
 | Gapless, starts fast | Synced, sung along | Click, swipe, scroll |
 | Queue, radio, shuffle | Album art in color | Right-click menus |
-| Your library and playlists | Full-screen view (<kbd>v</kbd>) | Media keys, Now Playing |
+| Your library and playlists | Full-screen view | Media keys, Now Playing |
 
 </div>
 
@@ -44,7 +44,7 @@ No account? `moroder -a` plays without one. New releases are offered at launch.
 
 ## Commands
 
-| | |
+| Command | Does |
 |:--|:--|
 | `moroder search daft punk` | open on search results |
 | `moroder update` | install the latest release |
