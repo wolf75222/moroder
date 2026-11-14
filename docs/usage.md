@@ -33,6 +33,7 @@ moroder --anonymous     # or -a
 | `moroder doctor` | checks yt-dlp, mpv, sign-in, terminal, updates |
 | `moroder uninstall` | removes Moroder (asks before deleting your settings) |
 | `moroder --version` | prints the version |
+| `moroder search WORDS` | opens on the search results for WORDS (`moroder -a search ...` without an account) |
 | `moroder lastfm` | connects Last.fm scrobbling |
 | `moroder --anonymous`, `-a` | starts without an account |
 | `moroder --help`, `-h` | usage |

@@ -10,7 +10,7 @@ Keyboard, mouse or trackpad. macOS and Linux.
 <img alt="Linux" src="https://img.shields.io/badge/Linux-161b22?style=for-the-badge&logo=linux&logoColor=white">
 <img alt="YouTube Music" src="https://img.shields.io/badge/YouTube%20Music-161b22?style=for-the-badge&logo=youtubemusic&logoColor=FF0000">
 
-<img src="img/app.gif" alt="Moroder" width="760">
+<img src="docs/assets/app.gif" alt="Moroder" width="760">
 
 Fast, gapless playback · synced lyrics · album art<br>
 Playlists, radio, search, queue · clicks, swipes, menus
@@ -19,12 +19,25 @@ Playlists, radio, search, queue · clicks, swipes, menus
 
 ## Install
 
+**1.** Install (macOS or Linux):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh | sh
 ```
 
-Then `moroder setup` once, and `moroder`.<br>
-It offers updates when a new release is out; `moroder update` anytime.
+**2.** Sign in, once (uses your browser's YouTube Music session):
+
+```bash
+moroder setup
+```
+
+**3.** Play:
+
+```bash
+moroder
+```
+
+Updates are offered when a new release is out (`moroder update` anytime).
 
 ## Keys
 
@@ -47,6 +60,6 @@ It offers updates when a new release is out; `moroder update` anytime.
 
 <br>
 
-<sub>Fork of <a href="https://github.com/orrnithogalum/moroder">orrnithogalum/moroder</a></sub>
+<sub>Fork of <a href="https://github.com/orrnithogalum/moroder">orrnithogalum/moroder</a>, ported to macOS and enhanced</sub>
 
 </div>

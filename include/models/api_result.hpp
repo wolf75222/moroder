@@ -62,6 +62,14 @@ struct ApiResult {
         res.category = utils::lower(res.category);
         res.resultType = utils::lower(res.resultType);
 
+        /* An album page (browseId MPRE...) is an album whatever its label: an
+        artist page's Albums come without a type (they showed as empty tiles),
+        and Singles / EPs are albums too, not songs.
+        */
+        const bool album_page = j.contains("browseId") && j["browseId"].is_string()
+                             && j["browseId"].get<std::string>().rfind("MPRE", 0) == 0 && !j.contains("videoId");
+        if (album_page && (res.resultType.empty() || res.resultType == "single" || res.resultType == "ep")) res.resultType = "album";
+
         if (res.resultType == "song" || res.resultType == "video" || res.resultType == "single") {
             spdlog::info("APIRESULT: parsing a song / video");
             res.data = music::SongRef::from_json(j);

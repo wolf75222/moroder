@@ -177,7 +177,21 @@ int main(int argc, char *argv[]) {
     - setup has to work on a machine with no config and no session, so it must
       not go through Player, which needs both
     */
-    const std::string command = argc > 1 ? argv[1] : "";
+    /* Arguments: -a / --anonymous anywhere, then a command and its words
+    ("moroder -a search daft punk").
+    */
+    bool anonymous_flag = false;
+    std::vector<std::string> words;
+    for (int i = 1; i < argc; i++) {
+        const std::string a = argv[i];
+        if (a == "-a" || a == "--anonymous") anonymous_flag = true;
+        else words.push_back(a);
+    }
+    const std::string command = words.empty() ? (anonymous_flag ? "--anonymous" : "") : words[0];
+    std::string start_query;      // moroder search <words>: opens on those results
+    if (command == "search") {
+        for (size_t i = 1; i < words.size(); i++) start_query += (start_query.empty() ? "" : " ") + words[i];
+    }
 
     if (command == "setup") {
         return setup::run(argc, argv);
@@ -202,7 +216,7 @@ int main(int argc, char *argv[]) {
     - The library and the home page have nothing to fill themselves with, and
       every request is slower, so this is opt-in rather than a silent fallback
     */
-    const bool anonymous = command == "--anonymous" || command == "-a";
+    const bool anonymous = anonymous_flag;
     Config::anonymous = anonymous;
 
     if (command == "--help" || command == "-h") {
@@ -213,6 +227,7 @@ int main(int argc, char *argv[]) {
                   << "  doctor        check yt-dlp, mpv, sign-in, terminal, updates\n"
                   << "  uninstall     remove moroder (asks before deleting your settings)\n"
                   << "  --version     print the version\n"
+                  << "  search WORDS  open on the search results for WORDS\n"
                   << "  lastfm        connect Last.fm scrobbling (needs LASTFM_API_KEY / _SECRET)\n"
                   << "  --anonymous   run without an account, -a for short\n"
                   << "  --help        this text\n\n"
@@ -220,7 +235,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (!command.empty() && !anonymous) {
+    if (!command.empty() && command != "--anonymous" && command != "search") {
         std::cerr << "unknown command: " << command << "\n"
                   << "try `" << APP_NAME << " --help`\n";
         return 2;
@@ -2364,6 +2379,12 @@ int main(int argc, char *argv[]) {
         spdlog::shutdown();
         std::_Exit(0);
     };
+
+    // moroder search <words>: start on those results.
+    if (!start_query.empty()) {
+        search_bar_data.value = start_query;
+        search_bar_data.onSearch(start_query);
+    }
 
 #ifdef __APPLE__
     /* The UI gets its own thread and blocks on input like on Linux; the main

@@ -288,7 +288,7 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 if(APPLE)
     set(MORODER_HELPER_APP "${CMAKE_BINARY_DIR}/Moroder.app")
 
-    add_executable(moroder-make-icon tools/make_icon.m)
+    add_executable(moroder-make-icon res/macos/make_icon.m)
     set_target_properties(moroder-make-icon PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(moroder-make-icon PRIVATE "-framework AppKit")
 
