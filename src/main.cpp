@@ -192,6 +192,7 @@ int main(int argc, char *argv[]) {
 
     // Search is entered on purpose and left after Enter / Esc (see FocusGate).
     bool search_active = false;
+    Box sidebar_box;            // where the sidebar is drawn, for the wheel
     int content_column = 1;     // 0 = search bar, 1 = page content
     auto search_gate = Make<FocusGate>(search_bar, &search_active);
 
@@ -569,7 +570,7 @@ int main(int argc, char *argv[]) {
                         text(" "),
                         text(" "),
 
-                        sidebar->Render() | yframe
+                        sidebar->Render() | yframe | reflect(sidebar_box)
                     }) | size(WIDTH, EQUAL, 30)
                     : emptyElement(),
 
@@ -651,13 +652,33 @@ int main(int argc, char *argv[]) {
     - Actions for whatever the pointer was over; each action replays the key
       that does the same thing, so mouse and keyboard can never disagree
     */
+    struct ContextItem {
+        std::string icon, label, hint;
+        std::function<void()> run;
+    };
     struct ContextMenu {
         bool open = false;
         int x = 0, y = 0;
         int hover = 0;
-        std::vector<std::pair<std::string, std::function<void()>>> items;
+        std::string title;              // what the menu is about, dimmed on top
+        std::vector<ContextItem> items;
         std::vector<Box> boxes;
     } ctx;
+
+    // Title of an API result, for the context menu header.
+    auto result_title = [](const music::ApiResult& r) {
+        std::string t;
+        std::visit([&](auto&& d) {
+            using T = std::decay_t<decltype(d)>;
+            if constexpr (std::is_same_v<T, music::SongRef> || std::is_same_v<T, music::AlbumRef> ||
+                          std::is_same_v<T, music::PlaylistRef> || std::is_same_v<T, music::EpisodeRef>) t = d.title;
+            else if constexpr (std::is_same_v<T, music::ArtistRef> || std::is_same_v<T, music::PodcastRef>) t = d.name;
+        }, r.data);
+        return t;
+    };
+
+    // Wheel pacing: a trackpad fires dozens of wheel events per swipe.
+    auto last_wheel = std::chrono::steady_clock::time_point{};
 
     // Double-click detection.
     auto last_click = std::chrono::steady_clock::time_point{};
@@ -690,6 +711,9 @@ int main(int argc, char *argv[]) {
             auto in = [&](const Box& b) { return b.Contain(m.x, m.y); };
 
             if(wheel && in(playback_bar_data.box_volume)) {
+                const auto now = std::chrono::steady_clock::now();
+                if(now - last_wheel < std::chrono::milliseconds(60)) return true;
+                last_wheel = now;
                 player.changeVolume(m.button == Mouse::WheelUp ? cfg.VOLUME_STEP : -cfg.VOLUME_STEP);
                 return true;
             }
@@ -715,9 +739,12 @@ int main(int argc, char *argv[]) {
                 }
             }
 
+            const bool wheel_h = m.button == Mouse::WheelLeft || m.button == Mouse::WheelRight;
+            const bool moved = m.motion == Mouse::Moved || m.button == Mouse::None;
+
             // An open context menu takes the mouse first.
             if(ctx.open) {
-                if(m.motion == Mouse::Released || m.button == Mouse::None) {
+                if(moved) {
                     for(size_t i = 0; i < ctx.boxes.size(); i++) if(in(ctx.boxes[i])) ctx.hover = static_cast<int>(i);
                     return true;
                 }
@@ -725,12 +752,50 @@ int main(int argc, char *argv[]) {
                     for(size_t i = 0; i < ctx.boxes.size(); i++) {
                         if(in(ctx.boxes[i])) {
                             ctx.open = false;
-                            ctx.items[i].second();
+                            ctx.items[i].run();
                             return true;
                         }
                     }
                 }
-                ctx.open = false;     // click elsewhere closes it
+                if(m.motion == Mouse::Pressed) ctx.open = false;   // any press elsewhere closes it
+                return true;
+            }
+
+            /* Hover doesn't move the selection: following the pointer made the
+            focus jump around while scrolling or just passing over the page.
+            */
+            if(moved) return true;
+
+            /* Wheel / trackpad
+            - Vertical always scrolls vertically (the sidebar when the pointer is
+              over it, the page otherwise), never sideways through a carousel
+            - Horizontal (trackpad swipe, or Shift+wheel) moves along a carousel
+            - Paced, so one swipe doesn't fly past everything
+            */
+            if(wheel || wheel_h) {
+                const bool horizontal = wheel_h || m.shift;
+                const bool back = m.button == Mouse::WheelUp || m.button == Mouse::WheelLeft;
+
+                const auto now = std::chrono::steady_clock::now();
+                const auto pace = horizontal ? std::chrono::milliseconds(70)
+                               : current_state == ui::State::HOME ? std::chrono::milliseconds(140)
+                               : std::chrono::milliseconds(30);
+                if(now - last_wheel < pace) return true;
+                last_wheel = now;
+
+                Event step = horizontal ? (back ? Event::ArrowLeft : Event::ArrowRight)
+                                        : (back ? Event::ArrowUp   : Event::ArrowDown);
+
+                if(!horizontal && !sidebar_hidden && in(sidebar_box)) {
+                    if(!sidebar->Focused()) sidebar->TakeFocus();
+                    sidebar->OnEvent(step);
+                    return true;
+                }
+
+                if(main_content->Focusable()) {
+                    if(!main_content->Focused()) main_content->TakeFocus();
+                    main_content->OnEvent(step);
+                }
                 return true;
             }
 
@@ -743,28 +808,38 @@ int main(int argc, char *argv[]) {
                 if(!layout->OnEvent(left) || search_bar->Focused()) return true;
 
                 ctx.items.clear();
+                ctx.title.clear();
                 auto key = [&](const std::string& bind) { return [&, bind] { layout->OnEvent(Config::keyEvent(bind)); }; };
+                const std::string play_hint = "enter";
 
                 if(sidebar->Focused()) {
                     const int sel = sidebar_selected;
                     if(sel > 2 && static_cast<size_t>(sel - 3) < sidebar_data.results.size()) {
                         const music::Playlist pl = sidebar_data.results[sel - 3];
-                        ctx.items.push_back({"\uf07c  Open", key(cfg.KEY_PLAY_NOW)});
-                        ctx.items.push_back({"\uf04b  Play", [&player, pl] {
+                        ctx.title = pl.ref.title;
+                        ctx.items.push_back({"\uf07c", "Open", play_hint, key(cfg.KEY_PLAY_NOW)});
+                        ctx.items.push_back({"\uf04b", "Play", "", [&player, pl] {
                             player.queue(std::static_pointer_cast<music::IStreamableContainer>(std::make_shared<music::Playlist>(pl)), true, true);
                         }});
-                        ctx.items.push_back({"\uf067  Add to queue", key(cfg.KEY_ADD_TO_QUEUE)});
+                        ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, key(cfg.KEY_ADD_TO_QUEUE)});
                     }
                 } else if(ui::ContentEntry* e = focused_entry()) {
                     const std::string& c = e->category;
                     const bool special = c.rfind("__library_filters__", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
                     if(!special) {
                         const bool track = c.rfind("__track__", 0) == 0;
-                        ctx.items.push_back({track ? "\uf04b  Play from here" : "\uf04b  Play", key(cfg.KEY_PLAY_NOW)});
+
+                        // Carousels hold their results apart from the entry.
+                        if(!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
+                            ctx.title = result_title(e->carousel_data.results[e->selected]);
+                        else
+                            ctx.title = result_title(e->result);
+
+                        ctx.items.push_back({"\uf04b", track ? "Play from here" : "Play", play_hint, key(cfg.KEY_PLAY_NOW)});
                         if(current_state == ui::State::QUEUE) {
-                            ctx.items.push_back({"\uf00d  Remove from queue", key(cfg.KEY_REMOVE_FROM_QUEUE)});
+                            ctx.items.push_back({"\uf00d", "Remove from queue", cfg.KEY_REMOVE_FROM_QUEUE, key(cfg.KEY_REMOVE_FROM_QUEUE)});
                         } else {
-                            ctx.items.push_back({"\uf067  Add to queue", key(cfg.KEY_ADD_TO_QUEUE)});
+                            ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, key(cfg.KEY_ADD_TO_QUEUE)});
                         }
                     }
                 }
@@ -808,11 +883,6 @@ int main(int argc, char *argv[]) {
                 if(navigation || double_click) layout->OnEvent(Event::Return);
             }
 
-            // Wheel over something that doesn't scroll itself: move the focus.
-            if(wheel && !handled) {
-                layout->OnEvent(m.button == Mouse::WheelUp ? Event::ArrowUp : Event::ArrowDown);
-            }
-
             return true;
         }
 
@@ -820,7 +890,7 @@ int main(int argc, char *argv[]) {
             if(event == Event::Escape)    { ctx.open = false; return true; }
             if(event == Event::ArrowDown) { ctx.hover = (ctx.hover + 1) % static_cast<int>(ctx.items.size()); return true; }
             if(event == Event::ArrowUp)   { ctx.hover = (ctx.hover + static_cast<int>(ctx.items.size()) - 1) % static_cast<int>(ctx.items.size()); return true; }
-            if(event == Event::Return)    { ctx.open = false; ctx.items[ctx.hover].second(); return true; }
+            if(event == Event::Return)    { ctx.open = false; ctx.items[ctx.hover].run(); return true; }
             return true;
         }
 
@@ -973,6 +1043,7 @@ int main(int argc, char *argv[]) {
             row("click",                  "select (sidebar: open)"),
             row("dbl-click",              "play"),
             row("right-click",            "menu: play, queue, open"),
+            row("wheel",                  "scroll; swipe / shift: sideways"),
             row(cfg.KEY_QUEUE_VIEW,       "queue"),
             row(cfg.KEY_TOGGLE_SIDEBAR,   "toggle sidebar"),
             row(cfg.KEY_HELP,             "this help"),
@@ -985,19 +1056,45 @@ int main(int argc, char *argv[]) {
         Element base = ui->Render();
 
         if (ctx.open) {
+            constexpr int W = 30;
+            const Color panel = Color::RGB(24, 24, 28);
+            const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+
             Elements rows;
+
+            if (!ctx.title.empty()) {
+                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 6, "...")) | dim, filler() }));
+                rows.push_back(separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_SECONDARY)));
+            }
+
             for (size_t i = 0; i < ctx.items.size(); i++) {
-                Element row = text(" " + ctx.items[i].first + "  ");
-                row = static_cast<int>(i) == ctx.hover
-                    ? row | bold | inverted
-                    : row | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
+                const auto& it = ctx.items[i];
+                const bool on = static_cast<int>(i) == ctx.hover;
+
+                Element row = hbox({
+                    text("  "),
+                    text(it.icon) | size(WIDTH, EQUAL, 3),
+                    text(it.label),
+                    filler(),
+                    text(it.hint) | (on ? nothing : dim),
+                    text("  "),
+                });
+
+                row = on ? row | bold | color(Color::White) | bgcolor(accent)
+                         : row | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
                 rows.push_back(row | reflect(ctx.boxes[i]));
             }
-            Element menu = vbox(std::move(rows)) | borderRounded | clear_under;
+
+            Element menu = vbox(std::move(rows))
+                | size(WIDTH, EQUAL, W)
+                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+                | bgcolor(panel)
+                | clear_under;
 
             // Keep it on screen near the pointer.
-            const int x = std::max(0, std::min(ctx.x, screen.dimx() - 28));
-            const int y = std::max(0, std::min(ctx.y, screen.dimy() - static_cast<int>(ctx.items.size()) - 3));
+            const int h = static_cast<int>(ctx.items.size()) + (ctx.title.empty() ? 0 : 2) + 2;
+            const int x = std::max(0, std::min(ctx.x, screen.dimx() - W - 3));
+            const int y = std::max(0, std::min(ctx.y, screen.dimy() - h - 1));
             base = dbox({
                 base,
                 vbox({

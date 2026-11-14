@@ -786,6 +786,8 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         main_content_items.push_back(ContentEntry{});
         ContentEntry& item = main_content_items.back();
         item.category = "__track__" + number;
+        item.result.resultType = "song";
+        item.result.data = song->ref;
 
         ButtonOption opt;
         opt.transform = [top, bottom, url, number](const EntryState& s) {

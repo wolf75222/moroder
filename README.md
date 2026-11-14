@@ -516,6 +516,9 @@ Home, Library, a playlist or a filter), double-click plays, right-click opens
 a menu (play, play from here, add to / remove from queue, open). The playback
 bar's controls, heart and loop icon are clickable, a click on the progress
 line seeks, a click on the volume mutes, and the wheel over it changes it.
+The wheel (or a two-finger trackpad scroll) scrolls the page or the sidebar
+vertically; a sideways swipe, or Shift+wheel, moves along a carousel.
+Hovering doesn't move the selection.
 
 Playlists open in their own view: header with Play and Add to queue, then
 every track; playing a track continues with the rest of the playlist. The playback bar shows elapsed / total time and the volume.
