@@ -47,6 +47,12 @@ set(MORODER_VERSION "0.0.0-dev" CACHE STRING "Moroder version")
 
 include(FetchContent)
 
+# windows.h, wherever it comes in (CImg, our own Win32 code): no min / max
+# macros, and only the core of it.
+if(WIN32)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 # `cmake --install` installs Moroder only, not the bundled libraries.
 set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDBUSCPP_INSTALL OFF CACHE BOOL "" FORCE)

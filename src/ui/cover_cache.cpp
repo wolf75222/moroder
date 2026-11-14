@@ -5,6 +5,10 @@
 
 #define cimg_display 0      // cimg_use_jpeg / cimg_use_png come from CMake, when the libs exist
 #include "CImg.h"
+#ifdef _WIN32
+// CImg brings in windows.h, whose RGB macro would rewrite ftxui's Color::RGB.
+#undef RGB
+#endif
 
 #include <atomic>
 #include <chrono>
