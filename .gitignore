@@ -16,7 +16,8 @@ logs/*
 
 # Historical test probes and development code that has since been integrated
 # Test / reference data used to avoid repeatedly hitting external APIs during testing
-tests/
+tests/*
+!tests/browser_window_test.cpp
 env/
 
 # Extra

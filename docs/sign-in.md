@@ -20,8 +20,14 @@ is typed into it and nothing is sent anywhere except YouTube.
    them all, to pick from the same way
 4. Checks it and saves it. `moroder doctor` shows which account is in use
 
-None signed in? Pick "Sign in first": music.youtube.com opens, and setup
-looks again once you're signed in.
+None signed in? Two ways:
+
+- **New window**: Chrome, Edge or Brave opens on a profile of its own; sign in
+  to YouTube Music there and setup takes the session from the browser itself.
+  Works for any account, and where cookies can't be read from disk (Chrome
+  and Edge on Windows)
+- **Sign in first**: music.youtube.com opens in your usual browser, and setup
+  looks again once you're signed in
 
 On macOS, Chrome, Arc, Brave, Edge, Vivaldi and Chromium keep their cookies
 encrypted: macOS asks to let moroder use the browser's "Safe Storage", choose

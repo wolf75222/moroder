@@ -39,11 +39,12 @@ irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
 - Best in Windows Terminal (colours, mouse, Unicode)
 - Settings and session live in `%USERPROFILE%\.config\moroder`, as on the
   other systems
-- `moroder setup` reads Firefox, Zen and LibreWolf sessions when yt-dlp runs
-  on Python (`pip install yt-dlp`); recent Chrome and Edge lock their cookies
-  on Windows, so setup falls back to pasting the headers for them
-- No media keys or Now Playing integration yet; notifications are Windows
-  toasts without the cover
+- `moroder setup` reads Firefox, Zen and LibreWolf sessions directly. Chrome
+  and Edge lock their cookies on Windows (app-bound encryption): pick
+  **New window** in setup, sign in there once, and the browser hands the
+  session over itself
+- Media keys (play / pause, next, previous) work wherever the focus is;
+  notifications are Windows toasts
 
 Built with MSYS2 (UCRT64); `.github/workflows/windows.yml` shows the steps.
 
