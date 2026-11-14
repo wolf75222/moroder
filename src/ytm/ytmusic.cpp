@@ -566,6 +566,20 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
 
 
 
+bool YTMusic::setCookie(const std::string& cookie) {
+    std::string sid = cookieValue(cookie, "__Secure-3PAPISID");
+    if (sid.empty()) sid = cookieValue(cookie, "SAPISID");
+    if (sid.empty()) return false;
+
+    std::lock_guard lock(mtx);
+    if (!auth_headers.is_object()) auth_headers = json::object();
+    auth_headers["cookie"] = cookie;
+    sapisid = sid;
+    if (!auth_headers.contains("origin")) origin = YTM_DOMAIN;
+    authenticated = true;
+    return true;
+}
+
 bool YTMusic::rateSong(const std::string& videoId, bool like) {
     if (!authenticated || videoId.empty()) return false;
 

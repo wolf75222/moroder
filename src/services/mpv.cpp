@@ -275,6 +275,10 @@ void services::MPV::setLoopFile(bool enabled) {
     spdlog::info("MPV: loop-file {}", value);
 }
 
+void services::MPV::refreshSessionCookies() {
+    if (!Config::anonymous) writeSessionCookies(Config::get());
+}
+
 void services::MPV::setVolume(int percent) {
     std::lock_guard<std::mutex> lock(mtx);
 

@@ -55,6 +55,12 @@ public:
 
     std::unordered_map<std::string, std::vector<music::ApiResult>> getHome();
 
+    /* refreshCookies
+    - With COOKIE_BROWSER set: re-read the session from that browser, use it
+      at once and save it to browser.json. False when unset or unreadable
+    */
+    bool refreshCookies();
+
     // Like / un-like a track on the account. False if signed out or it failed.
     bool rateSong(const std::string& videoId, bool like);
     // Shelf titles from the last getHome(), in YouTube Music's order.

@@ -57,6 +57,9 @@ public:
     */
     void setVolume(int percent);
 
+    // Rewrite yt-dlp's cookie file from browser.json (after a session refresh).
+    void refreshSessionCookies();
+
     /* getStreamPosition
     - Retrieves the position of the currently loaded stream in microseconds.
     - Returns 0 if the position property cannot be retrieved from MPV.

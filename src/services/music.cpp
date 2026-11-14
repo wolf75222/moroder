@@ -1,4 +1,6 @@
 #include "../../include/services/music.hpp"
+#include <fstream>
+#include "../../include/services/browser_cookies.hpp"
 
 #include "../../include/ytm/metadata.hpp"
 
@@ -341,6 +343,45 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
 
     home_order = response.order;
     return response.results;
+}
+
+bool services::Music::refreshCookies() {
+    const Config& cfg = Config::get();
+    if (Config::anonymous || cfg.COOKIE_BROWSER.empty()) return false;
+
+    std::string error;
+    const std::string cookie = services::readYouTubeCookies(cfg.COOKIE_BROWSER, error);
+    if (cookie.empty()) {
+        spdlog::warn("MUSIC: could not refresh the session from {}: {}", cfg.COOKIE_BROWSER, error);
+        return false;
+    }
+
+    if (!ytm->setCookie(cookie)) {
+        spdlog::warn("MUSIC: {} cookies carry no SAPISID, signed out there?", cfg.COOKIE_BROWSER);
+        return false;
+    }
+
+    // Persist, so the next launch (and yt-dlp's cookie file) start fresh too.
+    const fs::path file = cfg.YTM_COOKIES_PATH / "browser.json";
+    nlohmann::json headers = nlohmann::json::object();
+    {
+        std::ifstream in(file);
+        if (in.is_open()) headers = nlohmann::json::parse(in, nullptr, false);
+        if (!headers.is_object()) headers = nlohmann::json::object();
+    }
+    headers["cookie"] = cookie;
+    if (!headers.contains("user-agent")) headers["user-agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+    if (!headers.contains("origin")) { headers["origin"] = "https://music.youtube.com"; headers["x-origin"] = "https://music.youtube.com"; }
+
+    {
+        std::ofstream out(file, std::ios::trunc);
+        out << headers.dump(4);
+    }
+    std::error_code ec;
+    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
+
+    spdlog::info("MUSIC: session refreshed from {}", cfg.COOKIE_BROWSER);
+    return true;
 }
 
 bool services::Music::rateSong(const std::string& videoId, bool like) {

@@ -48,6 +48,14 @@ public:
     */
     std::string BROWSER = "firefox";
 
+    /* COOKIE_BROWSER
+    - When set (arc, chrome, brave, edge, chromium, vivaldi), the session is
+      re-read from that browser's cookie store at launch, every 10 minutes and
+      before writes, so it never expires while you stay signed in there
+    - Set by `moroder setup --browser <name>` on macOS
+    */
+    std::string COOKIE_BROWSER;
+
     fs::path YTM_COOKIES_PATH;
     fs::path MPV_COOKIES_PATH;
 
@@ -616,6 +624,7 @@ private:
 
             {"LASTFM_API_KEY",       makeSetter(&Config::LASTFM_API_KEY),        true},
             {"BROWSER",              makeSetter(&Config::BROWSER),               true},
+            {"COOKIE_BROWSER",       makeSetter(&Config::COOKIE_BROWSER),        true},
             {"YTM_COOKIES_PATH",     makeSetter(&Config::YTM_COOKIES_PATH),      true},
             {"MPV_COOKIES_PATH",     makeSetter(&Config::MPV_COOKIES_PATH),      true},
             {"SEARCH_RESULT_LIMIT",  makeSetter(&Config::SEARCH_RESULT_LIMIT),   true},

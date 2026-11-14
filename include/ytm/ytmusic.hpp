@@ -68,6 +68,12 @@ public:
         return authenticated;
     }
 
+    /* setCookie
+    - Swap in a fresh cookie header (re-read from the browser) without
+      rebuilding the client; false if it carries no SAPISID
+    */
+    bool setCookie(const std::string& cookie);
+
     /* rateSong
     - Like a track, or clear its rating, as the web player does
     - The web player sends params "OAI=" with it; without it YouTube answers

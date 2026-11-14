@@ -7,6 +7,8 @@
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
+#include <chrono>
+#include <thread>
 #include <algorithm>
 #include <type_traits>
 #include <sys/stat.h>
@@ -118,6 +120,20 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
     if (!mpris_service) {
         spdlog::error("PLAYER: mpris service initialisation failed.");
         return;
+    }
+
+    /* Session from the browser (COOKIE_BROWSER): fresh at launch, then every
+    10 minutes, so it never goes stale while the browser stays signed in.
+    */
+    if (music_service && music_service->refreshCookies()) {
+        mpv_service->refreshSessionCookies();
+
+        std::thread([this] {
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::minutes(10));
+                if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
+            }
+        }).detach();
     }
 
     if (!music_service) {
@@ -816,6 +832,9 @@ void services::Player::worker_loop() {
 
             } else if constexpr (std::is_same_v<T, RateCommand>) {
                 spdlog::info("PLAYER: RateCommand, {}", c.like ? "like" : "remove like");
+
+                // Writes need the freshest cookies; re-read them first if we can.
+                music_service->refreshCookies();
 
                 const bool ok = music_service->rateSong(c.video_id, c.like);
                 const services::RequestError& err = music_service->lastError();

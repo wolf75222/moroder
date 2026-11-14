@@ -1,4 +1,5 @@
 #include "../../include/setup/setup.hpp"
+#include "../../include/services/browser_cookies.hpp"
 
 #include "../../include/config/config.hpp"
 #include "../../include/utils/utils.hpp"
@@ -943,10 +944,38 @@ int setup::run(int argc, char* argv[]) {
         note("or fill in MPV_COOKIES_PATH by hand later.");
     }
 
-    step("Pasting the headers");
-
     Credentials creds;
-    bool got = fromPaste(creds);
+    bool got = false;
+    bool from_store = false;
+
+    /* macOS + a Chromium-family browser: take the session straight from its
+    cookie store. No copy-paste, and Moroder keeps re-reading it later
+    (COOKIE_BROWSER), so it never expires while you stay signed in there.
+    */
+    if (services::isCookieStoreBrowser(browser)) {
+        step("Reading your session from " + browser);
+        note("macOS may ask to let moroder use \"" + browser + " Safe Storage\": choose Always Allow.");
+
+        std::string error;
+        creds.cookie = services::readYouTubeCookies(browser, error);
+
+        if (!creds.cookie.empty()) {
+            creds.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+            creds.origin = "https://music.youtube.com";
+            creds.accept_language = "en-US,en;q=0.9";
+            creds.source = browser + " cookie store";
+            ok("read the session from " + browser);
+            got = from_store = true;
+        } else {
+            warn(error);
+            note("falling back to pasting the headers");
+        }
+    }
+
+    if (!got) {
+        step("Pasting the headers");
+        got = fromPaste(creds);
+    }
 
     if (!got) {
         std::cout << "\n";
@@ -1007,6 +1036,10 @@ int setup::run(int argc, char* argv[]) {
     ok("wrote " + headers_file.string() + " (0600)");
 
     if (!recordPaths(cookies_dir, spec)) return 1;
+
+    // Remember where the session comes from, so the app keeps it fresh.
+    Config::setValues({{"COOKIE_BROWSER", Config::quote(from_store ? utils::lower(browser) : "")}});
+    if (from_store) ok("COOKIE_BROWSER    = " + utils::lower(browser) + "  (refreshed automatically)");
 
     std::cout << "\n    " << green() << bold() << "Done." << reset()
               << " Run " << bold() << "moroder" << reset() << " and your library will load.\n\n";
