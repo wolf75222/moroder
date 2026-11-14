@@ -303,6 +303,11 @@ public:
 
     // New playlist (with video_id as its first track if set) / add to one.
     void seekTo(double seconds);
+
+    // Queue view: drop everything after the current track (radio included),
+    // or save the queue as a new playlist.
+    void clearUpcoming();
+    void saveQueueAsPlaylist(const std::string& title);
     void createPlaylist(const std::string& title, const std::string& video_id = "");
     void addToPlaylist(const std::string& playlist_id, const std::string& title, const std::string& video_id);
     void removeFromPlaylist(const std::string& playlist_id, const std::string& video_id, const std::string& set_video_id);

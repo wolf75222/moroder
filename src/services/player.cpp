@@ -2962,6 +2962,39 @@ void services::Player::applyPendingPlaylistEdits(std::vector<music::Playlist>& l
     }
 }
 
+void services::Player::clearUpcoming() {
+    {
+        std::lock_guard lock(state_mutex);
+        if (state.queue_position < 0) return;
+        const size_t keep = static_cast<size_t>(state.queue_position) + 1;
+        // From the end, so the indexes left are still the queue's.
+        if (!load_pending)
+            for (size_t i = state.user_queue.size(); i > keep; i--) mpv_service->removeAt(static_cast<uint16_t>(i - 1));
+        if (state.user_queue.size() > keep) state.user_queue.resize(keep);
+        state.radio_queue.clear();
+        queued_from_id.clear();      // a playlist still loading must not refill it
+        state.notice = "Cleared what comes next";
+        state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    }
+    ++queue_epoch;
+    updateMprisControls();
+}
+
+void services::Player::saveQueueAsPlaylist(const std::string& title) {
+    std::string ids;
+    {
+        std::lock_guard lock(state_mutex);
+        size_t n = 0;
+        for (const auto& item : state.user_queue) {
+            auto song = std::dynamic_pointer_cast<music::Song>(item);
+            if (!song || song->ref.id.empty()) continue;
+            ids += (ids.empty() ? "" : ",") + song->ref.id;
+            if (++n == 500) break;      // a playlist call can't take thousands at once
+        }
+    }
+    if (!ids.empty()) createPlaylist(title, ids);
+}
+
 void services::Player::createPlaylist(const std::string& title, const std::string& video_id) {
     {
         std::lock_guard lock(command_mutex);

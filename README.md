@@ -594,7 +594,8 @@ playlist; right-click a track, *Add to playlist…*, to add it to one of yours
 
 - <kbd>S</kbd> (or the shuffle icon) shuffles what comes after the current track.
 - In the queue view, <kbd>K</kbd> / <kbd>J</kbd> move a track up / down (also in
-  the right-click menu).
+  the right-click menu, along with *Clear what comes next* and *Save queue as
+  playlist…*).
 - The next two tracks are resolved while the current one plays, and a track
   is resolved as soon as it is selected, so playing, skipping or moving on
   starts at once. A cold start (nothing resolved yet) takes ~3-5 s instead of

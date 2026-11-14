@@ -44,32 +44,19 @@ ftxui::Component ui::Chips(ChipsData* data, int* selected, bool* focused, std::f
         const auto& chip = data->entries[state.index];
         bool active = state.active && *focused;
 
-        Element label = text(" " + utils::trimSuffix(chip.label, 24, "...") + " ");
-
-        if (chip.enabled || active) {
-            if(active) {
-                label = label | bold;
-            }
-
-            label = label | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
-
-        } else {
-            label = label | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
-        }
-
-        Element pill;
-
-        if (chip.enabled) {
-            pill = label | borderStyled(BorderStyle::ROUNDED) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY));
-
-        } else if (active) {
-            pill = label | borderStyled(BorderStyle::ROUNDED) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
-
-        } else {
-            pill = label | borderStyled(BorderStyle::ROUNDED) | color(ui::GetColor(ui::MColor::SEPARATOR_SECONDARY));
-        }
-
-        return hbox({ pill });
+        /* Tabs, not boxed pills: the chosen one is white with an accent
+        underline, the one under the keyboard is white, the others grey.
+        */
+        const std::string name = utils::trimSuffix(chip.label, 24, "\u2026");
+        Element label = text(name) | (chip.enabled || active ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
+                                                            : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
+        if (chip.enabled || active) label = label | bold;
+        std::string under;
+        for (size_t i = 0; i < utils::utf8Length(name); i++) under += chip.enabled ? "\u2501" : "\u2500";
+        Element line = (chip.enabled || active)
+            ? text(under) | color(chip.enabled ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+            : text(std::string(utils::utf8Length(name), ' '));
+        return hbox({ text("  "), vbox({ text(""), label, line }), text("  ") });
     };
 
     auto menu = Menu(&data->entries_spoof, selected, options);

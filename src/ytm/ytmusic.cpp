@@ -623,7 +623,17 @@ std::string YTMusic::createPlaylist(const std::string& title, const std::string&
     body["title"] = title;
     body["description"] = "";
     body["privacyStatus"] = "PRIVATE";
-    if (!videoId.empty()) body["videoIds"] = json::array({ videoId });
+    // One id, or several separated by commas (a whole queue saved as a playlist).
+    if (!videoId.empty()) {
+        json ids = json::array();
+        size_t start = 0;
+        while (start <= videoId.size()) {
+            const size_t end = std::min(videoId.find(',', start), videoId.size());
+            if (end > start) ids.push_back(videoId.substr(start, end - start));
+            start = end + 1;
+        }
+        body["videoIds"] = ids;
+    }
 
     json response = sendRequest("playlist/create", body);
     if (response.is_object() && response.contains("playlistId") && response["playlistId"].is_string()) {

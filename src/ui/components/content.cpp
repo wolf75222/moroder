@@ -347,20 +347,25 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
     main_content->DetachAllChildren();
 
     for (auto& search_result : state->search_results) {
-        std::string category, top, bottom, url;
+        std::string category, top, bottom, url, length;
+        const std::string dot = "  \u2022  ";
 
+        // What each result is (Song, Video, Album...), as music apps label them.
         std::visit([&](auto&& result) {
             using T = std::decay_t<decltype(result)>;
             if constexpr (std::is_same_v<T, music::SongRef>) {
                 category = result.id;
                 top      = result.title;
-                bottom   = !result.artists.empty() ? result.artists[0].name : "";
+                const std::string kind = search_result.resultType == "video" ? "Video" : "Song";
+                bottom   = kind + (!result.artists.empty() ? dot + result.artists[0].name : "");
                 url      = result.thumbnail_small;
+                if (result.duration_s > 0)
+                    length = std::to_string(result.duration_s / 60) + ":" + (result.duration_s % 60 < 10 ? "0" : "") + std::to_string(result.duration_s % 60);
 
             } else if constexpr (std::is_same_v<T, music::AlbumRef>) {
                 category = result.id;
                 top      = result.title;
-                bottom   = !result.artists.empty() ? result.artists[0].name : "";
+                bottom   = std::string("Album") + (!result.artists.empty() ? dot + result.artists[0].name : "") + (!result.year.empty() ? dot + result.year : "");
                 url      = result.thumbnail_small;
 
             } else if constexpr (std::is_same_v<T, music::ArtistRef>) {
@@ -372,7 +377,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
             } else if constexpr (std::is_same_v<T, music::PlaylistRef>) {
                 category = result.id;
                 top      = result.title;
-                bottom   = result.author;
+                bottom   = std::string("Playlist") + (!result.author.empty() ? dot + result.author : "");
                 url      = result.thumbnail_small;
 
             } else if constexpr (std::is_same_v<T, music::PodcastRef>) {
@@ -384,7 +389,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
             } else if constexpr (std::is_same_v<T, music::EpisodeRef>) {
                 category = result.id;
                 top      = result.title;
-                bottom   = result.podcast.name;
+                bottom   = std::string("Episode") + (!result.podcast.name.empty() ? dot + result.podcast.name : "");
                 url      = result.thumbnail_small;
             }
         }, search_result.data);
@@ -398,10 +403,10 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
         item.result   = search_result;
 
         ButtonOption opt;
-        opt.transform = [top_cap = top, bottom_cap = bottom, url_cap = url, id_cap = category](const EntryState& s) {
+        opt.transform = [top_cap = top, bottom_cap = bottom, url_cap = url, id_cap = category, length](const EntryState& s) {
             const bool now = !id_cap.empty() && id_cap == playing_id;
             Element thumb = url_cap.empty()
-                ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
+                ? ui::noCover(4, 2)
                 : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
 
             auto row = hbox({
@@ -418,15 +423,18 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                         ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY))
                         : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                 }) | flex,
+                text(length) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text("   "),
             }) | size(HEIGHT, EQUAL, 2);
 
+            // The selected row: an accent bar, as in lists and menus.
             return vbox({
                 text(" "),
                 hbox({
-                    text(" "),
-                    row
-                })
-            });
+                    vbox({ text(s.focused ? "\u258e" : " "), text(s.focused ? "\u258e" : " ") }) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
+                    row | flex
+                }) | flex
+            }) | flex;
         };
 
         auto button = Button("", [] {}, opt);
@@ -584,7 +592,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
             opt.transform = [top_cap = row.top, bottom_cap = row.bottom, url_cap = row.url, row_box, idx = queue_index](const EntryState& s) {
 
                 Element thumb = url_cap.empty()
-                    ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
+                    ? ui::noCover(4, 2)
                     : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
 
                 auto row_el = hbox({
@@ -871,7 +879,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const bool busy = loading || more;
         head.component = Renderer(actions, [actions, title, sub, count, thumb, busy, kind] {
             Element cover = thumb.empty()
-                ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
+                ? ui::noCover(14, 7)
                 : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
             return vbox({
                 text(" "),
@@ -918,7 +926,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const std::string length = secs > 0 ? std::to_string(secs / 60) + ":" + (secs % 60 < 10 ? "0" : "") + std::to_string(secs % 60) : "";
         opt.transform = [top, bottom, url, number, id, length](const EntryState& s) {
             Element thumb = url.empty()
-                ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
+                ? ui::noCover(4, 2)
                 : image_view(ui::cover(url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             const bool now = !id.empty() && id == playing_id;
             return hbox({
@@ -992,7 +1000,7 @@ void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEnt
         const std::string thumb = page->ref.thumbnail_large.empty() ? page->ref.thumbnail_small : page->ref.thumbnail_large;
         head.component = Renderer([name, thumb, loading] {
             Element picture = thumb.empty()
-                ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
+                ? ui::noCover(14, 7)
                 : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
             return vbox({
                 text(" "),

@@ -1748,6 +1748,15 @@ int main(int argc, char *argv[]) {
                                 ctx.items.push_back({"\uf00d", "Remove from queue", cfg.KEY_REMOVE_FROM_QUEUE, [&player, qi] {
                                     player.removeAt(static_cast<size_t>(qi)); }});
                             }
+                            ctx.items.push_back({"\uf12d", "Clear what comes next", "", [&player] { player.clearUpcoming(); }});
+                            if (state_logged_in()) {
+                                ctx.items.push_back({"\uf0c7", "Save queue as playlist\u2026", "", [&] {
+                                    prompt.open = true;
+                                    prompt.title = "Save the queue as a playlist";
+                                    prompt.value.clear();
+                                    prompt.done = [&player](const std::string& name) { player.saveQueueAsPlaylist(name); };
+                                }});
+                            }
                         } else {
                             ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, act(cfg.KEY_ADD_TO_QUEUE)});
                         }
@@ -2251,7 +2260,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (ctx.open) {
-            constexpr int W = 30;
+            constexpr int W = 36;
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
 
             Elements rows;
@@ -2270,7 +2279,7 @@ int main(int argc, char *argv[]) {
                     text(on ? "\u258e" : " ") | color(accent),
                     text(" "),
                     text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? accent : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-                    text(utils::trimSuffix(it.label, W - 12, "\u2026")) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(utils::trimSuffix(it.label, W - 13, "\u2026")) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
                     text(it.hint) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
                     text("  "),

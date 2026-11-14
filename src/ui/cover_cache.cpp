@@ -209,3 +209,10 @@ void ui::onCoverReady(std::function<void()> callback) {
     std::lock_guard lock(m);
     ready_callback = std::move(callback);
 }
+
+ftxui::Element ui::noCover(int width, int height) {
+    using namespace ftxui;
+    const Color line = Color::RGB(90, 90, 90);
+    if (height < 3 || width < 6) return text("\uf001") | color(line) | center | size(WIDTH, EQUAL, width) | size(HEIGHT, EQUAL, height);
+    return text("\uf001") | color(line) | center | borderStyled(BorderStyle::ROUNDED, line) | size(WIDTH, EQUAL, width) | size(HEIGHT, EQUAL, height);
+}

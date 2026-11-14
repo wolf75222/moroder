@@ -101,17 +101,17 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
         ftxui::Element thumb;
 
         if (item.image_url.empty()) {
-            thumb = filler() | size(WIDTH, EQUAL, 20) | size(HEIGHT, EQUAL, 10) | border;
+            thumb = ui::noCover(20, 10);
         } else {
             try {
                 thumb = image_view(ui::cover(item.image_url))
                     | size(WIDTH, EQUAL, 20)
                     | size(HEIGHT, EQUAL, 10)
                     | borderStyled(BorderStyle::EMPTY);
-                // thumb = filler() | size(WIDTH, EQUAL, 20) | size(HEIGHT, EQUAL, 10) | border;
+                // thumb = ui::noCover(20, 10);
 
             } catch (...) {
-                thumb = filler() | size(WIDTH, EQUAL, 20) | size(HEIGHT, EQUAL, 10) | border;
+                thumb = ui::noCover(20, 10);
             }
         }
 

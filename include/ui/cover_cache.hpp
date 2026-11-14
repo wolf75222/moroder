@@ -7,12 +7,17 @@
 
 #pragma once
 
+#include <ftxui/dom/elements.hpp>
 #include <functional>
 #include <string>
 
 namespace ui {
 
 std::string cover(const std::string& url);
+
+// A cover-sized placeholder for items without artwork (a new playlist):
+// a quiet frame with a note, instead of an empty hole.
+ftxui::Element noCover(int width, int height);
 
 // Called (from a download thread) when a cover becomes available on disk.
 void onCoverReady(std::function<void()> callback);
