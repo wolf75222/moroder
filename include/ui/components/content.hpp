@@ -33,6 +33,9 @@ struct QueueEntry {
 void buildHome(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
 void buildSearch(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
 void buildQueue(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const int)> on_queue_press);
+// Animation frame, advanced by the UI's animation clock while something loads.
+extern int anim_frame;
+
 /* buildPlaylist
 - The open playlist (state->open_playlist): a header with Play / Add to queue,
   then its tracks; on_track gets the key event and the track's index

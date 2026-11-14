@@ -67,6 +67,8 @@ std::string librarySignature(services::Player::PlayerState* state, const std::st
 
 using namespace ftxui;
 
+int ui::anim_frame = 0;
+
 namespace {
 
 bool buildError(services::Player::PlayerState* state, const std::string& key, std::deque<ui::ContentEntry>& main_content_items, ftxui::Component main_content, std::function<void()> on_retry) {
@@ -749,7 +751,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const std::string count = loading ? "loading tracks..." : std::to_string(tracks.size()) + " tracks";
         const std::string thumb = playlist->ref.thumbnail_large.empty() ? playlist->ref.thumbnail_small : playlist->ref.thumbnail_large;
 
-        head.component = Renderer(actions, [actions, title, sub, count, thumb] {
+        head.component = Renderer(actions, [actions, title, sub, count, thumb, loading] {
             Element cover = thumb.empty()
                 ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
                 : image_view(thumb) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
@@ -762,7 +764,10 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                     vbox({
                         text("PLAYLIST") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                         text(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-                        text(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                        hbox({
+                            text(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                            loading ? hbox({ text("  "), spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }) : emptyElement(),
+                        }),
                         filler(),
                         actions->Render(),
                     }),

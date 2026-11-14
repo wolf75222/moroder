@@ -64,6 +64,16 @@ void services::pumpMainThread(double seconds) {
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
 }
 
+void services::runMainLoop() {
+    // A run loop with no source returns at once; a far-off timer keeps it up.
+    CFRunLoopTimerRef keep_alive = CFRunLoopTimerCreate(
+        nullptr, CFAbsoluteTimeGetCurrent() + 1e10, 1e10, 0, 0,
+        [](CFRunLoopTimerRef, void*) {}, nullptr);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), keep_alive, kCFRunLoopCommonModes);
+
+    while (true) CFRunLoopRun();
+}
+
 std::unique_ptr<Mpris> Mpris::make(std::string_view name) {
     return std::make_unique<Mpris>(name);
 }

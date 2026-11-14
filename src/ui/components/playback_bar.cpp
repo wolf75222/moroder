@@ -123,7 +123,11 @@ Component ui::PlaybackBar(PlaybackData* data) {
                 text(" / ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text(clock(data->duration)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
               })
-            : text("--:-- / --:--") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY));
+            : hbox({
+                // Stream still resolving (yt-dlp + first bytes): say so, animated.
+                spinner(15, data->frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
+                text(" loading") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+              });
 
         // Volume: icon follows the level (off / down / up).
         const char* volume_icon = data->volume == 0 ? "\uf026" : data->volume < 50 ? "\uf027" : "\uf028";

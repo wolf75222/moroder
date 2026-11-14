@@ -231,6 +231,12 @@ public:
 - Waits at most `seconds` for events, so it doubles as the loop's idle sleep
 */
 void pumpMainThread(double seconds);
+
+/* runMainLoop
+- Parks the main thread in its run loop, where macOS delivers media keys and
+  Control Center commands; never returns. The UI runs on another thread.
+*/
+[[noreturn]] void runMainLoop();
 #endif
 
 }

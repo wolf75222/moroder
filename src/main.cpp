@@ -179,6 +179,15 @@ int main(int argc, char *argv[]) {
     player.getLibrarySongs();
 
     int spinner_frame = 0;
+
+    // ~12 fps redraws while `animating` (spinners), none otherwise.
+    static std::atomic<bool> animating{false};
+    std::thread([&screen] {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            if (animating) screen.PostEvent(Event::Custom);
+        }
+    }).detach();
     int sidebar_selected = 0;
 
     bool sidebar_hidden  = false;
@@ -440,7 +449,39 @@ int main(int argc, char *argv[]) {
         screen.PostEvent(Event::Custom);
     };
 
+    /* render_page
+- Home has ~20 shelves of ~10 covers; FTXUI renders every child of a frame,
+  off-screen ones included, so each keypress redrew ~200 covers (~70 ms).
+  Render only the shelves around the selected one: the frame scrolls to the
+  selection anyway, and the window moves with it
+    */
+    auto render_page = [&]() -> Element {
+        const int n = static_cast<int>(main_content->ChildCount());
+        const bool home = current_state == ui::State::HOME;
+
+        // Shelves are tall (a window of 7), list rows are 2-3 lines (60).
+        const int before = home ? 2 : 30;
+        const int after  = home ? 5 : 30;
+        if (n <= before + after) return main_content->Render();
+
+        int active = 0;
+        Component a = main_content->ActiveChild();
+        for (int i = 0; i < n; i++) if (main_content->ChildAt(i) == a) { active = i; break; }
+
+        const int lo = std::max(0, active - before);
+        const int hi = std::min(n, active + after);
+
+        Elements shown;
+        for (int i = lo; i < hi; i++) shown.push_back(main_content->ChildAt(i)->Render());
+        return vbox(std::move(shown));
+    };
+
+    // MORODER_PROFILE=1 logs frame build times every 2 s.
+    static const bool profile = std::getenv("MORODER_PROFILE") != nullptr;
+    struct { double copy = 0, build = 0, render = 0; int n = 0; std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now(); } prof;
+
     auto ui = Renderer(layout, [&] {
+        const auto p0 = std::chrono::steady_clock::now();
         sidebar_focused = sidebar->Focused();
 
         services::Player::PlayerState state_copy;
@@ -469,7 +510,23 @@ int main(int argc, char *argv[]) {
             audio_playing = state_copy.flags["audio"] == services::Player::Flags::Ongoing;
         }
 
+        const auto p1 = std::chrono::steady_clock::now();
         spinner_frame++;
+        ui::anim_frame = spinner_frame;
+        playback_bar_data.frame = spinner_frame;
+
+        /* Animation clock (below) runs only while something visibly loads:
+        a page, a playlist's tracks, or the stream that was just started.
+        */
+        {
+            auto ongoing = [&](const char* k) {
+                auto it = state_copy.flags.find(k);
+                return it != state_copy.flags.end() && it->second == services::Player::Flags::Ongoing;
+            };
+            animating = ongoing("home") || ongoing("search") || ongoing("open_playlist")
+                     || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
+                     || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0);
+        }
 
         ui::getSidebarData(&state_copy, &sidebar_data);
         ui::getPlaybackData(&state_copy, &playback_bar_data, screen.dimx());
@@ -556,7 +613,9 @@ int main(int argc, char *argv[]) {
                 });
         }
 
-        return vbox({
+        const auto p2 = std::chrono::steady_clock::now();
+
+        Element frame = vbox({
             hbox({
                 !sidebar_hidden
                     ? vbox({
@@ -617,9 +676,9 @@ int main(int argc, char *argv[]) {
                                 && !state_copy.is_logged_in;
 
                             return (has_error || notice)
-                                ? main_content->Render() | yframe | flex
+                                ? render_page() | yframe | flex
                                 : current_state != ui::State::QUEUE
-                                    ? main_content->Render() | yframe | yflex
+                                    ? render_page() | yframe | yflex
                                     : main_content->Render() | xflex;
                         }(),
                     }) | yflex,
@@ -637,13 +696,26 @@ int main(int argc, char *argv[]) {
                 }) | flex
             }) | flex,
 
-            (playback_bar_data.is_playing  && state_copy.flags["paused"] == services::Player::Flags::False) ||
-            (!playback_bar_data.is_playing && state_copy.flags["paused"] == services::Player::Flags::True)
+            // Shown as soon as something is launched, so the loading state
+            // has somewhere to appear (it used to pop in only once audio began).
+            state_copy.current
                 ? playback_bar->Render()
                 : emptyElement(),
 
             Config::get().EXTRA_BOTTOM_PADDING ? text("") : emptyElement()
         });
+
+        if (profile) {
+            using ms = std::chrono::duration<double, std::milli>;
+            const auto p3 = std::chrono::steady_clock::now();
+            prof.copy += ms(p1 - p0).count(); prof.build += ms(p2 - p1).count(); prof.render += ms(p3 - p2).count(); prof.n++;
+            if (p3 - prof.since > std::chrono::seconds(2)) {
+                spdlog::info("PROFILE: {} frames, avg copy {:.2f} ms, build {:.2f} ms, elements {:.2f} ms",
+                             prof.n, prof.copy / prof.n, prof.build / prof.n, prof.render / prof.n);
+                prof = {}; prof.since = p3;
+            }
+        }
+        return frame;
     });
 
     bool show_help = false;
@@ -1109,31 +1181,34 @@ int main(int argc, char *argv[]) {
         return dbox({ base, help_sheet() | clear_under | center });
     });
 
-#ifdef __APPLE__
-    {
-        /* Media keys and Control Center commands arrive on the main thread's run
-        loop, so the UI loop yields to it between frames instead of blocking.
-        Scoped so the terminal is restored as soon as the UI quits.
-        */
-        ftxui::Loop loop(&screen, ui);
-        while (!loop.HasQuitted()) {
-            loop.RunOnce();
-            services::pumpMainThread(0.016);
-        }
-    }
-#else
-    screen.Loop(ui);
-#endif
-
     /* Quitting must be instant and clean
-    - The terminal is already restored (the loop's scope ended)
+    - The terminal is restored once the loop returns
     - Stop the sound, flush the logs, and leave without running destructors:
       background work (a playlist's worth of queued tracks, cover downloads on
       detached threads) would otherwise keep the process alive with music
       playing, or touch mutexes torn down during exit and abort
     */
-    player.detachUI();
-    player.pause();
-    spdlog::shutdown();
-    std::_Exit(0);
+    auto finish = [&player] {
+        player.detachUI();
+        player.pause();
+        spdlog::shutdown();
+        std::_Exit(0);
+    };
+
+#ifdef __APPLE__
+    /* The UI gets its own thread and blocks on input like on Linux; the main
+    thread parks in its run loop, where macOS delivers media keys and Control
+    Center commands. Before, one thread polled both every 16 ms, which added
+    up to 16 ms to every keypress and woke the CPU 60 times a second.
+    */
+    std::thread([&] {
+        screen.Loop(ui);
+        finish();
+    }).detach();
+
+    services::runMainLoop();
+#else
+    screen.Loop(ui);
+    finish();
+#endif
 }

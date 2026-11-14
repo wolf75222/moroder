@@ -22,6 +22,7 @@ struct PlaybackData {
     uint64_t duration = 0;
 
     int volume = 100;
+    int frame = 0;          // animation frame, for the loading indicator
     bool liked = false;
     bool can_like = false;
     std::string notice;     // transient message, empty when none
