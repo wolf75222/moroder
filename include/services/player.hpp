@@ -359,7 +359,19 @@ private:
     std::atomic<bool> load_pending{false};
     std::atomic<bool> fading_out{false};
     std::atomic<bool> advancing{false};
-    std::string latest_prefetch;                 // the playlist selected last (older prefetches are dropped)          // a track ended and mpv is opening the next one
+    std::string latest_prefetch;
+
+    /* Playlist changes made here, applied over what YouTube returns for a
+    minute: its library list lags a few seconds behind a create / rename /
+    delete, and the sidebar showed the old list (a new playlist "missing").
+    */
+    struct PendingPlaylistEdit {
+        int kind = 0;               // 0 create, 1 rename, 2 delete
+        std::string id, title;
+        std::chrono::steady_clock::time_point until;
+    };
+    std::vector<PendingPlaylistEdit> pending_playlist_edits;     // under state_mutex
+    void applyPendingPlaylistEdits(std::vector<music::Playlist>& lists);                 // the playlist selected last (older prefetches are dropped)          // a track ended and mpv is opening the next one
     // The playlist the queue was last started from (fresh start), and how many
     // of its tracks were queued: its rest is appended when it arrives.
     std::string queued_from_id;

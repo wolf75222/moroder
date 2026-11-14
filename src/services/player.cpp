@@ -1227,6 +1227,7 @@ void services::Player::worker_loop() {
                     } else if (!err.failed) {
                         state.flags["library_playlists"] = Flags::Done;
                         state.library_playlists = user_playlists;
+                        applyPendingPlaylistEdits(state.library_playlists);
                     }
 
                     refreshLibraryError(state);
@@ -1305,10 +1306,11 @@ void services::Player::worker_loop() {
             } else if constexpr (std::is_same_v<T, PlaylistEditCommand>) {
                 using K = PlaylistEditCommand::Kind;
                 music_service->refreshCookies();    // writes want fresh cookies
+                std::string new_id;
 
                 bool ok = false;
                 switch (c.kind) {
-                    case K::Create: ok = !music_service->createPlaylist(c.title, c.video_id).empty(); break;
+                    case K::Create: new_id = music_service->createPlaylist(c.title, c.video_id); ok = !new_id.empty(); break;
                     case K::Add:    ok = music_service->addToPlaylist(c.playlist_id, c.video_id); break;
                     case K::Remove: ok = music_service->removeFromPlaylist(c.playlist_id, c.video_id, c.set_video_id); break;
                     case K::Rename: ok = music_service->renamePlaylist(c.playlist_id, c.title); break;
@@ -1331,6 +1333,18 @@ void services::Player::worker_loop() {
                         state.notice = "Couldn't change the playlist: " + err.message;
                     }
 
+                    // The sidebar shows the change at once (and keeps showing it
+                    // while YouTube's list catches up).
+                    if (ok && (c.kind == K::Create || c.kind == K::Rename || c.kind == K::Delete)) {
+                        PendingPlaylistEdit e;
+                        e.kind = c.kind == K::Create ? 0 : c.kind == K::Rename ? 1 : 2;
+                        e.id = c.kind == K::Create ? new_id : c.playlist_id;
+                        e.title = c.title;
+                        e.until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+                        pending_playlist_edits.push_back(e);
+                        applyPendingPlaylistEdits(state.library_playlists);
+                    }
+
                     // The open page shows the change: fetch it again.
                     if (ok && c.kind != K::Create) {
                         playlist_cache.erase(c.playlist_id);
@@ -1342,8 +1356,21 @@ void services::Player::worker_loop() {
                 }
 
                 if (ok) {
-                    std::lock_guard lock(command_mutex);
-                    command_queue.push(LibraryPlaylistsCommand{});      // the sidebar shows the change
+                    // Now, and again once YouTube's list has caught up.
+                    {
+                        std::lock_guard lock(command_mutex);
+                        command_queue.push(LibraryPlaylistsCommand{});
+                    }
+                    std::thread([this] {
+                        for (int wait : {5, 15}) {
+                            std::this_thread::sleep_for(std::chrono::seconds(wait));
+                            {
+                                std::lock_guard lock(command_mutex);
+                                command_queue.push(LibraryPlaylistsCommand{});
+                            }
+                            command_cv.notify_one();
+                        }
+                    }).detach();
                 }
                 if (reopen) openPlaylist(*reopen);
 
@@ -1589,6 +1616,13 @@ void services::Player::worker_loop() {
 
                 if (ok) {
                     state.notice = c.like ? "Added to Liked Music" : "Removed from Liked Music";
+                    // Liked Music has changed: no stale copy of it.
+                    for (const char* id : {"LM", "VLLM"}) { playlist_cache.erase(id); playlist_first_page.erase(id); }
+                    // Open right now: refetch it (state_mutex, then command_mutex: the lock order).
+                    if (state.open_playlist && (state.open_playlist->ref.id == "LM" || state.open_playlist->ref.id == "VLLM")) {
+                        std::lock_guard cl(command_mutex);
+                        command_queue.push(OpenPlaylistCommand{state.open_playlist->ref});
+                    }
                 } else {
                     // Roll the optimistic heart back and say why.
                     state.liked[c.video_id] = !c.like;
@@ -2897,6 +2931,37 @@ void services::Player::moveInQueue(size_t from, size_t to) {
   swap its mpv entry for the direct stream URL, so it starts at once
 - Checked again before swapping (PreloadedCommand), in case the queue moved
 */
+// Caller holds state_mutex.
+void services::Player::applyPendingPlaylistEdits(std::vector<music::Playlist>& lists) {
+    const auto now = std::chrono::steady_clock::now();
+    pending_playlist_edits.erase(std::remove_if(pending_playlist_edits.begin(), pending_playlist_edits.end(),
+                                                [&](const PendingPlaylistEdit& e) { return e.until < now; }),
+                                 pending_playlist_edits.end());
+    auto same = [](const std::string& a, const std::string& b) {
+        auto bare = [](const std::string& x) { return x.rfind("VL", 0) == 0 ? x.substr(2) : x; };
+        return bare(a) == bare(b);
+    };
+    for (const auto& e : pending_playlist_edits) {
+        auto it = std::find_if(lists.begin(), lists.end(), [&](const music::Playlist& p) { return same(p.ref.id, e.id); });
+        if (e.kind == 0 && it == lists.end() && !e.id.empty()) {
+            music::Playlist p;
+            music::PlaylistRef ref;
+            ref.id = e.id;
+            ref.title = e.title;
+            p.setRef(ref);
+            // After Liked Music, where YouTube lists the newest ones.
+            auto at = (!lists.empty() && (lists.front().ref.id == "LM" || lists.front().ref.id == "VLLM")) ? lists.begin() + 1 : lists.begin();
+            lists.insert(at, p);
+        } else if (e.kind == 1 && it != lists.end()) {
+            music::PlaylistRef ref = it->ref;
+            ref.title = e.title;
+            it->setRef(ref);
+        } else if (e.kind == 2 && it != lists.end()) {
+            lists.erase(it);
+        }
+    }
+}
+
 void services::Player::createPlaylist(const std::string& title, const std::string& video_id) {
     {
         std::lock_guard lock(command_mutex);
