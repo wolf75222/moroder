@@ -20,6 +20,8 @@ extern char** environ;
 
 namespace platform {
 
+void initConsole() {}
+
 bool isTerminal(int fd) { return ::isatty(fd) != 0; }
 
 void setEnv(const std::string& name, const std::string& value) { ::setenv(name.c_str(), value.c_str(), 1); }

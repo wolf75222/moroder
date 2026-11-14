@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <thread>
@@ -24,8 +25,6 @@
 #include <vector>
 #include <map>
 
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -62,7 +61,7 @@ void fail(const std::string& t) { std::cout << "  " << red() << "✗" << reset()
 - Non-interactive stdin answers yes so the paste path still works under a pipe
 */
 bool ask(const std::string& question) {
-    if (!isatty(fileno(stdin))) return true;
+    if (!platform::isTerminal(0)) return true;
 
     std::cout << "\n  " << bold() << "?" << reset() << "  " << question << dim() << " [Y/n] " << reset() << std::flush;
 
@@ -105,19 +104,8 @@ struct Command {
 */
 Command run(const std::string& command_line) {
     Command result;
-
-    FILE* pipe = popen((command_line + " 2>&1").c_str(), "r");
-    if (!pipe) {
-        result.output = "could not start: " + command_line;
-        return result;
-    }
-
-    char buffer[512];
-    while (std::fgets(buffer, sizeof(buffer), pipe)) result.output += buffer;
-
-    int status = pclose(pipe);
-    result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-
+    result.exit_code = platform::shell(command_line, &result.output, true);
+    if (result.exit_code < 0) result.output = "could not start: " + command_line;
     return result;
 }
 
@@ -133,7 +121,7 @@ std::string shellQuote(const std::string& value) {
 }
 
 bool haveCommand(const std::string& name) {
-    return run("command -v " + shellQuote(name)).ok();
+    return !platform::which(name).empty();
 }
 
 std::string commandVersion(const std::string& name, const std::string& flag = "--version") {
@@ -142,18 +130,7 @@ std::string commandVersion(const std::string& name, const std::string& flag = "-
 }
 
 void openInBrowser(const std::string& url) {
-#ifdef __APPLE__
-    const std::string opener = "open";
-#else
-    const std::string opener = "xdg-open";
-#endif
-
-    if (!haveCommand(opener)) {
-        note(opener + " not found, open this yourself: " + url);
-        return;
-    }
-
-    run(opener + " " + shellQuote(url) + " >/dev/null 2>&1 &");
+    platform::openUrl(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +153,9 @@ bool checkDependencies() {
     };
 
     const Dependency deps[] = {
-        {"mpv",    "plays the audio",                                  true},
+#ifndef _WIN32
+        {"mpv",    "plays the audio",                                  true},     // Windows: libmpv ships with moroder.exe
+#endif
         {"yt-dlp", "resolves YouTube streams, mpv calls it internally", true},
         {"curl",   "not required at runtime, libcurl is linked in",     false},
     };
@@ -640,6 +619,11 @@ bool checkStructure(const Credentials& creds) {
 */
 struct FoundBrowser { std::string name; std::string ytdlp_spec; fs::path dir; };
 
+#ifdef _WIN32
+fs::path appData()      { const char* p = std::getenv("APPDATA");      return p ? fs::path(p) : utils::home() / "AppData/Roaming"; }
+fs::path localAppData() { const char* p = std::getenv("LOCALAPPDATA"); return p ? fs::path(p) : utils::home() / "AppData/Local"; }
+#endif
+
 std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
     const fs::path h = utils::home();
     std::vector<std::pair<std::string, std::vector<fs::path>>> known = {
@@ -653,6 +637,17 @@ std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
         {"firefox",  {h / "Library/Application Support/Firefox/Profiles"}},
         {"zen",      {h / "Library/Application Support/zen/Profiles"}},
         {"librewolf",{h / "Library/Application Support/librewolf/Profiles"}},
+#elif defined(_WIN32)
+        {"chrome",   {localAppData() / "Google/Chrome/User Data"}},
+        {"edge",     {localAppData() / "Microsoft/Edge/User Data"}},
+        {"brave",    {localAppData() / "BraveSoftware/Brave-Browser/User Data"}},
+        {"vivaldi",  {localAppData() / "Vivaldi/User Data"}},
+        {"chromium", {localAppData() / "Chromium/User Data"}},
+        {"opera",    {appData() / "Opera Software/Opera Stable"}},
+        {"firefox",  {appData() / "Mozilla/Firefox/Profiles"}},
+        {"zen",      {appData() / "zen/Profiles"}},
+        {"librewolf",{appData() / "librewolf/Profiles"}},
+        {"floorp",   {appData() / "Floorp/Profiles"}},
 #else
         {"firefox",  {h / ".mozilla/firefox", h / "snap/firefox/common/.mozilla/firefox", h / ".var/app/org.mozilla.firefox/.mozilla/firefox"}},
         {"chrome",   {h / ".config/google-chrome"}},
@@ -683,7 +678,13 @@ std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
 
 // The Python yt-dlp runs on (its shebang), so its cookie reader can be used.
 std::string ytdlpPython() {
-    const std::string path = utils::trim(run("command -v yt-dlp").output);
+#ifdef _WIN32
+    // yt-dlp is an .exe there: a Python that can import yt_dlp, if any.
+    for (const char* candidate : {"python", "py"})
+        if (!platform::which(candidate).empty() && run(std::string(candidate) + " -c \"import yt_dlp\"").ok()) return candidate;
+    return "";
+#else
+    const std::string path = platform::which("yt-dlp");
     std::ifstream in(path);
     std::string line;
     if (path.empty() || !in || !std::getline(in, line) || line.rfind("#!", 0) != 0) return "";
@@ -692,6 +693,7 @@ std::string ytdlpPython() {
     words >> interp >> arg;
     if (interp.size() >= 4 && interp.compare(interp.size() - 4, 4, "/env") == 0) interp = arg;
     return interp.find("python") != std::string::npos ? interp : "";
+#endif
 }
 
 /* cookiesViaYtdlp
@@ -713,10 +715,16 @@ std::string cookiesViaYtdlp(const FoundBrowser& b, std::string& error) {
         "    if d in ('youtube.com', 'music.youtube.com', 'www.youtube.com'):\n"
         "        out.setdefault(c.name, c.value)\n"
         "print('; '.join(k + '=' + v for k, v in out.items()))\n";
-    Command r = run(shellQuote(python) + " -I -c " + shellQuote(script) + " " + shellQuote(b.ytdlp_spec) + " 2>/dev/null");
-    std::string cookie = r.ok() ? utils::trim(r.output) : "";
-    if (!r.ok()) error = "couldn't read its cookies";
-    return cookie;
+    // No shell: the script is several lines, which cmd.exe can't pass.
+    platform::Process p;
+    if (!p.start({ python, "-I", "-c", script, b.ytdlp_spec })) { error = "couldn't start yt-dlp's Python"; return ""; }
+    p.closeStdin();
+    std::string out;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (p.read(out, 200) >= 0) if (std::chrono::steady_clock::now() > deadline) { p.kill(); break; }
+    const bool ok = p.wait() == 0;
+    if (!ok) error = "couldn't read its cookies";
+    return ok ? utils::trim(out) : "";
 }
 
 /* choose
@@ -724,7 +732,7 @@ std::string cookiesViaYtdlp(const FoundBrowser& b, std::string& error) {
   default too when input is not a terminal
 */
 size_t choose(const std::string& question, size_t count, size_t fallback = 0) {
-    if (!isatty(fileno(stdin))) return fallback;
+    if (!platform::isTerminal(0)) return fallback;
     while (true) {
         std::cout << "\n  " << bold() << "?" << reset() << "  " << question << dim() << " [" << (fallback + 1) << "] " << reset() << std::flush;
         std::string line;
@@ -930,7 +938,7 @@ bool writeHeaders(const fs::path& target, const Credentials& creds) {
     file << toHeaders(creds).dump(2) << "\n";
     file.close();
 
-    if (chmod(target.c_str(), S_IRUSR | S_IWUSR) != 0) {
+    if (!platform::restrictToOwner(target)) {
         note("could not tighten permissions on " + target.string());
     }
 
@@ -1028,7 +1036,7 @@ void usage() {
 }
 
 int setup::run(int argc, char* argv[]) {
-    colour_enabled = isatty(fileno(stdout));
+    colour_enabled = platform::isTerminal(1);
 
     std::vector<std::string> args(argv + 1, argv + argc);
 

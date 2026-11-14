@@ -1,6 +1,7 @@
 #include "../../include/services/scrobble.hpp"
 #include "../../include/utils/utils.hpp"
 #include "../../include/services/cli_ui.hpp"
+#include "../../include/utils/platform.hpp"
 #include "../../include/services/notify.hpp"
 #include "../../include/config/config.hpp"
 
@@ -19,8 +20,6 @@
 #include <map>
 #include <mutex>
 #include <thread>
-#include <fcntl.h>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -192,12 +191,8 @@ int services::scrobble::connect() {
     const fs::path f = sessionFile();
     std::error_code ec;
     fs::create_directories(f.parent_path(), ec);
-    const int fd = ::open(f.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
-    if (fd < 0) { std::cerr << "\n  " << cli::red() << "✗" << cli::reset() << "  Can't write " << f.string() << "\n\n"; return 1; }
     const std::string body = nlohmann::json{ {"key", s["session"]["key"]}, {"name", s["session"].value("name", "")} }.dump();
-    const bool ok = ::write(fd, body.data(), body.size()) == static_cast<ssize_t>(body.size());
-    ::close(fd);
-    if (!ok) return 1;
+    if (!platform::writePrivateFile(f, body)) { std::cerr << "\n  " << cli::red() << "✗" << cli::reset() << "  Can't write " << f.string() << "\n\n"; return 1; }
     std::cout << "\n  " << cli::green() << "✓" << cli::reset() << "  Scrobbling to Last.fm as " << cli::bold() << s["session"].value("name", std::string("you")) << cli::reset() << "\n\n";
     return 0;
 }

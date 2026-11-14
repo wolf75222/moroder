@@ -1,9 +1,8 @@
 #include "../../include/services/music.hpp"
+#include "../../include/utils/platform.hpp"
 #include "../../include/utils/utils.hpp"
 #include "../../include/utils/json_str.hpp"
 #include <fstream>
-#include <unistd.h>
-#include <fcntl.h>
 #include <cstdlib>
 #include "../../include/services/browser_cookies.hpp"
 
@@ -456,13 +455,11 @@ bool services::Music::refreshCookies() {
     // session is never briefly world-readable.
     {
         const fs::path tmp = file.string() + ".tmp";
-        ::unlink(tmp.c_str());
-        const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-        if (fd >= 0) {
-            const std::string body = headers.dump(4);
-            const bool ok = ::write(fd, body.data(), body.size()) == static_cast<ssize_t>(body.size());
-            ::close(fd);
-            if (!ok || ::rename(tmp.c_str(), file.c_str()) != 0) ::unlink(tmp.c_str());
+        std::error_code ec;
+        fs::remove(tmp, ec);
+        if (platform::writePrivateFile(tmp, headers.dump(4))) {
+            fs::rename(tmp, file, ec);
+            if (ec) fs::remove(tmp, ec);
         }
     }
 

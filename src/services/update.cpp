@@ -2,6 +2,7 @@
 #include "../../include/utils/utils.hpp"
 #include "../../include/config/config.hpp"
 #include "../../include/services/cli_ui.hpp"
+#include "../../include/utils/platform.hpp"
 #include "../../include/ytm/ytmusic.hpp"
 
 #include <curl/curl.h>
@@ -18,7 +19,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <unistd.h>
 
 #ifndef MORODER_VERSION
 #define MORODER_VERSION "0.0.0-dev"
@@ -31,7 +31,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+#ifdef _WIN32
+const std::string INSTALLER = "https://raw.githubusercontent.com/" MORODER_REPO "/main/install.ps1";
+#else
 const std::string INSTALLER = "https://raw.githubusercontent.com/" MORODER_REPO "/main/install.sh";
+#endif
 
 fs::path cacheFile() {
     const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
@@ -97,25 +101,34 @@ bool isNewer(const std::string& latest, const std::string& current) {
 bool devBuild() { return std::string(MORODER_VERSION).find("dev") != std::string::npos; }
 
 int runInstaller() {
-    setenv("MORODER_UPDATING", "1", 1);         // the installer then also updates yt-dlp
+    platform::setEnv("MORODER_UPDATING", "1");         // the installer then also updates yt-dlp
+#ifdef _WIN32
+    const std::string cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm " + INSTALLER + " | iex\"";
+#else
     const std::string cmd = "curl -fsSL '" + INSTALLER + "' | sh";
+#endif
     return std::system(cmd.c_str());
 }
 
-bool have(const char* tool) {
-    const std::string cmd = std::string("command -v ") + tool + " >/dev/null 2>&1";
-    return std::system(cmd.c_str()) == 0;
-}
+bool have(const char* tool) { return !platform::which(tool).empty(); }
 
+// The first line a command prints (stderr dropped).
 std::string firstLine(const std::string& cmd) {
     std::string out;
-    if (FILE* p = popen(cmd.c_str(), "r")) {
-        char buf[512];
-        if (fgets(buf, sizeof(buf), p)) out = buf;
-        pclose(p);
-    }
+    platform::shell(cmd + platform::quietStderr(), &out);
+    const size_t nl = out.find('\n');
+    if (nl != std::string::npos) out.resize(nl);
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
     return out;
+}
+
+// Where moroder itself is: the one on the PATH.
+std::string installedBinary() { return platform::which("moroder"); }
+
+// Runs a command, output dropped.
+void quietly(const std::string& cmd) {
+    std::string ignored;
+    platform::shell(cmd, &ignored, true);
 }
 
 // Milliseconds for a HEAD request, -1 when it fails.
@@ -163,7 +176,7 @@ const std::string INSTALL_MPV = "install mpv (libmpv) with your package manager"
 
 // yt-dlp in its own Python environment, set up by install.sh on Debian/Ubuntu.
 fs::path privateYtdlp() {
-    const std::string bin = firstLine("command -v moroder 2>/dev/null");
+    const std::string bin = installedBinary();
     if (bin.empty()) return {};
     const fs::path venv = fs::path(bin).parent_path().parent_path() / "share" / "moroder" / "yt-dlp";
     std::error_code ec;
@@ -183,7 +196,7 @@ const char* services::update::version() { return MORODER_VERSION; }
 
 bool services::update::offerAtLaunch() {
     if (devBuild() || !Config::get().CHECK_FOR_UPDATES || std::getenv("MORODER_JUST_UPDATED")) return false;
-    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) return false;
+    if (!platform::isTerminal(0) || !platform::isTerminal(1)) return false;
 
     nlohmann::json cache = readCache();
     const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -238,13 +251,16 @@ int services::update::runUpdate() {
 
     // Nothing to install: still keep yt-dlp current, it follows YouTube's changes.
     const size_t yt = live.add("yt-dlp");
-    const std::string before = firstLine("yt-dlp --version 2>/dev/null");
+    const std::string before = firstLine("yt-dlp --version");
     live.set(yt, State::Run, "updating " + before);
     const fs::path venv = privateYtdlp();
-    if (!venv.empty()) std::system(("'" + (venv / "bin" / "pip").string() + "' install -q -U 'yt-dlp[default]' >/dev/null 2>&1").c_str());
-    else if (have("brew")) std::system("brew upgrade yt-dlp >/dev/null 2>&1");
-    else if (have("yt-dlp")) std::system("yt-dlp -U >/dev/null 2>&1");     // a distribution's yt-dlp refuses: its updates do it
-    const std::string after = firstLine("yt-dlp --version 2>/dev/null");
+    if (!venv.empty()) quietly(platform::shellQuote((venv / "bin" / "pip").string()) + " install -q -U " + platform::shellQuote("yt-dlp[default]"));
+    else if (have("brew")) quietly("brew upgrade yt-dlp");
+#ifdef _WIN32
+    else if (have("winget") && !have("pip")) quietly("winget upgrade --id yt-dlp.yt-dlp --silent --accept-source-agreements --accept-package-agreements");
+#endif
+    else if (have("yt-dlp")) quietly("yt-dlp -U");     // a distribution's yt-dlp refuses: its updates do it
+    const std::string after = firstLine("yt-dlp --version");
     if (after.empty())         live.set(yt, State::Fail, "missing: " + INSTALL_YTDLP);
     else if (after != before)  live.set(yt, State::Ok, before + " → " + after);
     else                       live.set(yt, State::Ok, after + ", already the latest");
@@ -278,7 +294,7 @@ int services::update::doctor() {
         else                                       live.set(id, State::Ok, latest + ", the latest");
     });
     check("yt-dlp", [&](size_t id) {
-        const std::string mine = firstLine("yt-dlp --version 2>/dev/null");
+        const std::string mine = firstLine("yt-dlp --version");
         if (mine.empty()) { live.set(id, State::Fail, "missing: " + INSTALL_YTDLP); return; }
         live.set(id, State::Run, mine + ", comparing with the latest");
         const std::string latest = latestRelease(6000, "yt-dlp/yt-dlp");
@@ -290,9 +306,17 @@ int services::update::doctor() {
                                 "/usr/lib/x86_64-linux-gnu/libmpv.so.2", "/usr/lib/aarch64-linux-gnu/libmpv.so.2",
                                 "/usr/lib64/libmpv.so.2", "/usr/lib/libmpv.so.2"})
             if (fs::exists(lib, ec)) { live.set(id, State::Ok, lib); return; }
-        const std::string ld = firstLine("ldconfig -p 2>/dev/null | grep -o '/[^ ]*libmpv.so[^ ]*' | head -n1");
+#ifdef _WIN32
+        // libmpv-2.dll ships next to moroder.exe.
+        const fs::path exe_dir = fs::path(installedBinary()).parent_path();
+        for (const char* dll : {"libmpv-2.dll", "mpv-2.dll"})
+            if (!exe_dir.empty() && fs::exists(exe_dir / dll, ec)) { live.set(id, State::Ok, (exe_dir / dll).string()); return; }
+        const std::string ld;
+#else
+        const std::string ld = firstLine("ldconfig -p | grep -o '/[^ ]*libmpv.so[^ ]*' | head -n1");
+#endif
         if (!ld.empty()) live.set(id, State::Ok, ld);
-        else if (have("mpv")) live.set(id, State::Ok, firstLine("mpv --version 2>/dev/null | head -n1"));
+        else if (have("mpv")) live.set(id, State::Ok, firstLine("mpv --version"));
         else live.set(id, State::Fail, "libmpv not found: " + INSTALL_MPV);
     });
     check("Sign-in", [&](size_t id) {
@@ -342,7 +366,7 @@ int services::update::doctor() {
     else if (warnings) std::cout << "  " << yellow() << "!" << reset() << " Works, " << warnings << (warnings == 1 ? " thing" : " things") << " to look at\n";
     else               std::cout << "  " << green() << "✓" << reset() << " All good\n";
     std::cout << "\n";
-    const std::string bin = firstLine("command -v moroder 2>/dev/null");
+    const std::string bin = installedBinary();
     if (!bin.empty()) row("program", tilde(bin));
     row("settings", tilde(cfg / "moroder.conf"));
     row("logs", tilde(logs));
@@ -352,15 +376,24 @@ int services::update::doctor() {
 
 int services::update::uninstall() {
     using namespace cli;
-    std::string bin = firstLine("command -v moroder 2>/dev/null");
+    std::string bin = installedBinary();
+#ifdef _WIN32
+    // install.ps1 puts moroder.exe and its DLLs in one folder of their own.
+    if (bin.empty()) { std::cout << "\n  moroder.exe isn't on the PATH, nothing to remove\n\n"; return 1; }
+#else
     if (bin.empty()) bin = "/opt/homebrew/bin/moroder";
+#endif
     const fs::path prefix = fs::path(bin).parent_path().parent_path();
     const fs::path share = prefix / "share" / "moroder";
     std::error_code ec;
 
     title("Uninstall Moroder");
     std::cout << "  " << dim() << "Removes" << reset() << "\n";
+#ifdef _WIN32
+    row("program", tilde(fs::path(bin).parent_path()), human(sizeOf(fs::path(bin).parent_path())));
+#else
     row("program", tilde(bin), human(sizeOf(bin)));
+#endif
     if (fs::exists(share, ec)) row("helper", tilde(share), human(sizeOf(share)));
 
     // The PATH line install.sh may have added.
@@ -395,7 +428,24 @@ int services::update::uninstall() {
         fs::remove_all(p, e);
         live.set(id, e ? State::Fail : State::Ok, e ? e.message() : tilde(p) + "  " + human(n));
     };
+#ifdef _WIN32
+    {
+        // A running .exe can't delete itself: the folder goes a moment after
+        // Moroder exits, and leaves the user PATH.
+        const std::string dir = fs::path(bin).parent_path().string();
+        const size_t id = live.add("program");
+        std::string ps_dir = "'";
+        for (char c : dir) ps_dir += c == '\'' ? std::string("''") : std::string(1, c);
+        ps_dir += "'";
+        quietly("powershell -NoProfile -Command \"$d=" + ps_dir + "; "
+                "$p=([Environment]::GetEnvironmentVariable('Path','User') -split ';') | Where-Object { $_ -and $_ -ne $d }; "
+                "[Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')\"");
+        std::system(("start \"\" /min cmd /c \"timeout /t 2 >NUL & rmdir /s /q " + platform::shellQuote(dir) + "\"").c_str());
+        live.set(id, State::Ok, dir + "  (removed in a moment)");
+    }
+#else
     remove("program", bin);
+#endif
     const fs::path yt_link = prefix / "bin" / "yt-dlp";      // install.sh's private yt-dlp (Debian/Ubuntu)
     if (fs::is_symlink(yt_link, ec) && fs::read_symlink(yt_link, ec).string().find(share.string()) == 0) remove("yt-dlp link", yt_link);
     if (fs::exists(share, ec)) remove("helper", share);

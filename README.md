@@ -3,11 +3,12 @@
 # Moroder
 
 **YouTube Music in your terminal.**<br>
-Keyboard, mouse or trackpad. macOS and Linux.
+Keyboard, mouse or trackpad. macOS, Linux and Windows.
 
 <a href="https://github.com/wolf75222/moroder/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/wolf75222/moroder?style=for-the-badge&logo=github&logoColor=white&label=release&labelColor=161b22&color=e53935"></a>
 <img alt="macOS" src="https://img.shields.io/badge/macOS-161b22?style=for-the-badge&logo=apple&logoColor=white">
 <img alt="Linux" src="https://img.shields.io/badge/Linux-161b22?style=for-the-badge&logo=linux&logoColor=white">
+<img alt="Windows" src="https://img.shields.io/badge/Windows-161b22?style=for-the-badge&logo=windows&logoColor=white">
 <img alt="YouTube Music" src="https://img.shields.io/badge/YouTube%20Music-161b22?style=for-the-badge&logo=youtubemusic&logoColor=FF0000">
 
 <img src="docs/assets/app.gif" alt="Moroder playing Get Lucky with synced lyrics" width="760">
@@ -19,10 +20,16 @@ Playlists, radio, search, queue · clicks, swipes, menus
 
 ## Install
 
-**1.** Install (macOS or Linux):
+**1.** Install, on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
 ```
 
 **2.** Sign in with your browser, once ([guide](docs/sign-in.md)):

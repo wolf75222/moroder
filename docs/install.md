@@ -26,6 +26,27 @@ Options: `MORODER_VERSION=1.2.0` installs a given version,
 elsewhere, `MORODER_NO_PATH=1` leaves your shell files alone,
 `MORODER_SOURCE=~/moroder` builds a local checkout.
 
+## Windows
+
+```powershell
+irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
+```
+
+- Downloads the release's Windows build (checksum verified): `moroder.exe`
+  with libmpv and the DLLs it needs, into `%LOCALAPPDATA%\Programs\moroder`
+- Adds `yt-dlp.exe` next to it when yt-dlp isn't installed, and the folder
+  to your user `PATH`
+- Best in Windows Terminal (colours, mouse, Unicode)
+- Settings and session live in `%USERPROFILE%\.config\moroder`, as on the
+  other systems
+- `moroder setup` reads Firefox, Zen and LibreWolf sessions when yt-dlp runs
+  on Python (`pip install yt-dlp`); recent Chrome and Edge lock their cookies
+  on Windows, so setup falls back to pasting the headers for them
+- No media keys or Now Playing integration yet; notifications are Windows
+  toasts without the cover
+
+Built with MSYS2 (UCRT64); `.github/workflows/windows.yml` shows the steps.
+
 ## Updates
 
 At launch, at most once an hour, Moroder asks GitHub for the latest release

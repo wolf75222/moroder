@@ -81,13 +81,20 @@ FetchContent_Declare(
     GIT_TAG 1501b3263789b9b0a4aaa61143d78e02d48ad550
     # Caches each cover's finished cells per size (drawing a page of covers
     # rebuilt every cell every frame). Applied once; skipped if already in.
-    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-cell-cache.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-cell-cache.patch'"
+    PATCH_COMMAND ${CMAKE_COMMAND} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-cell-cache.patch
+                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patch.cmake
     UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(ftxui-image-view)
-# tiv links X11 but never uses it (CImg display is disabled); there is no X11 on macOS.
-if(APPLE)
+# tiv links X11 but never uses it (CImg display is disabled); there is no X11
+# on macOS or Windows. On Windows CImg would otherwise draw with GDI: off too.
+if(APPLE OR WIN32)
     set_target_properties(tiv PROPERTIES LINK_LIBRARIES "" INTERFACE_LINK_LIBRARIES "")
+endif()
+if(WIN32)
+    target_compile_definitions(tiv PRIVATE cimg_display=0)
+    target_compile_definitions(ftxui-image-view PRIVATE cimg_display=0)
+    set_property(SOURCE src/ui/cover_cache.cpp APPEND PROPERTY COMPILE_DEFINITIONS cimg_display=0)
 endif()
 
 # Covers: without these, CImg downloads through a curl subprocess and hands
@@ -256,6 +263,12 @@ else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             "-framework Foundation" "-framework AppKit" "-framework MediaPlayer" "-framework Security" sqlite3)
     endif()
+endif()
+
+if(WIN32)
+    # ShellExecuteW (opening links). Win32 calls are the explicit W ones: no UNICODE.
+    target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 
 find_package(PkgConfig REQUIRED)

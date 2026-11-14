@@ -1,6 +1,3 @@
-#include <termios.h>
-#include <unistd.h>
-#include <poll.h>
 #include <cctype>
 #include "../include/ui/cover_cache.hpp"
 #include "../include/ui/viewport.hpp"
@@ -8,6 +5,7 @@
 #include "../include/services/scrobble.hpp"
 #include "../include/services/update.hpp"
 #include "../include/services/cli_ui.hpp"
+#include "../include/utils/platform.hpp"
 #include "../include/ui/components/playback_bar.hpp"
 #include "../include/ui/components/now_playing.hpp"
 #include "../include/ui/components/search_bar.hpp"
@@ -32,7 +30,6 @@
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
-#include <sys/stat.h>
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
@@ -91,12 +88,8 @@ private:
   Shift / Option + arrows differ between Terminal.app, iTerm2, Ghostty...
 */
 static int keyTest() {
-    termios old{};
-    if (tcgetattr(STDIN_FILENO, &old) != 0) { std::cerr << "not a terminal\n"; return 1; }
-    termios raw = old;
-    raw.c_lflag &= ~(ICANON | ECHO);
-    raw.c_cc[VMIN] = 1; raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    platform::RawInput raw;
+    if (!raw.ok()) { std::cerr << "not a terminal\n"; return 1; }
 
     // Mouse reporting too (any event, SGR), so wheel / trackpad swipes show up.
     std::cout << "\x1b[?1003h\x1b[?1006h";
@@ -117,8 +110,9 @@ static int keyTest() {
     };
     while (true) {
         char buf[32];
-        const ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
-        if (n <= 0) break;
+        const int n = raw.read(buf, sizeof(buf), 1000);
+        if (n < 0) break;
+        if (n == 0) continue;
         // One read can hold several keys (pasted, or fast): split them.
         const std::string all(buf, static_cast<size_t>(n));
         std::vector<std::string> keys;
@@ -167,7 +161,6 @@ static int keyTest() {
         if (quit) break;
     }
     std::cout << "\x1b[?1003l\x1b[?1006l" << std::flush;
-    tcsetattr(STDIN_FILENO, TCSANOW, &old);
     return 0;
 }
 
@@ -183,7 +176,7 @@ static int keyTest() {
 */
 static void detectSyncOutput() {
     if (std::getenv("MORODER_SYNC_OUTPUT")) return;
-    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) return;
+    if (!platform::isTerminal(0) || !platform::isTerminal(1)) return;
 
     // Warp answers that it has the mode, but then held whole frames back:
     // the page stayed blank for seconds after going back.
@@ -192,16 +185,11 @@ static void detectSyncOutput() {
         return;
     }
 
-    termios old{};
-    if (tcgetattr(STDIN_FILENO, &old) != 0) return;
-    termios raw = old;
-    raw.c_lflag &= ~static_cast<tcflag_t>(ICANON | ECHO);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 0;
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) return;
+    platform::RawInput raw;
+    if (!raw.ok()) return;
 
-    static const char query[] = "\033[?2026$p\033[c";
-    bool sent = write(STDOUT_FILENO, query, sizeof query - 1) == static_cast<ssize_t>(sizeof query - 1);
+    std::cout << std::flush;
+    const bool sent = platform::writeTerminal("\033[?2026$p\033[c");
 
     // The DA1 reply: ESC [ ? digits/semicolons c
     auto fenced = [](const std::string& s) {
@@ -216,23 +204,21 @@ static void detectSyncOutput() {
     std::string got;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
     while (sent && std::chrono::steady_clock::now() < deadline && !fenced(got)) {
-        pollfd p{STDIN_FILENO, POLLIN, 0};
-        if (poll(&p, 1, 20) > 0) {
-            char buf[256];
-            const ssize_t n = read(STDIN_FILENO, buf, sizeof buf);
-            if (n > 0) got.append(buf, static_cast<size_t>(n));
-        }
+        char buf[256];
+        const int n = raw.read(buf, sizeof buf, 20);
+        if (n < 0) break;
+        if (n > 0) got.append(buf, static_cast<size_t>(n));
     }
-    tcsetattr(STDIN_FILENO, TCSANOW, &old);
 
     const size_t at = got.find("\033[?2026;");
     const char ps = at != std::string::npos && at + 8 < got.size() ? got[at + 8] : '0';
     const bool supported = ps == '1' || ps == '2' || ps == '3';
-    if (supported) setenv("MORODER_SYNC_OUTPUT", "1", 1);
+    if (supported) platform::setEnv("MORODER_SYNC_OUTPUT", "1");
     spdlog::info("TERMINAL: synchronized output {}", supported ? "supported, used" : "not reported, off");
 }
 
 int main(int argc, char *argv[]) {
+    platform::initConsole();
     Config::app_name = APP_NAME;
 
     utils::ensure_dir(utils::resolve_path(MORODER_LOG_PATH));
@@ -321,11 +307,8 @@ int main(int argc, char *argv[]) {
     // A newer release: offer it before the interface starts, then restart into it.
     if (services::update::offerAtLaunch()) {
         std::cout << "\n  " << cli::bold() << cli::red() << "▶" << cli::reset() << " Starting the new version\n\n";
-        setenv("MORODER_JUST_UPDATED", "1", 1);     // no second offer in the restarted one
-        // The installed one, found on the PATH (not necessarily argv[0]).
-        execvp("moroder", argv);
-        execvp(argv[0], argv);
-        return 0;
+        platform::setEnv("MORODER_JUST_UPDATED", "1");     // no second offer in the restarted one
+        platform::restart(argv);
     }
 
     /* A missing browser.json means the user has not run setup, and every

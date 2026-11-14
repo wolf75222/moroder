@@ -1,4 +1,5 @@
 #include "../../include/ytm/ytmusic.hpp"
+#include "../../include/utils/platform.hpp"
 
 #include "../../include/ytm/parsers.hpp"
 #include "../../include/ytm/sha1.hpp"
@@ -37,7 +38,7 @@ bool startsWith(const std::string& s, const std::string& prefix) {
 std::string clientVersion() {
     std::time_t now = std::time(nullptr);
     std::tm     utc{};
-    gmtime_r(&now, &utc);
+    platform::utcTime(static_cast<long long>(now), &utc);
 
     char buf[16];
     std::strftime(buf, sizeof(buf), "%Y%m%d", &utc);

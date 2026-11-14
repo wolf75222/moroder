@@ -63,6 +63,16 @@ HANDLE stdHandle(int fd) {
 
 }
 
+void initConsole() {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    for (DWORD which : {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
+        HANDLE h = GetStdHandle(which);
+        DWORD mode = 0;
+        if (GetConsoleMode(h, &mode)) SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+}
+
 bool isTerminal(int fd) {
     DWORD mode = 0;
     return GetConsoleMode(stdHandle(fd), &mode) != 0;

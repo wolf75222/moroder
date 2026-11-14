@@ -2,39 +2,20 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../../include/utils/platform.hpp"
+
 #include <filesystem>
 #include <mutex>
-#include <spawn.h>
 #include <cstdlib>
-#include <unistd.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
-#include <sys/wait.h>
-#include <thread>
 #include <vector>
-
-extern char** environ;
 
 namespace {
 
 // Runs argv without a shell, so titles never need escaping.
-void spawnAndReap(std::vector<std::string> args) {
-    std::thread([args = std::move(args)] {
-        std::vector<char*> argv;
-        for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-        argv.push_back(nullptr);
-
-        pid_t pid = 0;
-        if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0) {
-            spdlog::debug("NOTIFY: could not start {}", args[0]);
-            return;
-        }
-
-        int status = 0;
-        waitpid(pid, &status, 0);
-    }).detach();
-}
+void spawnAndReap(std::vector<std::string> args) { platform::spawnDetached(std::move(args)); }
 
 }
 
@@ -83,42 +64,20 @@ std::string helperBinary() {
 bool services::copyToClipboard(const std::string& text) {
 #ifdef __APPLE__
     std::vector<std::string> cmd = { "pbcopy" };
+#elif defined(_WIN32)
+    std::vector<std::string> cmd = { "powershell", "-NoProfile", "-Command", "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())" };
 #else
     std::vector<std::string> cmd = getenv("WAYLAND_DISPLAY") ? std::vector<std::string>{ "wl-copy" }
                                                              : std::vector<std::string>{ "xclip", "-selection", "clipboard" };
 #endif
-    int fds[2];
-    if (pipe(fds) != 0) return false;
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, fds[0], STDIN_FILENO);
-    posix_spawn_file_actions_addclose(&actions, fds[1]);
-
-    std::vector<char*> argv;
-    for (auto& a : cmd) argv.push_back(a.data());
-    argv.push_back(nullptr);
-
-    pid_t pid = 0;
-    const bool ok = posix_spawnp(&pid, argv[0], &actions, nullptr, argv.data(), environ) == 0;
-    posix_spawn_file_actions_destroy(&actions);
-    close(fds[0]);
-    if (ok) {
-        (void)!write(fds[1], text.data(), text.size());
-    }
-    close(fds[1]);
-    if (ok) { int st = 0; waitpid(pid, &st, 0); }
-    return ok;
+    platform::Process p;
+    if (!p.start(cmd)) return false;
+    p.write(text);
+    p.closeStdin();
+    return p.wait() == 0;
 }
 
-void services::openUrl(const std::string& url) {
-    if (url.rfind("https://", 0) != 0) return;
-#ifdef __APPLE__
-    spawnAndReap({ "open", url });
-#else
-    spawnAndReap({ "xdg-open", url });
-#endif
-}
+void services::openUrl(const std::string& url) { platform::openUrl(url); }
 
 void services::notifyTrack(const std::string& title, const std::string& subtitle, const std::string& cover) {
     if (title.empty()) return;
@@ -140,6 +99,23 @@ void services::notifyTrack(const std::string& title, const std::string& subtitle
         "-e", "end run",
         title, subtitle,
     });
+#elif defined(_WIN32)
+    /* A Windows toast through PowerShell's WinRT access. Title and text come
+    in on stdin, one per line: -Command would splice extra arguments into the
+    script itself.
+    */
+    static const char* script =
+        "[Console]::InputEncoding=[Text.Encoding]::UTF8;$l=[Console]::In.ReadToEnd() -split \"`n\";"
+        "$null=[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime];"
+        "$t=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+        "$n=$t.GetElementsByTagName('text');$null=$n.Item(0).AppendChild($t.CreateTextNode($l[0]));"
+        "$null=$n.Item(1).AppendChild($t.CreateTextNode($l[1]));"
+        "$id='{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($t))";
+    auto oneLine = [](std::string v) { for (char& c : v) if (c == '\n' || c == '\r') c = ' '; return v; };
+    platform::spawnDetached({ "powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script },
+                            oneLine(title) + "\n" + oneLine(subtitle) + "\n");
+    (void)cover;
 #else
     spawnAndReap({ "notify-send", "--app-name=Moroder", "--expire-time=4000", title, subtitle });
 #endif

@@ -17,6 +17,9 @@ namespace platform {
 
 namespace fs = std::filesystem;
 
+// At startup: UTF-8 and escape codes in the console (Windows); nothing on POSIX.
+void initConsole();
+
 // stdin = 0, stdout = 1, stderr = 2.
 bool isTerminal(int fd);
 
