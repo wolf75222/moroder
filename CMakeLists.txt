@@ -47,6 +47,12 @@ set(MORODER_VERSION "0.0.0-dev" CACHE STRING "Moroder version")
 
 include(FetchContent)
 
+# `cmake --install` installs Moroder only, not the bundled libraries.
+set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDBUSCPP_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
