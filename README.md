@@ -9,7 +9,6 @@ Keyboard, mouse or trackpad. macOS and Linux.
 <img alt="macOS" src="https://img.shields.io/badge/macOS-161b22?style=for-the-badge&logo=apple&logoColor=white">
 <img alt="Linux" src="https://img.shields.io/badge/Linux-161b22?style=for-the-badge&logo=linux&logoColor=white">
 <img alt="YouTube Music" src="https://img.shields.io/badge/YouTube%20Music-161b22?style=for-the-badge&logo=youtubemusic&logoColor=FF0000">
-<img alt="C++17" src="https://img.shields.io/badge/C%2B%2B17-161b22?style=for-the-badge&logo=cplusplus&logoColor=white">
 
 <img src="img/app.gif" alt="Moroder" width="760">
 
