@@ -119,25 +119,51 @@ inline std::string lower(std::string s) {
     return s;
 };
 
+/* Text lengths in characters, not bytes: cutting "Schäfer" in the middle of
+"ä" printed a broken character, and accented titles were cut too early.
+*/
+inline size_t utf8Length(const std::string& s) {
+    size_t n = 0;
+    for (unsigned char c : s) if ((c & 0xC0) != 0x80) n++;
+    return n;
+}
+
+// The first `chars` characters of s.
+inline std::string utf8Prefix(const std::string& s, size_t chars) {
+    size_t i = 0, n = 0;
+    while (i < s.size()) {
+        if ((static_cast<unsigned char>(s[i]) & 0xC0) != 0x80) {
+            if (n == chars) break;
+            n++;
+        }
+        i++;
+    }
+    return s.substr(0, i);
+}
+
 inline std::string trimSuffix(const std::string& str, size_t max_size, const std::string& suffix) {
-    if (str.size() <= max_size)
+    if (utf8Length(str) <= max_size)
         return str;
 
-    if (suffix.size() >= max_size)
-        return suffix.substr(0, max_size);
+    const size_t suffix_len = utf8Length(suffix);
+    if (suffix_len >= max_size)
+        return utf8Prefix(suffix, max_size);
 
-    size_t cut = max_size - suffix.size();
-    return str.substr(0, cut) + suffix;
+    // No space before the suffix ("Cornelia ..." reads as a cut word).
+    std::string head = utf8Prefix(str, max_size - suffix_len);
+    while (!head.empty() && head.back() == ' ') head.pop_back();
+    return head + suffix;
 }
 
 inline std::string trimWordsSuffix(const std::string& str, size_t max_size, const std::string& suffix) {
-    if (str.size() <= max_size)
+    if (utf8Length(str) <= max_size)
         return str;
 
-    if (suffix.size() >= max_size)
-        return suffix.substr(0, max_size);
+    const size_t suffix_len = utf8Length(suffix);
+    if (suffix_len >= max_size)
+        return utf8Prefix(suffix, max_size);
 
-    size_t limit = max_size - suffix.size();
+    size_t limit = max_size - suffix_len;
 
     std::string result;
     std::istringstream iss(str);
@@ -146,14 +172,14 @@ inline std::string trimWordsSuffix(const std::string& str, size_t max_size, cons
     while (iss >> word) {
         std::string candidate = result.empty() ? word : result + " " + word;
 
-        if (candidate.size() > limit)
+        if (utf8Length(candidate) > limit)
             break;
 
         result = candidate;
     }
 
     if (result.empty())
-        return str.substr(0, limit) + suffix;
+        return utf8Prefix(str, limit) + suffix;
 
     return result + suffix;
 }

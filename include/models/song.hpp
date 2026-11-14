@@ -30,6 +30,8 @@ struct SongRef {
     // Its place in one of the user's playlists (removing it needs this).
     std::string set_video_id;
 
+    int duration_s = 0;     // 0: unknown
+
     // Inverse of from_json (search-result shape), for history / session files.
     nlohmann::json to_json() const {
         nlohmann::json j;
@@ -39,6 +41,7 @@ struct SongRef {
         j["artists"] = nlohmann::json::array();
         for (const auto& a : artists) j["artists"].push_back({{"name", a.name}, {"id", a.id}});
         j["thumbnails"] = nlohmann::json::array({ {{"url", thumbnail_small}}, {{"url", thumbnail_large}} });
+        if (duration_s > 0) j["duration_seconds"] = duration_s;
         return j;
     }
 
@@ -48,6 +51,19 @@ struct SongRef {
         s.id = utils::jstr(j, "videoId");
         s.title = utils::jstr(j, "title");
         s.set_video_id = utils::jstr(j, "setVideoId");
+        if (j.contains("duration_seconds") && j["duration_seconds"].is_number()) {
+            s.duration_s = j["duration_seconds"].get<int>();
+        } else if (j.contains("duration") && j["duration"].is_string()) {
+            // "3:45" or "1:02:03"
+            const std::string d = j["duration"].get<std::string>();
+            int acc = 0, part = 0;
+            bool any = false;
+            for (char ch : d) {
+                if (ch >= '0' && ch <= '9') { part = part * 10 + (ch - '0'); any = true; }
+                else if (ch == ':') { acc = acc * 60 + part; part = 0; }
+            }
+            s.duration_s = any ? acc * 60 + part : 0;
+        }
 
         if (j.contains("artists") && j["artists"].is_array()) {
             for (const auto& a : j["artists"]) {

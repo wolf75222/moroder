@@ -855,9 +855,15 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 
         const std::string title = playlist->ref.title;
         const std::string sub = playlist->ref.author.empty() ? "" : playlist->ref.author + "  \u2022  ";
+        // Total length, when the tracks carry theirs.
+        long total = 0;
+        for (const auto& t : tracks) if (auto sg = std::dynamic_pointer_cast<music::Song>(t)) total += sg->ref.duration_s;
+        const std::string length = total <= 0 ? ""
+            : total >= 3600 ? "  \u2022  " + std::to_string(total / 3600) + " h " + std::to_string((total % 3600) / 60) + " min"
+                            : "  \u2022  " + std::to_string(total / 60) + " min";
         const std::string count = loading ? "loading tracks..."
                                 : more ? std::to_string(tracks.size()) + "+ tracks, loading the rest"
-                                : std::to_string(tracks.size()) + " tracks";
+                                : std::to_string(tracks.size()) + " tracks" + length;
         const std::string thumb = playlist->ref.thumbnail_large.empty() ? playlist->ref.thumbnail_small : playlist->ref.thumbnail_large;
 
         std::string kind = state->open_kind;
@@ -908,15 +914,19 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 
         ButtonOption opt;
         const std::string id = song->ref.id;
-        opt.transform = [top, bottom, url, number, id](const EntryState& s) {
+        const int secs = song->ref.duration_s;
+        const std::string length = secs > 0 ? std::to_string(secs / 60) + ":" + (secs % 60 < 10 ? "0" : "") + std::to_string(secs % 60) : "";
+        opt.transform = [top, bottom, url, number, id, length](const EntryState& s) {
             Element thumb = url.empty()
                 ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
                 : image_view(ui::cover(url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             const bool now = !id.empty() && id == playing_id;
             return hbox({
+                // The selected row: an accent bar, like the menus.
+                vbox({ text(s.focused ? "\u258e" : " "), text(s.focused ? "\u258e" : " ") }) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 // The playing track shows a speaker in the accent colour.
                 (now ? text("\uf028") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
-                     : text(number) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | size(WIDTH, EQUAL, 6) | align_right,
+                     : text(number) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | size(WIDTH, EQUAL, 5) | align_right,
                 text("  "),
                 thumb,
                 text("  "),
@@ -927,6 +937,9 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                     text(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
                                                    : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 }) | flex,
+                // Its length, right-aligned like a music app's track list.
+                text(length) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text("   "),
             }) | size(HEIGHT, EQUAL, 2);
         };
 

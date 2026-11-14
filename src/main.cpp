@@ -296,6 +296,7 @@ int main(int argc, char *argv[]) {
     bool sidebar_hidden  = false;
     bool sidebar_focused = false;
     bool audio_playing = false;
+    bool has_track = false;      // something loaded (playing or paused)
 
     auto current_state = ui::State::HOME;
 
@@ -863,6 +864,7 @@ int main(int argc, char *argv[]) {
             }
 
             audio_playing = state_copy.flags["audio"] == services::Player::Flags::Ongoing;
+            has_track = state_copy.current != nullptr;
         }
 
         /* Prefetch the playlist under the selection (sidebar, or a shelf /
@@ -2030,7 +2032,8 @@ int main(int argc, char *argv[]) {
         }
 
 
-        if(Config::isKey(event, cfg.KEY_QUEUE_VIEW) && audio_playing) {
+        // The queue, while something is loaded (paused included).
+        if(Config::isKey(event, cfg.KEY_QUEUE_VIEW) && (audio_playing || playback_bar_data.duration > 0 || has_track)) {
             current_state = ui::State::QUEUE;
             return true;
         }
@@ -2179,15 +2182,15 @@ int main(int argc, char *argv[]) {
                 const bool on = static_cast<int>(i) == sb.suggestion_index;
                 const bool past = std::find(sb.history.begin(), sb.history.end(), sb.suggestions[i]) != sb.history.end();
                 Element row = hbox({
+                    text(on ? "\u258e" : " ") | color(accent),
                     text(" "),
-                    text(past ? "\uf1da " : "\uf002 ") | dim,
-                    text(" " + sb.suggestions[i]),
+                    text(past ? "\uf1da " : "\uf002 ") | color(on ? accent : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+                    text(" " + sb.suggestions[i]) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
                 });
-                row = on ? row | bold | color(Color::White) | bgcolor(accent) : row | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
                 rows.push_back(row | reflect(sb.suggestion_boxes[i]));
             }
-            rows.push_back(hbox({ filler(), text("\u2191\u2193 pick   tab fill   enter search ") | dim }));
+            rows.push_back(hbox({ filler(), text("\u2191\u2193 pick   tab fill   enter search ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }));
             const int W = std::max(40, std::min(70, sb.box.x_max - sb.box.x_min - 4));
             Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W)
                 | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
@@ -2203,30 +2206,40 @@ int main(int argc, char *argv[]) {
         }
 
         if (volume_pop.open && playback_bar_data.box_volume.x_min >= 0) {
-            constexpr int BAR = 24;
+            /* A slim slider: the played part in the accent colour, a knob, the
+            rest as a thin line; light border, the terminal's own background.
+            */
+            constexpr int BAR = 22;
             const int v = std::clamp(playback_bar_data.volume, 0, 100);
-            const int filled = (v * BAR + 50) / 100;
+            const int knob = (v * (BAR - 1) + 50) / 100;
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
             const std::string icon = v == 0 ? "\U000f075f" : v < 34 ? "\U000f057f" : v < 67 ? "\U000f0580" : "\U000f057e";
 
-            std::string full, rest;
-            for (int i = 0; i < filled; i++) full += "\u2501";
-            for (int i = filled; i < BAR; i++) rest += "\u2501";
+            std::string played, rest;
+            for (int i = 0; i < knob; i++) played += "\u2501";
+            for (int i = knob + 1; i < BAR; i++) rest += "\u2500";
 
             Element pop = hbox({
                 text(" "),
-                text(icon) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(volume_pop.mute),
+                text(icon) | color(v == 0 ? ui::GetColor(ui::MColor::SEPARATOR_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(volume_pop.mute),
                 text("  "),
-                hbox({ text(full) | color(accent), text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }) | reflect(volume_pop.bar),
-                text(" "),
-                text(std::to_string(v) + "%") | size(WIDTH, EQUAL, 4) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                hbox({
+                    text(played) | color(accent),
+                    text("\u25cf") | color(Color::White),
+                    text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+                }) | reflect(volume_pop.bar),
+                text("  "),
+                text(std::to_string(v)) | align_right | size(WIDTH, EQUAL, 3) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 text(" "),
             }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | clear_under;
 
-            constexpr int W = BAR + 14;
+            constexpr int W = BAR + 12;
             const Box& vb = playback_bar_data.box_volume;
-            const int x = std::max(0, std::min(vb.x_max - W + 1, screen.dimx() - W - 1));
-            const int y = std::max(0, vb.y_min - 3);
+            const int x = std::max(0, std::min(vb.x_max - W + 2, screen.dimx() - W - 1));
+            // Just above the playback bar's progress line, not over it.
+            const Box& pb = playback_bar_data.box_progress;
+            const int top_of_bar = pb.y_min >= 0 ? std::min(pb.y_min, vb.y_min) : vb.y_min;
+            const int y = std::max(0, top_of_bar - 3);
             base = dbox({
                 base,
                 vbox({
@@ -2244,25 +2257,24 @@ int main(int argc, char *argv[]) {
             Elements rows;
 
             if (!ctx.title.empty()) {
-                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 6, "...")) | dim, filler() }));
-                rows.push_back(separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_SECONDARY)));
+                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 5, "\u2026")) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)), filler() }));
+                rows.push_back(hbox({ text(" "), separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | flex, text(" ") }));
             }
 
+            // The selected row: an accent bar and accent text, no solid block.
             for (size_t i = 0; i < ctx.items.size(); i++) {
                 const auto& it = ctx.items[i];
                 const bool on = static_cast<int>(i) == ctx.hover;
 
                 Element row = hbox({
-                    text("  "),
-                    text(it.icon) | size(WIDTH, EQUAL, 3),
-                    text(it.label),
+                    text(on ? "\u258e" : " ") | color(accent),
+                    text(" "),
+                    text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? accent : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                    text(utils::trimSuffix(it.label, W - 12, "\u2026")) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
-                    text(it.hint) | (on ? nothing : dim),
+                    text(it.hint) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
                     text("  "),
                 });
-
-                row = on ? row | bold | color(Color::White) | bgcolor(accent)
-                         : row | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
                 rows.push_back(row | reflect(ctx.boxes[i]));
             }
 
@@ -2287,12 +2299,16 @@ int main(int argc, char *argv[]) {
 
         if (prompt.open) {
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+            // Title, then an underlined field with a thin cursor; quiet hints.
             Element box = vbox({
-                hbox({ text(" "), text(prompt.title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
                 text(""),
-                hbox({ text(" "), text(prompt.value), text(" ") | inverted | color(accent), filler() })
-                    | borderStyled(BorderStyle::ROUNDED, accent),
-                hbox({ filler(), text("enter: ok   esc: cancel ") | dim }),
+                hbox({ text("  "), text(prompt.title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
+                text(""),
+                hbox({ text("  "), text(prompt.value) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text("\u258f") | color(accent), filler() }),
+                hbox({ text("  "), separatorLight() | color(accent) | flex, text("  ") }),
+                text(""),
+                hbox({ filler(), text("enter") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text(" ok   ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+                       text("esc") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text(" cancel  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }),
             }) | size(WIDTH, EQUAL, 56)
                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
                | clear_under | center;
