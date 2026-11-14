@@ -147,6 +147,8 @@ Component ui::PlaybackBar(PlaybackData* data) {
             }) | reflect(data->box_volume),
             text("   "),
             text("") | color(loop_color) | reflect(data->box_loop),
+            text("   "),
+            text("\uf074") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_shuffle),
             text("  "),
         });
 

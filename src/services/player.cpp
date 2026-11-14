@@ -7,6 +7,9 @@
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
+#include <cstdio>
+#include <filesystem>
+#include <random>
 #include <chrono>
 #include <thread>
 #include <algorithm>
@@ -308,6 +311,7 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         this->updateMprisData();
         this->updateSocialData();
         this->startPositionTick();
+        this->preloadNext();
 
         if (on_stream_start) {
             on_stream_start();
@@ -836,6 +840,66 @@ void services::Player::worker_loop() {
                     refreshLibraryError(state);
                 }
 
+            } else if constexpr (std::is_same_v<T, ShuffleCommand>) {
+                std::vector<std::string> urls;
+                size_t pos = 0, count = 0;
+
+                {
+                    std::lock_guard lock(state_mutex);
+                    pos = static_cast<size_t>(std::max(0, state.queue_position));
+                    count = state.user_queue.size();
+                    if (count <= pos + 2) return;
+
+                    static std::mt19937 rng{std::random_device{}()};
+                    std::shuffle(state.user_queue.begin() + pos + 1, state.user_queue.end(), rng);
+                    for (size_t i = pos + 1; i < count; i++) urls.push_back(state.user_queue[i]->getStreamUrl());
+
+                    state.notice = "Queue shuffled (" + std::to_string(urls.size()) + " tracks)";
+                    state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                }
+
+                // Rebuild mpv's tail in the new order; the current track plays on.
+                for (size_t i = count - 1; i > pos; i--) mpv_service->removeAt(static_cast<uint16_t>(i));
+                for (const auto& url : urls) mpv_service->load(url);
+                preloadNext();
+
+            } else if constexpr (std::is_same_v<T, MoveCommand>) {
+                {
+                    std::lock_guard lock(state_mutex);
+                    const size_t pos = static_cast<size_t>(std::max(0, state.queue_position));
+                    const size_t n = state.user_queue.size();
+                    if (c.from <= pos || c.to <= pos || c.from >= n || c.to >= n || c.from == c.to) return;
+
+                    auto item = state.user_queue[c.from];
+                    state.user_queue.erase(state.user_queue.begin() + c.from);
+                    state.user_queue.insert(state.user_queue.begin() + c.to, item);
+                }
+
+                // playlist-move puts the entry before the target index.
+                mpv_service->move(static_cast<uint16_t>(c.from), static_cast<uint16_t>(c.to > c.from ? c.to + 1 : c.to));
+                preloadNext();
+
+            } else if constexpr (std::is_same_v<T, PreloadedCommand>) {
+                // Not in mpv yet (autoplay radio): keep it for when it gets loaded.
+                if (c.index == SIZE_MAX) {
+                    std::lock_guard lock(preloaded_mutex);
+                    if (preloaded.size() > 32) preloaded.clear();
+                    preloaded[c.expected_url] = c.stream_url;
+                    spdlog::info("PLAYER: next radio track preloaded");
+                    return;
+                }
+
+                {
+                    std::lock_guard lock(state_mutex);
+                    // Still the same track at the same place, and not playing yet?
+                    if (c.index >= state.user_queue.size() || static_cast<int>(c.index) <= state.queue_position) return;
+                    if (state.user_queue[c.index]->getStreamUrl() != c.expected_url) return;
+                }
+
+                mpv_service->insertAt(c.stream_url, static_cast<uint16_t>(c.index));
+                mpv_service->removeAt(static_cast<uint16_t>(c.index + 1));
+                spdlog::info("PLAYER: next track preloaded");
+
             } else if constexpr (std::is_same_v<T, OpenAlbumCommand>) {
                 spdlog::info("PLAYER: OpenAlbumCommand, {}", c.ref.title);
 
@@ -1228,7 +1292,7 @@ void services::Player::skipForward() {
 
     if(to_radio_skip) {
         spdlog::info("PLAYER: loading next radio song");
-        mpv_service->load(radio_next->getStreamUrl());
+        mpv_service->load(streamUrlFor(radio_next->getStreamUrl()));
     }
 
     if(should_skip) {
@@ -1577,7 +1641,7 @@ void services::Player::skipTo(uint16_t index) {
                 state.user_queue.push_back(state.radio_queue.front());
                 state.radio_queue.pop_front();
 
-                mpv_service->load(state.user_queue.back()->getStreamUrl());
+                mpv_service->load(streamUrlFor(state.user_queue.back()->getStreamUrl()));
             }
         }
     }
@@ -1799,6 +1863,83 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
     }
 
     command_cv.notify_one();
+}
+
+std::string services::Player::streamUrlFor(const std::string& url) {
+    std::lock_guard lock(preloaded_mutex);
+    auto it = preloaded.find(url);
+    if (it == preloaded.end()) return url;
+    std::string stream = it->second;
+    preloaded.erase(it);
+    return stream;
+}
+
+void services::Player::shuffleUpcoming() {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(ShuffleCommand{});
+    }
+    command_cv.notify_one();
+}
+
+void services::Player::moveInQueue(size_t from, size_t to) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(MoveCommand{from, to});
+    }
+    command_cv.notify_one();
+}
+
+/* preloadNext
+- yt-dlp resolving a track at load time is the "loading" pause between two
+  tracks. As soon as one starts, resolve the next one in the background and
+  swap its mpv entry for the direct stream URL, so it starts at once
+- Checked again before swapping (PreloadedCommand), in case the queue moved
+*/
+void services::Player::preloadNext() {
+    size_t index;
+    std::string url;
+
+    {
+        std::lock_guard lock(state_mutex);
+        if (state.queue_position < 0) return;
+        index = static_cast<size_t>(state.queue_position) + 1;
+        if (index < state.user_queue.size()) {
+            url = state.user_queue[index]->getStreamUrl();
+        } else if (state.autoplay && !state.radio_queue.empty()) {
+            url = state.radio_queue.front()->getStreamUrl();     // the radio's next
+            index = SIZE_MAX;
+        } else {
+            return;
+        }
+    }
+
+    if (url.rfind("http", 0) != 0 || url.find("youtube.com") == std::string::npos) return;
+
+    std::thread([this, index, url] {
+        const Config& cfg = Config::get();
+        std::string cmd = "yt-dlp --no-warnings -f 'bestaudio/best' -g ";
+        const std::filesystem::path cookies = cfg.YTM_COOKIES_PATH / "cookies.txt";
+        std::error_code ec;
+        if (!Config::anonymous && std::filesystem::exists(cookies, ec)) cmd += "--cookies '" + cookies.string() + "' ";
+        cmd += "'" + url + "' 2>/dev/null";
+
+        std::string out;
+        if (FILE* pipe = popen(cmd.c_str(), "r")) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), pipe)) out += buf;
+            pclose(pipe);
+        }
+
+        const std::string stream = out.substr(0, out.find('\n'));
+        if (stream.rfind("http", 0) != 0) return;
+
+        {
+            std::lock_guard lock(command_mutex);
+            command_queue.push(PreloadedCommand{index, url, stream});
+        }
+        command_cv.notify_one();
+    }).detach();
 }
 
 void services::Player::openAlbum(const music::AlbumRef& ref) {

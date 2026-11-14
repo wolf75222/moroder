@@ -57,6 +57,10 @@ public:
     */
     void setVolume(int percent);
 
+    // Playlist edits mirrored from the player's queue.
+    void move(uint16_t from, uint16_t to);                  // mpv playlist-move semantics
+    void insertAt(const std::string& url, uint16_t index);
+
     // Rewrite yt-dlp's cookie file from browser.json (after a session refresh).
     void refreshSessionCookies();
 

@@ -106,6 +106,9 @@ public:
     std::string KEY_VOLUME_DOWN       = "-";
     std::string KEY_VOLUME_UP         = "=";
     std::string KEY_LIKE              = "+";
+    std::string KEY_SHUFFLE           = "S";
+    std::string KEY_MOVE_UP           = "K";
+    std::string KEY_MOVE_DOWN         = "J";
     std::string KEY_HELP              = "?";
     int SEEK_SECONDS                  = 10;
     bool ENABLE_NOTIFICATIONS         = true;
@@ -656,6 +659,9 @@ private:
             {"KEY_VOLUME_DOWN",      makeSetter(&Config::KEY_VOLUME_DOWN),       true},
             {"KEY_VOLUME_UP",        makeSetter(&Config::KEY_VOLUME_UP),         true},
             {"KEY_LIKE",             makeSetter(&Config::KEY_LIKE),              true},
+            {"KEY_SHUFFLE",          makeSetter(&Config::KEY_SHUFFLE),           true},
+            {"KEY_MOVE_UP",          makeSetter(&Config::KEY_MOVE_UP),           true},
+            {"KEY_MOVE_DOWN",        makeSetter(&Config::KEY_MOVE_DOWN),         true},
             {"KEY_HELP",             makeSetter(&Config::KEY_HELP),              true},
             {"SEEK_SECONDS",         makeSetter(&Config::SEEK_SECONDS),          true},
             {"ENABLE_NOTIFICATIONS", makeSetter(&Config::ENABLE_NOTIFICATIONS),  true},

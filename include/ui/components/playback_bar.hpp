@@ -28,7 +28,7 @@ struct PlaybackData {
     std::string notice;     // transient message, empty when none
 
     // Screen areas of the clickable parts, filled at render time.
-    ftxui::Box box_progress, box_prev, box_play, box_next, box_like, box_volume, box_loop;
+    ftxui::Box box_progress, box_prev, box_play, box_next, box_like, box_volume, box_loop, box_shuffle;
 
     bool is_playing = false;
     bool can_skip_forwards  = true;

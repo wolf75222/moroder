@@ -69,6 +69,18 @@ private:
 
     struct RefreshSessionCommand {};
 
+    struct ShuffleCommand {};
+
+    struct MoveCommand {
+        size_t from = 0, to = 0;
+    };
+
+    // Swap a queued entry's YouTube URL for its pre-resolved stream URL.
+    struct PreloadedCommand {
+        size_t index = 0;
+        std::string expected_url, stream_url;
+    };
+
     struct OpenAlbumCommand {
         music::AlbumRef ref;
     };
@@ -221,6 +233,12 @@ public:
     // Load a playlist's tracks for the playlist view (state.open_playlist).
     void openPlaylist(const music::PlaylistRef& ref);
 
+    // Shuffle everything after the current track (queue and mpv together).
+    void shuffleUpcoming();
+
+    // Move a queued track (user queue indexes, both after the current one).
+    void moveInQueue(size_t from, size_t to);
+
     // Album page: an album's tracks in the playlist view.
     void openAlbum(const music::AlbumRef& ref);
 
@@ -278,7 +296,10 @@ private:
         OpenPlaylistCommand,
         RefreshSessionCommand,
         OpenAlbumCommand,
-        OpenArtistCommand
+        OpenArtistCommand,
+        ShuffleCommand,
+        MoveCommand,
+        PreloadedCommand
     >;
 
     std::queue<Command> command_queue;
@@ -296,6 +317,15 @@ private:
     void worker_loop();
 
     std::string last_notified_id;   // track already announced by notifyTrack
+
+    // Resolve the next track's stream ahead of time (yt-dlp), see preloadNext.
+    void preloadNext();
+
+    // Pre-resolved stream URLs by YouTube URL, for tracks not in mpv yet
+    // (autoplay radio); taken by streamUrlFor().
+    std::unordered_map<std::string, std::string> preloaded;
+    std::mutex preloaded_mutex;
+    std::string streamUrlFor(const std::string& url);
 
     /* updateMprisControls
     - Updates the mpris buttons (activated / deactivated) based on queue position.

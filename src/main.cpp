@@ -359,6 +359,13 @@ int main(int argc, char *argv[]) {
 
     std::function<bool(const ftxui::Event&, const int)> on_queue_press =
     [&current_state, &player, &main_content_items, &main_content, &screen, &cfg](const ftxui::Event& event, const int queue_index) {
+        // K / J reorder the queue (user queue rows only, after the current track).
+        if(Config::isKey(event, cfg.KEY_MOVE_UP) || Config::isKey(event, cfg.KEY_MOVE_DOWN)) {
+            const int to = queue_index + (Config::isKey(event, cfg.KEY_MOVE_UP) ? -1 : 1);
+            player.moveInQueue(static_cast<size_t>(queue_index), static_cast<size_t>(std::max(0, to)));
+            return true;
+        }
+
         if(!Config::isKey(event, cfg.KEY_REMOVE_FROM_QUEUE) && !Config::isKey(event, cfg.KEY_PLAY_NOW)) {
             return false;
         }
@@ -846,6 +853,7 @@ int main(int argc, char *argv[]) {
                 if(in(playback_bar_data.box_next))   { player.skipForward();       return true; }
                 if(in(playback_bar_data.box_like))   { player.toggleLikeCurrent(); return true; }
                 if(in(playback_bar_data.box_loop))   { player.cycleLoop();         return true; }
+                if(in(playback_bar_data.box_shuffle)){ player.shuffleUpcoming();   return true; }
                 if(in(playback_bar_data.box_volume)) {
                     // Mute, and unmute back to the level it had.
                     static int before_mute = 100;
@@ -980,6 +988,8 @@ int main(int argc, char *argv[]) {
                             }
                         }
                         if(current_state == ui::State::QUEUE) {
+                            ctx.items.push_back({"\uf077", "Move up", cfg.KEY_MOVE_UP, key(cfg.KEY_MOVE_UP)});
+                            ctx.items.push_back({"\uf078", "Move down", cfg.KEY_MOVE_DOWN, key(cfg.KEY_MOVE_DOWN)});
                             ctx.items.push_back({"\uf00d", "Remove from queue", cfg.KEY_REMOVE_FROM_QUEUE, key(cfg.KEY_REMOVE_FROM_QUEUE)});
                         } else {
                             ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, key(cfg.KEY_ADD_TO_QUEUE)});
@@ -1085,6 +1095,11 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
+        if(Config::isKey(event, cfg.KEY_SHUFFLE)) {
+            player.shuffleUpcoming();
+            return true;
+        }
+
         if(Config::isKey(event, cfg.KEY_LIKE)) {
             player.toggleLikeCurrent();
             return true;
@@ -1177,11 +1192,13 @@ int main(int argc, char *argv[]) {
             row(cfg.KEY_VOLUME_DOWN,   "volume down"),
             row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
             row(cfg.KEY_LIKE,          "like / unlike current track"),
+            row(cfg.KEY_SHUFFLE,       "shuffle what comes next"),
             text(""),
             heading("On the selected item"),
             row(cfg.KEY_PLAY_NOW,          "play now (starts a radio)"),
             row(cfg.KEY_ADD_TO_QUEUE,      "add to queue"),
             row(cfg.KEY_REMOVE_FROM_QUEUE, "remove from queue"),
+            row(cfg.KEY_MOVE_UP + " " + cfg.KEY_MOVE_DOWN, "move up / down (queue)"),
             text(""),
             heading("Navigation"),
             row("arrows",                 "move around"),

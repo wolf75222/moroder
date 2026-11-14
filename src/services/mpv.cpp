@@ -275,6 +275,18 @@ void services::MPV::setLoopFile(bool enabled) {
     spdlog::info("MPV: loop-file {}", value);
 }
 
+void services::MPV::move(uint16_t from, uint16_t to) {
+    const std::string a = std::to_string(from), b = std::to_string(to);
+    const char* args[] = {"playlist-move", a.c_str(), b.c_str(), nullptr};
+    command(args);
+}
+
+void services::MPV::insertAt(const std::string& url, uint16_t index) {
+    const std::string i = std::to_string(index);
+    const char* args[] = {"loadfile", url.c_str(), "insert-at", i.c_str(), nullptr};
+    command(args);
+}
+
 void services::MPV::refreshSessionCookies() {
     if (!Config::anonymous) writeSessionCookies(Config::get());
 }
