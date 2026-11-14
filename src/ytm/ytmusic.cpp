@@ -867,6 +867,23 @@ json YTMusic::getPlaylist(const std::string& playlistId, int limit) {
 
 
 
+json YTMusic::getAccountInfo() {
+    if (!authenticated) return nullptr;
+
+    json response = sendRequest("account/account_menu", json::object());
+    if (!last_error.ok()) return nullptr;
+
+    const Path header = {"actions", 0, "openPopupAction", "popup", "multiPageMenuRenderer", "header", "activeAccountHeaderRenderer"};
+    const std::string name = navStr(response, header + Path{"accountName", "runs", 0, "text"});
+    if (name.empty()) return nullptr;
+
+    return json{
+        {"name", name},
+        {"handle", navStr(response, header + Path{"channelHandle", "runs", 0, "text"})},
+        {"photo", navStr(response, header + Path{"accountPhoto", "thumbnails", 0, "url"})},
+    };
+}
+
 json YTMusic::getLibraryPlaylists(int limit) {
     if (!authenticated) {
         setError(Error::Kind::Auth, "not authenticated");

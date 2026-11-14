@@ -144,6 +144,14 @@ public:
     */
     json getLibraryPlaylists(int limit = 25);
 
+    /* getAccountInfo
+    - The signed-in account, as YouTube Music's account menu shows it:
+      {"name", "handle", "photo"}; null when signed out or on error
+    - With several Google accounts in one browser, the x-goog-authuser header
+      (saved in browser.json) picks which one this is
+    */
+    json getAccountInfo();
+
     /* getLibraryAlbums / Songs / Artists / Podcasts
     - The rest of the library pages. All require authentication and return [] without it.
     - Albums and podcasts come back as grids, songs and artists as shelves.

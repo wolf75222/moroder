@@ -1,6 +1,7 @@
 #include "../../include/services/update.hpp"
 #include "../../include/config/config.hpp"
 #include "../../include/services/cli_ui.hpp"
+#include "../../include/ytm/ytmusic.hpp"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -301,10 +302,14 @@ int services::update::doctor() {
         if (!fs::exists(session, ec)) { live.set(id, State::Warn, "not signed in: moroder setup (or moroder -a)"); return; }
         std::string from;
         try { from = Config::get().COOKIE_BROWSER; } catch (...) {}
-        const auto age = std::chrono::duration_cast<std::chrono::hours>(
-            fs::file_time_type::clock::now() - fs::last_write_time(session, ec)).count() / 24;
-        if (!from.empty()) live.set(id, State::Ok, "from " + from + ", refreshed automatically");
-        else live.set(id, State::Ok, "pasted headers, " + std::to_string(age) + (age == 1 ? " day old" : " days old"));
+        // Whose account it is, as YouTube Music sees it.
+        ytm::YTMusic client(session);
+        const nlohmann::json account = client.getAccountInfo();
+        if (!account.is_object()) { live.set(id, State::Fail, "YouTube Music doesn't recognise the session: moroder setup"); return; }
+        std::string who = account.value("name", std::string());
+        if (!account.value("handle", std::string()).empty()) who += " " + account.value("handle", std::string());
+        if (!from.empty()) live.set(id, State::Ok, who + ", from " + from + " (kept fresh)");
+        else live.set(id, State::Ok, who);
     });
     check("Network", [&](size_t id) {
         const long ms = pingMs("https://music.youtube.com/", 6000);
