@@ -1,0 +1,2 @@
+# Patches must keep LF line endings, whatever git does on Windows.
+*.patch -text

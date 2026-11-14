@@ -5,7 +5,7 @@ name: Windows
 # a v* tag attaches the zip to that release (install.ps1 downloads it).
 on:
   push:
-    branches: [main, macos-support]
+    branches: [main]
     tags: ['v*']
     paths-ignore: ['**.md', 'docs/**', 'install.sh']
   workflow_dispatch:
@@ -21,6 +21,10 @@ jobs:
         shell: msys2 {0}
 
     steps:
+      - name: Keep LF line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
 
       - uses: msys2/setup-msys2@v2
