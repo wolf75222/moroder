@@ -237,7 +237,20 @@ void YTMusic::loadAuth(const std::filesystem::path& path) {
 void YTMusic::ensureVisitorId() {
     if (!visitor_id.empty()) return;
 
-    Http::Response r = http.get(YTM_DOMAIN, {"user-agent: " + USER_AGENT, "accept: */*"});
+    /* Signed in, the visitor id is optional and every API response carries
+    one (responseContext.visitorData, picked up in sendRequest), so don't
+    scrape the homepage first. Signed out, try at most once every 10 min:
+    a failing scrape used to be retried before every single request, ~8 s
+    each from the EU consent redirect loop, which made startup take minutes.
+    */
+    if (authenticated) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (visitor_attempt != std::chrono::steady_clock::time_point{} && now - visitor_attempt < std::chrono::minutes(10)) return;
+    visitor_attempt = now;
+
+    // SOCS=CAI is the "reject all" consent cookie: no detour via consent.youtube.com.
+    Http::Response r = http.get(YTM_DOMAIN, {"user-agent: " + USER_AGENT, "accept: */*", "cookie: SOCS=CAI"});
     if (!r.ok()) {
         spdlog::warn("YTM: visitor id scrape failed, HTTP {} {}", r.status, r.error);
         return;
@@ -378,6 +391,15 @@ json YTMusic::sendRequest(const std::string& endpoint, const json& body, const s
     }
 
     last_error = Error{};
+
+    // Free visitor id: every response carries one.
+    if (visitor_id.empty()) {
+        const std::string v = str(nav(parsed, {"responseContext", "visitorData"}));
+        if (!v.empty()) {
+            visitor_id = v;
+            spdlog::info("YTM: visitor id taken from a response");
+        }
+    }
 
     spdlog::debug("YTM: {} ok, {} bytes", endpoint, r.body.size());
 

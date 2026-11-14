@@ -1,5 +1,6 @@
 #include "../../include/services/music.hpp"
 #include <fstream>
+#include <cstdlib>
 #include "../../include/services/browser_cookies.hpp"
 
 #include "../../include/ytm/metadata.hpp"
@@ -321,9 +322,51 @@ music::Playlist services::Music::getPlaylist(const music::PlaylistRef& playlist)
     return p;
 }
 
-std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getHome() {
-    nlohmann::json sections = ytm->getHome(HOME_LIMIT);
-    captureError("home");
+namespace {
+
+// Only for a signed-in session: an anonymous home isn't worth keeping.
+fs::path cacheFile(const std::string& name) {
+    const char* home = std::getenv("HOME");
+    if (!home) return {};
+    return fs::path(home) / ".cache" / "moroder" / (name + ".json");
+}
+
+nlohmann::json readCache(const std::string& name) {
+    std::ifstream in(cacheFile(name));
+    if (!in.is_open()) return nlohmann::json();
+    nlohmann::json j = nlohmann::json::parse(in, nullptr, false);
+    return j.is_discarded() ? nlohmann::json() : j;
+}
+
+void writeCache(const std::string& name, const nlohmann::json& j) {
+    const fs::path file = cacheFile(name);
+    if (file.empty()) return;
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    const fs::path tmp = file.string() + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out.is_open()) return;
+        out << j.dump();
+    }
+    fs::rename(tmp, file, ec);     // atomic: a crash never leaves half a file
+}
+
+}
+
+std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getHome(bool cached_only) {
+    nlohmann::json sections;
+
+    if (cached_only) {
+        if (!ytm->isAuthenticated()) return {};
+        sections = readCache("home");
+        last_error = RequestError{};
+        if (!sections.is_array()) return {};
+    } else {
+        sections = ytm->getHome(HOME_LIMIT);
+        captureError("home");
+        if (ytm->isAuthenticated() && !last_error.failed && sections.is_array() && !sections.empty()) writeCache("home", sections);
+    }
 
     ipc::HomeResponse response;
 
@@ -392,7 +435,7 @@ bool services::Music::rateSong(const std::string& videoId, bool like) {
     return ok && !last_error.failed;
 }
 
-std::vector<music::Playlist> services::Music::getLibraryPlaylists() {
+std::vector<music::Playlist> services::Music::getLibraryPlaylists(bool cached_only) {
     if (!ytm->isAuthenticated()) {
         spdlog::info("MUSIC: not logged in, no library playlists");
 
@@ -400,8 +443,17 @@ std::vector<music::Playlist> services::Music::getLibraryPlaylists() {
         return {};
     }
 
-    nlohmann::json playlists = ytm->getLibraryPlaylists(LIBRARY_LIMIT);
-    captureError("library playlists");
+    nlohmann::json playlists;
+
+    if (cached_only) {
+        playlists = readCache("library_playlists");
+        last_error = RequestError{};
+        if (!playlists.is_array()) return {};
+    } else {
+        playlists = ytm->getLibraryPlaylists(LIBRARY_LIMIT);
+        captureError("library playlists");
+        if (!last_error.failed && playlists.is_array()) writeCache("library_playlists", playlists);
+    }
 
     ipc::LibraryPlaylistsResponse response;
 

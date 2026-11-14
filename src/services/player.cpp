@@ -122,11 +122,36 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         return;
     }
 
+    /* Seed the page from the cache, so the first frame already shows the last
+    home and playlists; the fresh copies replace them when they land.
+    */
+    if (music_service) {
+        auto cached_home = music_service->getHome(true);
+        auto cached_lists = music_service->getLibraryPlaylists(true);
+        std::lock_guard lock(state_mutex);
+        if (!cached_home.empty()) {
+            state.home = std::move(cached_home);
+            state.home_order = music_service->homeOrder();
+            state.flags["home"] = Flags::Done;
+        }
+        if (!cached_lists.empty()) {
+            state.library_playlists = std::move(cached_lists);
+            state.flags["library_playlists"] = Flags::Done;
+        }
+        spdlog::info("PLAYER: cache, {} home shelves, {} playlists", state.home.size(), state.library_playlists.size());
+    }
+
     /* Session from the browser (COOKIE_BROWSER): fresh at launch, then every
     10 minutes, so it never goes stale while the browser stays signed in.
     */
-    if (music_service && music_service->refreshCookies()) {
-        mpv_service->refreshSessionCookies();
+    if (music_service && !Config::get().COOKIE_BROWSER.empty() && !Config::anonymous) {
+        // First in the queue: the UI (and the cache) show at once, while the
+        // network requests queued after it wait for the fresh session. A
+        // Keychain prompt no longer holds the window back.
+        {
+            std::lock_guard lock(command_mutex);
+            command_queue.push(RefreshSessionCommand{});
+        }
 
         std::thread([this] {
             while (true) {
@@ -761,8 +786,8 @@ void services::Player::worker_loop() {
                     std::lock_guard lock(state_mutex);
                     state.flags["home"] = Flags::Ongoing;
                     state.errors.erase("home");
-                    state.home.clear();
-                    state.home_order.clear();
+                    // The current (maybe cached) page stays up until the new
+                    // one lands, instead of blanking to a spinner.
                 }
 
                 std::unordered_map<std::string, std::vector<music::ApiResult>> user_home = music_service->getHome();
@@ -790,7 +815,7 @@ void services::Player::worker_loop() {
                     state.flags["library_playlists"] = Flags::Ongoing;
                     state.errors.erase("library_playlists");
                     refreshLibraryError(state);
-                    state.library_playlists.clear();
+                    // Keep the shown (maybe cached) list until the new one lands.
                 }
 
                 std::vector<music::Playlist> user_playlists = music_service->getLibraryPlaylists();
@@ -810,6 +835,9 @@ void services::Player::worker_loop() {
 
                     refreshLibraryError(state);
                 }
+
+            } else if constexpr (std::is_same_v<T, RefreshSessionCommand>) {
+                if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
 
             } else if constexpr (std::is_same_v<T, OpenPlaylistCommand>) {
                 spdlog::info("PLAYER: OpenPlaylistCommand, {}", c.ref.title);

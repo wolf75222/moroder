@@ -45,7 +45,7 @@ public:
 
     const RequestError& lastError() const { return last_error; }
 
-    std::vector<music::Playlist>   getLibraryPlaylists();
+    std::vector<music::Playlist>   getLibraryPlaylists(bool cached_only = false);
     std::vector<music::Album>      getLibraryAlbums();
     std::vector<music::ArtistRef>  getLibraryArtists();
     std::vector<music::PodcastRef> getLibraryPodcasts();
@@ -53,7 +53,12 @@ public:
     std::vector<std::shared_ptr<music::IStreamable>> getLibrarySongs();
     std::vector<music::ApiResult> getSearch(const std::string& query);
 
-    std::unordered_map<std::string, std::vector<music::ApiResult>> getHome();
+    /* Cache
+- The last home page and library playlists are kept on disk (raw API JSON,
+  ~/.cache/moroder), so the next launch shows them at once while fresh
+  copies load. cached_only reads that file instead of the network
+    */
+    std::unordered_map<std::string, std::vector<music::ApiResult>> getHome(bool cached_only = false);
 
     /* refreshCookies
     - With COOKIE_BROWSER set: re-read the session from that browser, use it

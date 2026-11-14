@@ -192,6 +192,15 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
         return;
     }
 
+    // A refreshed page (after the cached one) may have dropped some shelves.
+    for (auto it = main_content_items.begin(); it != main_content_items.end();) {
+        if (!it->category.empty() && it->category.rfind("__", 0) != 0 && !state->home.count(it->category)) {
+            it = main_content_items.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     for (auto& [category, _] : state->home) {
         const std::string& category_ref = category;
 

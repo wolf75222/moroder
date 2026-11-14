@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <chrono>
+
 #include "http.hpp"
 #include "nav.hpp"
 
@@ -164,6 +166,7 @@ private:
 
     json auth_headers = json::object();
     std::string sapisid;
+    std::chrono::steady_clock::time_point visitor_attempt{};   // last homepage scrape
     std::string origin;
     std::string visitor_id;
     std::string params;

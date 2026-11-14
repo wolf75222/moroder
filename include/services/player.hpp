@@ -67,6 +67,8 @@ private:
     struct LibraryPodcastsCommand {};
     struct IsLoggedInCommand {};
 
+    struct RefreshSessionCommand {};
+
     struct OpenPlaylistCommand {
         music::PlaylistRef ref;
     };
@@ -255,7 +257,8 @@ private:
         LibraryPodcastsCommand,
         IsLoggedInCommand,
         RateCommand,
-        OpenPlaylistCommand
+        OpenPlaylistCommand,
+        RefreshSessionCommand
     >;
 
     std::queue<Command> command_queue;
