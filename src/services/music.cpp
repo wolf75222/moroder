@@ -303,9 +303,12 @@ music::Album services::Music::getAlbum(const music::AlbumRef& album) {
     return a;
 }
 
-music::Playlist services::Music::getPlaylist(const music::PlaylistRef& playlist) {
-    nlohmann::json data = ytm->getPlaylist(playlist.id, -1);
+music::Playlist services::Music::getPlaylist(const music::PlaylistRef& playlist, bool first_page_only, bool* more) {
+    nlohmann::json data = ytm->getPlaylist(playlist.id, first_page_only ? 0 : -1);
     captureError("playlist");
+    // Counted before parsing: a track that fails to parse must not make a
+    // long playlist look complete.
+    if (more) *more = first_page_only && data.contains("tracks") && data["tracks"].is_array() && data["tracks"].size() >= 100;
 
     ipc::PlaylistResponse response;
 
@@ -357,7 +360,7 @@ void writeCache(const std::string& name, const nlohmann::json& j) {
 
 }
 
-std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getHome(bool cached_only) {
+std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getHome(bool cached_only, bool first_page_only) {
     nlohmann::json sections;
 
     if (cached_only) {
@@ -366,9 +369,9 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
         last_error = RequestError{};
         if (!sections.is_array()) return {};
     } else {
-        sections = ytm->getHome(HOME_LIMIT);
+        sections = ytm->getHome(first_page_only ? 0 : HOME_LIMIT);
         captureError("home");
-        if (ytm->isAuthenticated() && !last_error.failed && sections.is_array() && !sections.empty()) writeCache("home", sections);
+        if (!first_page_only && ytm->isAuthenticated() && !last_error.failed && sections.is_array() && !sections.empty()) writeCache("home", sections);
     }
 
     ipc::HomeResponse response;

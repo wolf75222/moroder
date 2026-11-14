@@ -546,6 +546,17 @@ Search suggests as you type (your past searches first, then YouTube Music's):
 <kbd>↑</kbd> / <kbd>↓</kbd> pick, <kbd>Tab</kbd> fills it in, <kbd>Enter</kbd> or a click searches.
 In the queue view, drag a row onto another to move it. In Now Playing, click a
 lyrics line to jump to it.
+
+Pages have a history, like a browser: <kbd>Esc</kbd>, <kbd>Backspace</kbd> or
+<kbd>[</kbd> go back to the previous page (Home when there is none),
+<kbd>]</kbd> goes forward. On a trackpad, a two-finger swipe sideways does the
+same (over a shelf of covers it scrolls the shelf instead), and on Now
+Playing's cover it skips to the previous / next track.
+
+Long playlists show their first 100 tracks as soon as they arrive and the rest
+follows; playing one before it has finished loading queues the rest when it
+lands. A first launch (no cached home) shows the first shelves of Home within
+a second, before the others.
 **New playlist** in the sidebar asks for a name and creates a private
 playlist; right-click a track, *Add to playlist…*, to add it to one of yours
 (or to a new one).

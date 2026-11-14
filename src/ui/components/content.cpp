@@ -749,6 +749,8 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     updatePlayingId(state);
 
     const bool loading = state->flags["open_playlist"] == services::Player::Flags::Ongoing;
+    // First page shown, the rest on its way.
+    const bool more = !loading && state->flags.count("open_playlist_more") && state->flags["open_playlist_more"] == services::Player::Flags::Ongoing;
     const auto tracks = playlist->getStreamables();
 
     /* Paging
@@ -773,7 +775,11 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     const size_t visible = std::min(shown, tracks.size());
 
     // Rebuild only when what is shown changes.
-    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0") + ":" + std::to_string(visible) + ":" + state->open_kind;
+    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0") + (more ? "m" : "") + ":" + std::to_string(visible) + ":" + state->open_kind;
+    // Same playlist rebuilt (its rest arrived, a page was added): the
+    // selection stays where it is, even on the header's buttons.
+    static std::string built_id;
+    const bool same_playlist = built_id == playlist->ref.id && !main_content_items.empty();
     if (!main_content_items.empty() && main_content_items.front().category == signature) {
         for (auto& item : main_content_items) item.focused = item.component->Focused();
         return;
@@ -807,12 +813,15 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 
         const std::string title = playlist->ref.title;
         const std::string sub = playlist->ref.author.empty() ? "" : playlist->ref.author + "  \u2022  ";
-        const std::string count = loading ? "loading tracks..." : std::to_string(tracks.size()) + " tracks";
+        const std::string count = loading ? "loading tracks..."
+                                : more ? std::to_string(tracks.size()) + "+ tracks, loading the rest"
+                                : std::to_string(tracks.size()) + " tracks";
         const std::string thumb = playlist->ref.thumbnail_large.empty() ? playlist->ref.thumbnail_small : playlist->ref.thumbnail_large;
 
         std::string kind = state->open_kind;
         for (auto& ch : kind) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-        head.component = Renderer(actions, [actions, title, sub, count, thumb, loading, kind] {
+        const bool busy = loading || more;
+        head.component = Renderer(actions, [actions, title, sub, count, thumb, busy, kind] {
             Element cover = thumb.empty()
                 ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
                 : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
@@ -827,7 +836,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                         text(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                         hbox({
                             text(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-                            loading ? hbox({ text("  "), spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }) : emptyElement(),
+                            busy ? hbox({ text("  "), spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }) : emptyElement(),
                         }),
                         filler(),
                         actions->Render(),
@@ -886,9 +895,11 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 
     // Opening a playlist lands on its first track, not on the header's
     // buttons (where left/right only flipped between Play and Add to queue).
-    if (focused_track < 0 && !loading && main_content_items.size() > 1) {
+    if (focused_track < 0 && !loading && !same_playlist && main_content_items.size() > 1) {
         main_content_items[1].component->TakeFocus();
     }
+    // Only once its tracks are there: the loading placeholder must not count.
+    if (!loading) built_id = playlist->ref.id;
 
     // Keep the focus on the row it was on when a page was added.
     if (focused_track >= 0) {

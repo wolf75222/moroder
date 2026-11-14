@@ -52,9 +52,11 @@ std::string clock(double s) {
 }
 
 std::vector<std::pair<std::shared_ptr<Box>, double>> ui::lyric_boxes;
+Box ui::now_playing_cover_box{-1, -1, -1, -1};
 
 Element ui::renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height) {
     ui::lyric_boxes.clear();
+    ui::now_playing_cover_box = Box{-1, -1, -1, -1};
     auto song = std::dynamic_pointer_cast<music::Song>(state->current);
     if (!song) {
         return text("Nothing is playing. Press v or Esc to go back.") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | center | flex;
@@ -74,6 +76,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     Element cover = art.empty()
         ? filler() | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h) | border
         : image_view(ui::cover(art)) | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h);
+    cover = cover | reflect(ui::now_playing_cover_box);
 
     const float ratio = duration > 0 ? static_cast<float>(std::clamp(position / duration, 0.0, 1.0)) : 0.f;
 

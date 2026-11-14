@@ -295,6 +295,38 @@ int main(int argc, char *argv[]) {
     ui::PlaybackData playback_bar_data = {};
     static std::chrono::steady_clock::time_point last_tick_at{};   // when the position last ticked
     ui::State before_now_playing = ui::State::HOME;
+
+    /* Page history, like a browser's: Esc / Backspace / [ go back, ] forward,
+    and a two-finger swipe sideways on the trackpad does the same. Pages are
+    recorded as they are reached, whatever led there (click, key, menu).
+    */
+    struct NavEntry {
+        ui::State state = ui::State::HOME;
+        music::PlaylistRef playlist;     // PLAYLIST: the list or album shown
+        std::string kind;                // "playlist" / "album"
+        music::ArtistRef artist;         // ARTIST
+        std::string query;               // SEARCH
+        std::string key() const {
+            return std::to_string(static_cast<int>(state)) + "|" + (state == ui::State::PLAYLIST ? kind + playlist.id : "")
+                 + (state == ui::State::ARTIST ? artist.id : "") + (state == ui::State::SEARCH ? query : "");
+        }
+        std::string label() const {
+            switch (state) {
+                case ui::State::HOME: return "Home";
+                case ui::State::LIBRARY: return "Library";
+                case ui::State::PLAYLIST: return playlist.title.empty() ? "Playlist" : playlist.title;
+                case ui::State::ARTIST: return artist.name.empty() ? "Artist" : artist.name;
+                case ui::State::SEARCH: return "Search: " + query;
+                case ui::State::QUEUE: return "Queue";
+                case ui::State::NOWPLAYING: return "Now playing";
+                default: return "";
+            }
+        }
+    };
+    std::vector<NavEntry> nav_back, nav_forward;
+    NavEntry nav_current;
+    bool nav_restoring = false;
+    std::string last_query;
     auto playback_bar = ui::PlaybackBar(&playback_bar_data);
 
     /* These run on player / mpv threads while the UI thread reads
@@ -694,7 +726,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    search_bar_data.onSearch = [&current_state, &player, &main_content_items, &main_content, &screen, &close_search, &search_bar_data, searches_file](const std::string& value) {
+    search_bar_data.onSearch = [&current_state, &player, &main_content_items, &main_content, &screen, &close_search, &search_bar_data, searches_file, &last_query](const std::string& value) {
         spdlog::info("SEARCHBAR: enter pressed with value, " + value);
         if (!searches_file.empty()) {
             std::error_code ec;
@@ -703,6 +735,7 @@ int main(int argc, char *argv[]) {
         }
         close_search();
         current_state = ui::State::SEARCH;
+        last_query = value;
 
         player.search(value);
 
@@ -861,7 +894,7 @@ int main(int argc, char *argv[]) {
                 return it != state_copy.flags.end() && it->second == services::Player::Flags::Ongoing;
             };
             // Lyrics only need a few frames a second; spinners want more.
-            const bool spinner_on = ongoing("home") || ongoing("search") || ongoing("open_playlist")
+            const bool spinner_on = ongoing("home") || ongoing("search") || ongoing("open_playlist") || ongoing("open_playlist_more")
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
                      || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
                      || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"));
@@ -870,7 +903,7 @@ int main(int argc, char *argv[]) {
                               && state_copy.lyrics && !state_copy.lyrics->lines.empty();
             anim_period_ms = (spinner_on || singing) ? 90 : 250;
 
-            animating = ongoing("home") || ongoing("search") || ongoing("open_playlist")
+            animating = ongoing("home") || ongoing("search") || ongoing("open_playlist") || ongoing("open_playlist_more")
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
                      || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
                      // Synced lyrics scroll smoothly while playing.
@@ -882,6 +915,26 @@ int main(int argc, char *argv[]) {
 
         ui::getSidebarData(&state_copy, &sidebar_data);
         ui::getPlaybackData(&state_copy, &playback_bar_data, screen.dimx());
+
+        // History: a new page reached pushes the one we were on.
+        {
+            NavEntry now;
+            now.state = current_state;
+            if (current_state == ui::State::PLAYLIST && state_copy.open_playlist) { now.playlist = state_copy.open_playlist->ref; now.kind = state_copy.open_kind; }
+            if (current_state == ui::State::ARTIST && state_copy.open_artist) now.artist = state_copy.open_artist->ref;
+            if (current_state == ui::State::SEARCH) now.query = last_query;
+            if (now.key() != nav_current.key()) {
+                if (!nav_restoring) {
+                    nav_back.push_back(nav_current);
+                    if (nav_back.size() > 50) nav_back.erase(nav_back.begin());
+                    nav_forward.clear();
+                }
+                nav_current = now;
+            } else if (now.state == ui::State::PLAYLIST) {
+                nav_current.playlist = now.playlist;     // title known once loaded
+            }
+            nav_restoring = false;
+        }
         {
             const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
             playback_bar_data.sleep_label = sleep_end_of_track ? "end of track"
@@ -1176,6 +1229,71 @@ int main(int argc, char *argv[]) {
         return nullptr;
     };
 
+    // Go to a page from the history (no new history entry for it).
+    auto navigate_to = [&](const NavEntry& e) {
+        nav_restoring = true;
+        switch (e.state) {
+            case ui::State::HOME:    sidebar_data.onHome(); return;
+            case ui::State::LIBRARY: sidebar_data.onLibrary(); return;
+            case ui::State::PLAYLIST:
+                if (e.kind == "album") {
+                    music::AlbumRef a;
+                    a.id = e.playlist.id; a.title = e.playlist.title;
+                    a.thumbnail_large = e.playlist.thumbnail_large; a.thumbnail_small = e.playlist.thumbnail_small;
+                    player.openAlbum(a);
+                } else {
+                    player.openPlaylist(e.playlist);
+                }
+                break;
+            case ui::State::ARTIST: player.openArtist(e.artist); break;
+            case ui::State::SEARCH:
+                last_query = e.query;
+                search_bar_data.value = e.query;
+                player.search(e.query);
+                break;
+            case ui::State::NOWPLAYING: before_now_playing = current_state; break;
+            default: break;
+        }
+        current_state = e.state;
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+        main_content->Add(Renderer([] { return emptyElement(); }));
+        screen.PostEvent(Event::Custom);
+    };
+    auto nav_notice = [&](const std::string& s) {
+        std::lock_guard lock(player.state_mutex);
+        player.state.notice = s;
+        player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    };
+    auto go_back = [&]() -> bool {
+        if (nav_back.empty()) return false;
+        NavEntry target = nav_back.back();
+        nav_back.pop_back();
+        nav_forward.push_back(nav_current);
+        nav_notice("\u2190 " + target.label());
+        navigate_to(target);
+        return true;
+    };
+    auto go_forward = [&]() -> bool {
+        if (nav_forward.empty()) return false;
+        NavEntry target = nav_forward.back();
+        nav_forward.pop_back();
+        nav_back.push_back(nav_current);
+        nav_notice(target.label() + " \u2192");
+        navigate_to(target);
+        return true;
+    };
+
+    /* Two-finger swipe sideways (trackpad): a burst of horizontal wheel events.
+    Over a carousel / grid it scrolls it; elsewhere a deliberate swipe (enough
+    events in a row, one way) goes back or forward, once per swipe. On Now
+    Playing's cover it skips tracks, like swiping an album cover.
+    */
+    struct Swipe {
+        int dir = 0, count = 0;
+        std::chrono::steady_clock::time_point last{}, cooldown_until{};
+    } swipe;
+
     ui = CatchEvent(ui, [&](Event event){
         /* Mouse
         - A click on the playback bar hits its controls; the progress line seeks
@@ -1340,6 +1458,43 @@ int main(int argc, char *argv[]) {
                 const bool back = m.button == Mouse::WheelUp || m.button == Mouse::WheelLeft;
 
                 const auto now = std::chrono::steady_clock::now();
+
+                // Trackpad swipe sideways (not Shift+wheel, which is always sideways scrolling).
+                if(wheel_h && !m.shift) {
+                    // The row under the pointer: a carousel / grid there scrolls sideways.
+                    ui::ContentEntry* under = nullptr;
+                    if(!(!sidebar_hidden && in(sidebar_box)) && current_state != ui::State::NOWPLAYING && current_state != ui::State::QUEUE) {
+                        for (const auto& [idx, b] : page_view.drawn) {
+                            if (!in(b) || idx >= static_cast<int>(main_content->ChildCount())) continue;
+                            Component child = main_content->ChildAt(idx);
+                            for (auto& item : main_content_items) if (item.component == child) { under = &item; break; }
+                        }
+                    }
+                    const bool sideways_list = under && (!under->carousel_data.results.empty() || !under->grid_data.results.empty());
+                    if(sideways_list && !under->component->Focused()) {
+                        main_content->SetActiveChild(under->component);
+                        if(!main_content->Focused()) main_content->TakeFocus();
+                    }
+                    const bool on_cover = current_state == ui::State::NOWPLAYING && in(ui::now_playing_cover_box);
+                    if(!sideways_list) {
+                        const int dir = m.button == Mouse::WheelLeft ? -1 : 1;
+                        if(now < swipe.cooldown_until) return true;          // the rest of a swipe already acted on
+                        if(dir != swipe.dir || now - swipe.last > std::chrono::milliseconds(300)) { swipe.dir = dir; swipe.count = 0; }
+                        swipe.last = now;
+                        if(++swipe.count < 6) return true;                   // a deliberate swipe, not a brush
+                        swipe.count = 0;
+                        swipe.cooldown_until = now + std::chrono::milliseconds(650);
+                        if(on_cover) {
+                            // Like flicking an album cover: towards the left, the next one.
+                            if (dir > 0) player.skipForward(); else player.skipBackward();
+                        } else if(dir < 0) {
+                            if(!go_back() && current_state == ui::State::NOWPLAYING) ui->OnEvent(Event::Escape);
+                        } else {
+                            go_forward();
+                        }
+                        return true;
+                    }
+                }
 
                 // The page scrolls by lines, like a web page: smooth on a
                 // trackpad, and the selection stays put while it is in view.
@@ -1737,9 +1892,20 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
-        // Esc elsewhere goes back to Home, like a browser's back.
-        if(event == Event::Escape && current_state != ui::State::HOME) {
-            sidebar_data.onHome();
+        // A preview ends on Esc before Esc means "back".
+        if(player.previewing() && event == Event::Escape) {
+            player.stopPreview(true);
+            return true;
+        }
+
+        // Esc / Backspace / [ : back (Home when there is no history); ] : forward.
+        if((event == Event::Escape || event == Event::Backspace || event == Event::Character("[")) && current_state != ui::State::NOWPLAYING) {
+            if(go_back()) return true;
+            if(current_state != ui::State::HOME) { sidebar_data.onHome(); return true; }
+            return event != Event::Escape;
+        }
+        if(event == Event::Character("]")) {
+            go_forward();
             return true;
         }
 
@@ -1895,7 +2061,8 @@ int main(int argc, char *argv[]) {
             heading("Navigation"),
             row("arrows",                 "move around"),
             row(cfg.KEY_FOCUS_SEARCH + " /",  "search (\u2191: past searches)"),
-            row("esc",                    "back"),
+            row("esc \u232b [",           "back (previous page)"),
+            row("]",                      "forward"),
             row(cfg.KEY_QUEUE_VIEW,       "queue"),
             row(cfg.KEY_TOGGLE_SIDEBAR,   "toggle sidebar"),
             row(cfg.KEY_HELP,             "this sheet"),
@@ -1906,7 +2073,9 @@ int main(int argc, char *argv[]) {
             row("dbl-click",              "play"),
             row("right-click",            "menu: play next, radio..."),
             row("middle",                 "preview 15 s"),
-            row("wheel",                  "scroll (shift / swipe: sideways)"),
+            row("wheel",                  "scroll by lines"),
+            row("swipe \u2190 \u2192",      "back / forward; on a shelf: sideways"),
+            row("swipe cover",            "now playing: skip tracks"),
             row("volume",                 "click: slider, wheel: level"),
             row("bar",                    "click the line to seek"),
             row("title",                  "now playing"),

@@ -43,6 +43,8 @@ private:
         bool start_radio = true;
         bool start_fresh = false;
         bool queue_in_radio = false;
+        bool from_container = false;    // part of a playlist / album being queued
+        uint64_t epoch = 0;             // a playlist's late rest: dropped if the queue was replaced since
     };
 
     struct QueueStreamableContainerRadioCommand {
@@ -56,6 +58,7 @@ private:
         bool start_fresh  = false;
         bool start_radio  = true;
         bool queue_in_radio = false;
+        size_t skip = 0;                // "play from track N": the first N were left out
     };
 
     struct QueueNextRadioCommand {
@@ -105,6 +108,14 @@ private:
         std::string title, playlist_id, video_id;
         enum class Kind { Create, Add, Remove, Rename, Delete } kind = Kind::Add;
         std::string set_video_id;
+    };
+
+    // The rest of a playlist whose first page is shown / playing.
+    struct PlaylistRestCommand {
+        music::PlaylistRef ref;
+        size_t have = 0;                    // tracks already there
+        size_t append_from = SIZE_MAX;      // "add to queue" of its first page: append from here
+        uint64_t epoch = 0;                 // ... if the queue is still that one
     };
 
     // A skip while the starting track resolves: resolve the new current one.
@@ -247,7 +258,7 @@ public:
     void search(const std::string& query);
 
     void queue(std::shared_ptr<music::IStreamable> streamable, const bool fresh = true, const bool radio = true);
-    void queue(std::shared_ptr<music::IStreamableContainer> container, const bool fresh = true, const bool radio = true);
+    void queue(std::shared_ptr<music::IStreamableContainer> container, const bool fresh = true, const bool radio = true, size_t skip = 0);
     void removeAt(uint16_t index);
 
     void pause();
@@ -347,6 +358,11 @@ private:
     */
     std::atomic<bool> load_pending{false};
     std::atomic<bool> fading_out{false};
+    // The playlist the queue was last started from (fresh start), and how many
+    // of its tracks were queued: its rest is appended when it arrives.
+    std::string queued_from_id;
+    size_t queued_from_have = 0;
+    std::atomic<uint64_t> queue_epoch{0};  // bumped on every fresh start of the queue
     std::atomic<uint64_t> file_generation{0};    // bumped when a file starts
     std::string refreshed_url;                   // stream-error handler: link already refreshed once
     // Last.fm: the track being listened to (artist, title, album), when, how long.
@@ -386,6 +402,7 @@ private:
         LoadCurrentCommand,
         ResolveCurrentCommand,
         PlaylistEditCommand,
+        PlaylistRestCommand,
         PrefetchPlaylistCommand,
         PlayNextCommand
     >;
@@ -414,7 +431,8 @@ private:
     bool preview_paused_main = false;       // under preview_mutex
 
     // Playlists already fetched (prefetch or open), by id; under state_mutex.
-    std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_cache;
+    std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_cache;       // complete
+    std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_first_page;  // long ones: first page
 
     /* History, session
     - Recently played: last 50 tracks, shown as the first home shelf

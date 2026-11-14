@@ -58,7 +58,8 @@ public:
   ~/.cache/moroder), so the next launch shows them at once while fresh
   copies load. cached_only reads that file instead of the network
     */
-    std::unordered_map<std::string, std::vector<music::ApiResult>> getHome(bool cached_only = false);
+    // first_page_only: the first shelves (one request), not cached.
+    std::unordered_map<std::string, std::vector<music::ApiResult>> getHome(bool cached_only = false, bool first_page_only = false);
 
     /* refreshCookies
     - With COOKIE_BROWSER set: re-read the session from that browser, use it
@@ -95,7 +96,9 @@ public:
         std::vector<std::string> order;
     };
     ArtistPage getArtist(const music::ArtistRef& artist);
-    music::Playlist getPlaylist(const music::PlaylistRef& playlist);
+    // first_page_only: the first ~100 tracks (one request), to show / play at once.
+    // more (optional): YouTube returned a full first page, so there are likely more.
+    music::Playlist getPlaylist(const music::PlaylistRef& playlist, bool first_page_only = false, bool* more = nullptr);
 
 private:
     std::vector<std::string> home_order;

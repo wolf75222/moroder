@@ -84,6 +84,7 @@ public:
         state_->at_bottom = y + view >= total;
 
         boxes_.assign(n, ftxui::Box{});
+        state_->drawn.clear();
         for (int i = 0; i < n; i++) {
             ftxui::Box& b = boxes_[i];
             b = box;
@@ -93,6 +94,8 @@ public:
                 // Not drawn, so its click areas are never clipped: park them
                 // far off screen, where no pointer can reach them.
                 b.y_min -= 100000; b.y_max -= 100000;
+            } else {
+                state_->drawn.emplace_back(indices_[i], ftxui::Box::Intersection(b, box));
             }
             children_[i]->SetBox(b);
         }

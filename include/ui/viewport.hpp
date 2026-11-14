@@ -27,6 +27,7 @@ struct ViewportState {
     int first_visible = -1;     // page indices of children fully in view
     int last_visible = -1;
     bool at_top = true, at_bottom = true;
+    std::vector<std::pair<int, ftxui::Box>> drawn;    // page index, area on screen (in view)
 };
 
 ftxui::Element viewport(ftxui::Elements children, std::vector<int> indices, int active, ViewportState* state);

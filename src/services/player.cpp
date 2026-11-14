@@ -832,7 +832,14 @@ void services::Player::worker_loop() {
                     return;
                 }
 
+                // A late playlist rest for a queue that has been replaced since.
+                if (c.epoch != 0 && c.epoch != queue_epoch) return;
+
                 if(c.start_fresh) {
+                    ++queue_epoch;
+                    // A single track replaces the queue: no playlist rest to add.
+                    if (!c.from_container) { std::lock_guard lock(state_mutex); queued_from_id.clear(); }
+
                     // A track still resolving for the old queue is dropped.
                     load_pending = false;
                     load_generation++;
@@ -916,11 +923,36 @@ void services::Player::worker_loop() {
                 } else if (auto playlist_ptr = std::dynamic_pointer_cast<music::Playlist>(c.container)) {
                     // Already loaded (the playlist view, or "play from here"): use
                     // those tracks as they are instead of fetching them again.
+                    std::shared_ptr<music::Playlist> cached, first_page;
+                    {
+                        std::lock_guard lock(state_mutex);
+                        auto it = playlist_cache.find(playlist_ptr->ref.id);
+                        if (it != playlist_cache.end()) cached = it->second;
+                        auto fp = playlist_first_page.find(playlist_ptr->ref.id);
+                        if (fp != playlist_first_page.end()) first_page = fp->second;
+                    }
+                    if (!cached && first_page && playlist_ptr->getStreamables().empty()) {
+                        cached = first_page;      // the rest follows
+                        const size_t have = first_page->getStreamables().size();
+                        std::lock_guard lock(command_mutex);
+                        command_queue.push(PlaylistRestCommand{playlist_ptr->ref, have, c.start_fresh ? SIZE_MAX : have, queue_epoch.load()});
+                    }
                     if (!playlist_ptr->getStreamables().empty()) {
                         container = playlist_ptr;
+                    } else if (cached) {
+                        container = cached;      // fetched when it was selected
                     } else {
-                        music::Playlist playlist = music_service->getPlaylist(playlist_ptr->ref);
+                        // Starts on the first page; the rest is appended when it lands.
+                        bool more = false;
+                        music::Playlist playlist = music_service->getPlaylist(playlist_ptr->ref, true, &more);
+                        const size_t have = playlist.getStreamables().size();
                         container = std::make_shared<music::Playlist>(playlist);
+                        if (more) {
+                            // Played: queued_from_* picks the rest up. Added to the queue:
+                            // the rest is appended after this first page.
+                            std::lock_guard lock(command_mutex);
+                            command_queue.push(PlaylistRestCommand{playlist_ptr->ref, have, c.start_fresh ? SIZE_MAX : have, queue_epoch.load()});
+                        }
                     }
 
                 } else {
@@ -928,17 +960,39 @@ void services::Player::worker_loop() {
                     return;
                 }
 
+                // A fresh start from a playlist: its missing tracks (still loading)
+                // join the queue when they arrive. queued_from_have counts from
+                // the playlist's start, so "play from track 40" lines up too.
+                std::vector<std::shared_ptr<music::IStreamable>> items = container->getStreamables();
+                if (c.start_fresh) {
+                    std::lock_guard lock(state_mutex);
+                    auto pl = std::dynamic_pointer_cast<music::Playlist>(container);
+                    queued_from_id = pl ? pl->ref.id : "";
+                    queued_from_have = pl ? items.size() + c.skip : 0;
+
+                    // Its rest landed between Play and now: take it along.
+                    if (pl) {
+                        auto it = playlist_cache.find(pl->ref.id);
+                        if (it != playlist_cache.end()) {
+                            const auto all = it->second->getStreamables();
+                            for (size_t i = queued_from_have; i < all.size(); i++) items.push_back(all[i]);
+                            queued_from_have = std::max(queued_from_have, all.size());
+                        }
+                    }
+                }
+
                 /* Its tracks go before anything already waiting (home, library
                 loads at startup): what the user asked to play comes first.
                 */
                 std::queue<Command> mine;
-                for(auto streamable : container->getStreamables()) {
+                for(auto streamable : items) {
                     mine.push(QueueStreamableCommand{
                         .streamable=streamable,
                         .fetch_album=false,
                         .start_radio=false,
                         .start_fresh=c.start_fresh,
-                        .queue_in_radio=false
+                        .queue_in_radio=false,
+                        .from_container=true
                     });
                     c.start_fresh = false;
                 }
@@ -1078,6 +1132,25 @@ void services::Player::worker_loop() {
                     state.errors.erase("home");
                     // The current (maybe cached) page stays up until the new
                     // one lands, instead of blanking to a spinner.
+                }
+
+                /* Nothing shown yet (no cached page): the first shelves go up as
+                soon as they arrive, the rest replaces them when it lands.
+                */
+                bool empty_page;
+                {
+                    std::lock_guard lock(state_mutex);
+                    empty_page = state.home.empty() || (state.home.size() == 1 && state.home.count(RECENT_SHELF));
+                }
+                if (empty_page) {
+                    auto first = music_service->getHome(false, true);
+                    if (!music_service->lastError().failed && !first.empty()) {
+                        std::lock_guard lock(state_mutex);
+                        state.home = first;
+                        state.home_order = music_service->homeOrder();
+                        mergeHistoryShelf();
+                        spdlog::info("PLAYER: home, first {} shelves shown", first.size());
+                    }
                 }
 
                 std::unordered_map<std::string, std::vector<music::ApiResult>> user_home = music_service->getHome();
@@ -1242,6 +1315,53 @@ void services::Player::worker_loop() {
                 }
                 if (reopen) openPlaylist(*reopen);
 
+            } else if constexpr (std::is_same_v<T, PlaylistRestCommand>) {
+                // Already complete (asked twice: opened, then played): no refetch.
+                std::shared_ptr<music::Playlist> done;
+                {
+                    std::lock_guard lock(state_mutex);
+                    auto it = playlist_cache.find(c.ref.id);
+                    if (it != playlist_cache.end() && it->second->getStreamables().size() >= c.have) done = it->second;   // the cache holds complete lists
+                }
+                music::Playlist full = done ? *done : music_service->getPlaylist(c.ref);
+                if (!done && music_service->lastError().failed) {
+                    std::lock_guard lock(state_mutex);
+                    if (state.open_playlist && state.open_playlist->ref.id == c.ref.id) state.flags["open_playlist_more"] = Flags::Done;
+                    state.notice = "Couldn't load the rest of " + c.ref.title + " (showing the first " + std::to_string(c.have) + ")";
+                    state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    return;
+                }
+                const auto tracks = full.getStreamables();
+                std::vector<std::shared_ptr<music::IStreamable>> rest;
+                {
+                    std::lock_guard lock(state_mutex);
+                    playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(full);
+                    playlist_first_page.erase(c.ref.id);
+                    if (state.open_playlist && state.open_playlist->ref.id == c.ref.id) {
+                        // Same header as shown (a rename, an album's details).
+                        auto shown = std::make_shared<music::Playlist>(full);
+                        shown->setRef(state.open_playlist->ref);
+                        state.open_playlist = shown;
+                        state.flags["open_playlist_more"] = Flags::Done;
+                    }
+                    // Playing from it: the tracks that weren't there yet follow.
+                    if (queued_from_id == c.ref.id && queued_from_have < tracks.size()) {
+                        rest.assign(tracks.begin() + static_cast<long>(queued_from_have), tracks.end());
+                        queued_from_have = tracks.size();
+                    }
+                    // Its first page was added to the queue: the rest goes after it.
+                    else if (c.append_from != SIZE_MAX && c.epoch == queue_epoch && c.append_from < tracks.size()) {
+                        rest.assign(tracks.begin() + static_cast<long>(c.append_from), tracks.end());
+                    }
+                }
+                if (!rest.empty()) {
+                    spdlog::info("PLAYER: {} more tracks from {} join the queue", rest.size(), c.ref.title);
+                    std::lock_guard lock(command_mutex);
+                    const uint64_t epoch = queue_epoch;
+                    for (auto& s : rest)
+                        command_queue.push(QueueStreamableCommand{ .streamable = s, .fetch_album = false, .start_radio = false, .start_fresh = false, .queue_in_radio = false, .from_container = true, .epoch = epoch });
+                }
+
             } else if constexpr (std::is_same_v<T, ResolveCurrentCommand>) {
                 if (!load_pending) return;
                 std::string url;
@@ -1365,34 +1485,56 @@ void services::Player::worker_loop() {
                     auto it = playlist_cache.find(c.ref.id);
                     if (it != playlist_cache.end()) { auto pl = it->second; warm_first(*pl); return; }
                 }
-                music::Playlist playlist = music_service->getPlaylist(c.ref);
+                {
+                    std::lock_guard lock(state_mutex);
+                    auto it = playlist_first_page.find(c.ref.id);
+                    if (it != playlist_first_page.end()) { auto pl = it->second; warm_first(*pl); return; }
+                }
+                // First page only (one request): a long playlist doesn't hold
+                // the worker, and opening it shows this page at once.
+                bool more = false;
+                music::Playlist playlist = music_service->getPlaylist(c.ref, true, &more);
                 if (music_service->lastError().failed || playlist.getStreamables().empty()) return;
                 warm_first(playlist);
 
                 std::lock_guard lock(state_mutex);
                 if (playlist_cache.size() > 40) playlist_cache.clear();
-                playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(playlist);
+                if (playlist_first_page.size() > 40) playlist_first_page.clear();
+                if (!more) playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(playlist);
+                else playlist_first_page[c.ref.id] = std::make_shared<music::Playlist>(playlist);
                 spdlog::info("PLAYER: prefetched playlist {}", c.ref.title);
 
             } else if constexpr (std::is_same_v<T, OpenPlaylistCommand>) {
                 spdlog::info("PLAYER: OpenPlaylistCommand, {}", c.ref.title);
 
-                music::Playlist playlist = music_service->getPlaylist(c.ref);
+                // First page (~100 tracks, one request) shown at once; the rest
+                // follows in the background (PlaylistRestCommand).
+                bool more = false;
+                music::Playlist playlist = music_service->getPlaylist(c.ref, true, &more);
                 const services::RequestError& err = music_service->lastError();
+                const size_t have = playlist.getStreamables().size();
+                more = more && !err.failed;
 
-                std::lock_guard lock(state_mutex);
-                if (!err.failed && !playlist.getStreamables().empty())
-                    playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(playlist);
+                {
+                    std::lock_guard lock(state_mutex);
+                    if (!err.failed && have > 0 && !more)
+                        playlist_cache[c.ref.id] = std::make_shared<music::Playlist>(playlist);
 
-                // A newer open replaced this one while it loaded: drop it.
-                if (!state.open_playlist || state.open_playlist->ref.id != c.ref.id) return;
+                    // A newer open replaced this one while it loaded: drop it.
+                    if (!state.open_playlist || state.open_playlist->ref.id != c.ref.id) return;
 
-                if (err.failed && !err.cancelled) {
-                    state.flags["open_playlist"] = Flags::Error;
-                    state.errors["open_playlist"] = { err.message, err.retryable };
-                } else {
-                    state.open_playlist = std::make_shared<music::Playlist>(playlist);
-                    state.flags["open_playlist"] = Flags::Done;
+                    if (err.failed && !err.cancelled) {
+                        state.flags["open_playlist"] = Flags::Error;
+                        state.errors["open_playlist"] = { err.message, err.retryable };
+                    } else {
+                        state.open_playlist = std::make_shared<music::Playlist>(playlist);
+                        state.flags["open_playlist"] = Flags::Done;
+                        state.flags["open_playlist_more"] = more ? Flags::Ongoing : Flags::Done;
+                    }
+                }
+                if (more) {
+                    std::lock_guard lock(command_mutex);
+                    command_queue.push(PlaylistRestCommand{c.ref, have});
                 }
 
             } else if constexpr (std::is_same_v<T, RateCommand>) {
@@ -1644,7 +1786,7 @@ void services::Player::queue(std::shared_ptr<music::IStreamable> streamable, con
     command_cv.notify_one();
 }
 
-void services::Player::queue(std::shared_ptr<music::IStreamableContainer> container, const bool fresh, const bool radio) {
+void services::Player::queue(std::shared_ptr<music::IStreamableContainer> container, const bool fresh, const bool radio, size_t skip) {
     if (fresh) stopPreview(false);     // playing something else ends a preview
     const Config cfg = Config::get();
 
@@ -1655,7 +1797,8 @@ void services::Player::queue(std::shared_ptr<music::IStreamableContainer> contai
             .fetch_albums=false,
             .start_fresh=fresh,
             .start_radio=radio,
-            .queue_in_radio=false
+            .queue_in_radio=false,
+            .skip=skip
         });
     }
 
@@ -2424,7 +2567,22 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
             state.open_playlist = it->second;
             state.open_kind = "playlist";
             state.flags["open_playlist"] = Flags::Done;
+            state.flags["open_playlist_more"] = Flags::Done;
             state.errors.erase("open_playlist");
+            return;
+        }
+
+        // Its first page is here: show it, fetch the rest.
+        if (auto it = playlist_first_page.find(ref.id); it != playlist_first_page.end()) {
+            state.open_playlist = it->second;
+            state.open_kind = "playlist";
+            state.flags["open_playlist"] = Flags::Done;
+            state.flags["open_playlist_more"] = Flags::Ongoing;
+            state.errors.erase("open_playlist");
+            const size_t have = it->second->getStreamables().size();
+            std::lock_guard cl(command_mutex);
+            command_queue.push(PlaylistRestCommand{ref, have});
+            command_cv.notify_one();
             return;
         }
 
@@ -2433,6 +2591,7 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
         state.open_playlist = placeholder;
         state.open_kind = "playlist";
         state.flags["open_playlist"] = Flags::Ongoing;
+        state.flags["open_playlist_more"] = Flags::Done;
         state.errors.erase("open_playlist");
     }
 
@@ -3134,6 +3293,7 @@ void services::Player::openAlbum(const music::AlbumRef& ref) {
         auto placeholder = std::make_shared<music::Playlist>();
         placeholder->setRef(as_list);
         state.open_playlist = placeholder;
+        state.flags["open_playlist_more"] = Flags::Done;
         state.open_kind = "album";
         state.flags["open_playlist"] = Flags::Ongoing;
         state.errors.erase("open_playlist");
@@ -3178,7 +3338,7 @@ void services::Player::playOpenPlaylistFrom(size_t index) {
         for (size_t i = index; i < tracks.size(); i++) from->addStreamable(tracks[i]);
     }
 
-    queue(std::static_pointer_cast<music::IStreamableContainer>(from), true, true);
+    queue(std::static_pointer_cast<music::IStreamableContainer>(from), true, true, index);
 }
 
 void services::Player::toggleLikeCurrent() {
