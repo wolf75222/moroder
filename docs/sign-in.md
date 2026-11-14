@@ -16,7 +16,7 @@ is typed into it and nothing is sent anywhere except YouTube.
    Floorp on Linux), every profile included, without asking for anything
 2. Lists them, the one you used last first: pick with the arrow keys and Enter
 3. Reads that one only, asks YouTube Music whose account it is, and shows its
-   name, @handle and playlists. A browser with several Google accounts lists
+   name, `@handle` and playlists. A browser with several Google accounts lists
    them all, to pick from the same way
 4. Checks it and saves it. `moroder doctor` shows which account is in use
 
