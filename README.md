@@ -498,30 +498,43 @@ unbind it.
 | `KEY_QUEUE_VIEW` | `a` | show the queue, while something is playing |
 | `KEY_TOGGLE_SIDEBAR` | `s` | hide or show the sidebar |
 | `KEY_FOCUS_SEARCH` | `f` | jump into the search bar |
-| `KEY_SKIP_BACKWARD` | `z` | previous track |
+| `KEY_SKIP_BACKWARD` | `z` | previous track (restarts the track past its first 3 s) |
 | `KEY_SKIP_FORWARD` | `x` | next track |
 | `KEY_TOGGLE_PAUSE` | `space` | play / pause |
 | `KEY_TOGGLE_LOOP` | `r` | cycle looping: off, queue, current track |
-| `KEY_SEEK_BACKWARD` | `h` | jump back `SEEK_SECONDS` (default 10) |
+| `KEY_SEEK_BACKWARD` | `h` | jump back `SEEK_SECONDS` (default 10); hold it to show the keys sheet |
 | `KEY_SEEK_FORWARD` | `l` | jump ahead `SEEK_SECONDS` |
 | `KEY_VOLUME_DOWN` | `-` | volume down by `VOLUME_STEP` (default 5) |
 | `KEY_VOLUME_UP` | `=` | volume up by `VOLUME_STEP` |
 | `KEY_LIKE` | `+` | like / un-like the current track (signed in) |
 | `KEY_HELP` | `?` | show every keybind |
 
+Always on: <kbd>Shift</kbd> or <kbd>Option</kbd> + <kbd>←</kbd> / <kbd>→</kbd>
+skip to the previous / next track and + <kbd>↑</kbd> / <kbd>↓</kbd> change the
+volume (plain arrows keep moving around); in Now Playing the plain arrows do
+it. <kbd>m</kbd> mutes and unmutes. Holding <kbd>h</kbd> shows the keys sheet
+for as long as it is held.
+
 <kbd>/</kbd> also opens search, <kbd>Esc</kbd> leaves it (or goes back to Home
 from another page), and shortcuts like <kbd>q</kbd> work everywhere except
 while typing in the search bar. The mouse works like in a desktop music app: click selects (and opens
 Home, Library, a playlist or a filter), double-click plays, right-click opens
-a menu (play, play from here, add to / remove from queue, open). The playback
-bar's controls, heart and loop icon are clickable, a click on the progress
-line seeks, a click on the volume mutes, and the wheel over it changes it.
-The wheel (or a two-finger trackpad scroll) scrolls the page or the sidebar
-vertically; a sideways swipe, or Shift+wheel, moves along a carousel.
-Hovering doesn't move the selection.
+a menu (play, play from here, play next, add to a playlist, start radio,
+add to / remove from queue, open). The playback bar's controls, heart and loop
+icon are clickable, a click on the progress line seeks, a click on the volume
+opens a slider (click or drag to set it, click its icon to mute), and the
+wheel over it changes it. The wheel (or a two-finger trackpad scroll) scrolls
+the page line by line like a web page: the selection stays where it is while
+it is in view, and the page only moves as much as it has to when the
+selection does (a click never scrolls the row away from under the pointer).
+A sideways swipe, or Shift+wheel, moves along a carousel. Hovering doesn't
+move the selection.
 
 Playlists open in their own view: header with Play and Add to queue, then
 every track; playing a track continues with the rest of the playlist.
+**New playlist** in the sidebar asks for a name and creates a private
+playlist; right-click a track, *Add to playlist…*, to add it to one of yours
+(or to a new one).
 
 ### Pages and views
 
@@ -531,8 +544,9 @@ every track; playing a track continues with the rest of the playlist.
 - **Artists** open a page with their Top songs, Albums, Singles, Playlists and
   related artists. Right-click a song for *Go to artist* or *Start radio*.
 - **Now Playing** (<kbd>v</kbd>, or click the title in the playback bar): large
-  cover, progress and the lyrics, highlighted in time with the music when
-  synced. Lyrics come from [LRCLIB](https://lrclib.net): the track's title,
+  cover, progress and the lyrics sung along when synced: the current line
+  fills word by word, sung lines fade to grey, instrumental breaks show three
+  filling dots. Lyrics come from [LRCLIB](https://lrclib.net): the track's title,
   artist and duration are sent there; `ENABLE_LYRICS = false` turns it off.
 - **Recently played** is the first home shelf.
 
@@ -550,8 +564,13 @@ every track; playing a track continues with the rest of the playlist.
 - <kbd>S</kbd> (or the shuffle icon) shuffles what comes after the current track.
 - In the queue view, <kbd>K</kbd> / <kbd>J</kbd> move a track up / down (also in
   the right-click menu).
-- The next track is resolved while the current one plays, so skipping or
-  moving on starts at once.
+- The next two tracks are resolved while the current one plays, and a track
+  is resolved as soon as it is selected, so playing, skipping or moving on
+  starts at once. A cold start (nothing resolved yet) takes ~3-5 s instead of
+  the ~9 s of mpv's YouTube hook: moroder keeps a yt-dlp process running,
+  hands mpv the direct stream URL and starts it as soon as YouTube accepts it.
+- Covers are shown square: video thumbnails lose their black bars and are
+  cropped to the centre.
 
 ### Picking up where you left off
 

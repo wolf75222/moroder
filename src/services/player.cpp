@@ -2,6 +2,7 @@
 
 #include "../../include/config/config.hpp"
 #include "../../include/services/notify.hpp"
+#include "../../include/utils/json_str.hpp"
 #include "../../include/utils/utils.hpp"
 #include <fstream>
 
@@ -16,6 +17,7 @@
 #include <spawn.h>
 #include <regex>
 #include <nlohmann/json.hpp>
+#include <curl/curl.h>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -143,6 +145,63 @@ const char* RECENT_SHELF = "Recently played";
 
 }
 
+namespace {
+
+void prestartResolvers();
+
+/* YouTube refuses a stream URL (403) for ~2-3 s after issuing it. It expires
+6 h after issue, which dates it: wait until issue + 3 s (seconds are rounded).
+*/
+std::chrono::milliseconds streamNotReadyFor(const std::string& stream) {
+    const size_t e = stream.find("expire=");
+    if (e == std::string::npos) return std::chrono::milliseconds(0);
+    const long long expire = std::atoll(stream.c_str() + e + 7);
+    const long long issued_ms = (expire - 6 * 3600) * 1000;
+    const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const long long wait = issued_ms + 3000 - now_ms;
+    return std::chrono::milliseconds(std::clamp(wait, 0LL, 3000LL));
+}
+
+// 1-byte request: does the server accept this stream URL yet?
+bool streamAccepted(const std::string& stream) {
+    const size_t nl = stream.find('\n');
+    const std::string url = stream.substr(0, nl);
+    const std::string ua = nl == std::string::npos ? "" : stream.substr(nl + 1);
+
+    CURL* curl = curl_easy_init();
+    if (!curl) return true;     // can't tell: let mpv try
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char*, size_t s, size_t n, void*) -> size_t { return s * n; });
+    if (!ua.empty()) curl_easy_setopt(curl, CURLOPT_USERAGENT, ua.c_str());
+    long code = 0;
+    const CURLcode rc = curl_easy_perform(curl);
+    if (rc == CURLE_OK) curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(curl);
+    return rc != CURLE_OK || code != 403;    // network trouble: let mpv try
+}
+
+/* Until the stream URL is accepted (at most ~8 s), probing from issue + 2 s
+every 350 ms. stop() ends it early (the track was replaced).
+*/
+template <typename Stop>
+void waitStreamReady(const std::string& stream, Stop stop) {
+    const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    auto first = streamNotReadyFor(stream) - std::chrono::milliseconds(1000);
+    if (first.count() > 0) std::this_thread::sleep_for(first);
+    while (std::chrono::steady_clock::now() < give_up && !stop()) {
+        if (streamAccepted(stream)) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(350));
+    }
+}
+
+}
+
+
 services::Player::Player(const std::string_view& app_name, const std::string_view& app_name_human, const uint64_t app_id) {
     this->app_name = app_name;
 
@@ -159,6 +218,10 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         }
     }
     music_service = std::make_unique<Music>(this->app_name);
+
+    // Python + yt-dlp loaded now, not when the first track is asked for.
+    std::thread(prestartResolvers).detach();
+
     social_service = std::make_unique<Social>(app_id, Config::get().ENABLE_DISCORD_RICH_PRESENCE);
 
     if (!mpris_service) {
@@ -356,6 +419,8 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
             if (!resumed.empty()) {
                 mpv_service->setPosition(static_cast<uint64_t>(at * 1000000.0));
                 this->pause();
+                // Paused, so no tick would come: show the time now (it said "loading").
+                if (on_position_tick) on_position_tick(static_cast<uint64_t>(at * 1000000.0), mpv_service->getStreamDuration());
             } else if (other_first) {
                 mpv_service->resume();      // the restore had paused mpv
             }
@@ -537,6 +602,36 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         const int pos = state.queue_position;
         if (pos < 0 || static_cast<size_t>(pos) >= state.user_queue.size()) return;
 
+        /* A pre-resolved stream URL that failed (expired, refused): play the
+        track through its YouTube URL instead (mpv's hook resolves it), once.
+        */
+        const std::string failed = mpv_service->entryUrl(static_cast<uint16_t>(pos));
+        const std::string youtube = state.user_queue[pos]->getStreamUrl();
+
+        // Refused because it is still fresh: the same URL again in 2 s, once.
+        static std::string retried;
+        if (failed.find("googlevideo.com") != std::string::npos && failed != retried) {
+            retried = failed;
+            spdlog::warn("PLAYER: stream URL refused, retrying it shortly");
+            std::thread([this, pos, failed, youtube] {
+                std::this_thread::sleep_for(std::max(std::chrono::milliseconds(800), streamNotReadyFor(failed)));
+                std::lock_guard lock(state_mutex);
+                if (state.queue_position != pos || static_cast<size_t>(pos) >= state.user_queue.size()
+                    || state.user_queue[pos]->getStreamUrl() != youtube) return;
+                if (mpv_service->entryUrl(static_cast<uint16_t>(pos)) != failed) return;
+                mpv_service->skipTo(static_cast<uint16_t>(pos));
+            }).detach();
+            return;
+        }
+
+        if (failed.find("googlevideo.com") != std::string::npos && !youtube.empty() && failed != youtube) {
+            spdlog::warn("PLAYER: stream URL refused, falling back to the YouTube URL");
+            mpv_service->insertAt(youtube, static_cast<uint16_t>(pos));
+            mpv_service->removeAt(static_cast<uint16_t>(pos + 1));
+            mpv_service->skipTo(static_cast<uint16_t>(pos));
+            return;
+        }
+
         state.user_queue.erase(state.user_queue.begin() + pos);
         mpv_service->removeAt(static_cast<uint16_t>(pos));
 
@@ -571,6 +666,20 @@ void services::Player::worker_loop() {
         command_queue.pop();
 
         lock.unlock();
+
+        if (load_pending) {
+            const bool postpone = std::visit([](auto&& c) -> bool {
+                using T = std::decay_t<decltype(c)>;
+                if constexpr (std::is_same_v<T, QueueStreamableCommand>) return !c.start_fresh && !c.queue_in_radio;
+                else if constexpr (std::is_same_v<T, PreloadedCommand>) return c.index != SIZE_MAX;
+                else if constexpr (std::is_same_v<T, PlayNextCommand> || std::is_same_v<T, MoveCommand> || std::is_same_v<T, ShuffleCommand>) return true;
+                else return false;
+            }, cmd);
+            if (postpone) {
+                postponed.push_back(std::move(cmd));
+                continue;
+            }
+        }
 
         std::visit([this](auto&& c) {
             using T = std::decay_t<decltype(c)>;
@@ -652,6 +761,11 @@ void services::Player::worker_loop() {
                 }
 
                 if(c.start_fresh) {
+                    // A track still resolving for the old queue is dropped.
+                    load_pending = false;
+                    load_generation++;
+                    postponed.clear();
+
                     mpv_service->clearQueue();
                     mpris_service->setPlaybackStatus(services::PlaybackStatus::Stopped);
                     this->resetMprisData();
@@ -692,7 +806,20 @@ void services::Player::worker_loop() {
                 }
 
                 if(!c.queue_in_radio) {
-                    mpv_service->load(streamUrlFor(streamable->getStreamUrl()));
+                    std::string load_url = streamUrlFor(streamable->getStreamUrl());
+
+                    /* The track that plays now: resolve it here (~2.5 s) rather
+                    than through mpv's ytdl hook, which takes ~9 s to open a
+                    YouTube URL. Falls back to the hook if resolving fails.
+                    Queued tracks stay YouTube URLs until preloadNext swaps them.
+                    */
+                    // Only on a fresh start: mpv's playlist is empty then, so the
+                    // deferred load can rebuild it in step with the queue.
+                    if (!should_queue && c.start_fresh && load_url == streamable->getStreamUrl() && load_url.find("youtube.com/watch") != std::string::npos) {
+                        resolveCurrentAsync(load_url);
+                    } else {
+                        mpv_service->load(load_url);
+                    }
                 }
 
                 if(should_queue) {
@@ -998,6 +1125,67 @@ void services::Player::worker_loop() {
 
                     // playlist-move puts the entry before the target index.
                     mpv_service->move(static_cast<uint16_t>(c.from), static_cast<uint16_t>(c.to > c.from ? c.to + 1 : c.to));
+                }
+                preloadNext();
+
+            } else if constexpr (std::is_same_v<T, PlaylistEditCommand>) {
+                music_service->refreshCookies();    // writes want fresh cookies
+
+                const bool create = c.playlist_id.empty();
+                bool ok;
+                if (create) ok = !music_service->createPlaylist(c.title, c.video_id).empty();
+                else        ok = music_service->addToPlaylist(c.playlist_id, c.video_id);
+                const services::RequestError& err = music_service->lastError();
+
+                {
+                    std::lock_guard lock(state_mutex);
+                    state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+                    if (ok) state.notice = create ? "Created \u201c" + c.title + "\u201d" : "Added to " + c.title;
+                    else    state.notice = (create ? "Couldn't create the playlist: " : "Couldn't add it: ") + err.message;
+                }
+
+                // The sidebar shows the new playlist / the new count.
+                if (ok) {
+                    std::lock_guard lock(command_mutex);
+                    command_queue.push(LibraryPlaylistsCommand{});
+                }
+
+            } else if constexpr (std::is_same_v<T, ResolveCurrentCommand>) {
+                if (!load_pending) return;
+                std::string url;
+                {
+                    std::lock_guard lock(state_mutex);
+                    if (state.current) url = state.current->getStreamUrl();
+                }
+                if (!url.empty()) resolveCurrentAsync(url);
+
+            } else if constexpr (std::is_same_v<T, LoadCurrentCommand>) {
+                if (c.generation != load_generation || !load_pending) return;   // replaced meanwhile
+                load_pending = false;
+
+                /* mpv's playlist mirrors the queue by index: give it every entry
+                queued so far, then play the current one (a skip may have moved
+                it while it resolved).
+                */
+                {
+                    std::lock_guard lock(state_mutex);
+                    const int pos = state.queue_position;
+                    for (size_t i = 0; i < state.user_queue.size(); i++) {
+                        const std::string yt = state.user_queue[i]->getStreamUrl();
+                        const std::string url = (yt == c.youtube_url && !c.stream_url.empty()) ? c.stream_url : streamUrlFor(yt);
+                        mpv_service->append(url);
+                    }
+                    if (pos >= 0 && static_cast<size_t>(pos) < state.user_queue.size()) mpv_service->skipTo(static_cast<uint16_t>(pos));
+                }
+
+                // What waited for mpv's playlist runs now, before anything newer.
+                if (!postponed.empty()) {
+                    std::lock_guard lock(command_mutex);
+                    std::queue<Command> merged;
+                    for (auto& p : postponed) merged.push(std::move(p));
+                    while (!command_queue.empty()) { merged.push(std::move(command_queue.front())); command_queue.pop(); }
+                    command_queue.swap(merged);
+                    postponed.clear();
                 }
                 preloadNext();
 
@@ -1430,9 +1618,20 @@ void services::Player::skipForward() {
         }
     }
 
-    if(to_radio_skip) {
+    if(to_radio_skip && !load_pending) {
         spdlog::info("PLAYER: loading next radio song");
         mpv_service->load(streamUrlFor(radio_next->getStreamUrl()));
+    }
+
+    // Still resolving the first track: mpv has nothing yet; resolve the new one.
+    if (should_skip && load_pending) {
+        {
+            std::lock_guard lock(command_mutex);
+            command_queue.push(ResolveCurrentCommand{});
+        }
+        command_cv.notify_one();
+        updateMprisControls();
+        return;
     }
 
     if(should_skip) {
@@ -1458,6 +1657,25 @@ void services::Player::skipForward() {
 }
 
 void services::Player::skipBackward() {
+    /* Like any player: past the first 3 s, or on the first track, "previous"
+    starts the track over. On the first track it used to mark playback as
+    stopped while the music went on.
+    */
+    {
+        bool restart = false;
+        {
+            std::lock_guard lock(state_mutex);
+            if (!state.current) return;
+            const bool wraps = state.loop_mode == LoopMode::Queue && state.user_queue.size() > 1;
+            restart = !wraps && state.queue_position <= 0;
+        }
+        if (restart || mpv_service->getStreamPosition() > 3000000ULL) {
+            mpv_service->setPosition(0);
+            social_service->setPosition(0);
+            return;
+        }
+    }
+
     bool should_skip = true;
 
     int loop_to = -1;
@@ -1486,6 +1704,17 @@ void services::Player::skipBackward() {
             state.queue_position--;
             state.current = state.user_queue[state.queue_position];
         }
+    }
+
+    // Still resolving the first track: mpv has nothing yet; resolve the new one.
+    if (should_skip && load_pending) {
+        {
+            std::lock_guard lock(command_mutex);
+            command_queue.push(ResolveCurrentCommand{});
+        }
+        command_cv.notify_one();
+        updateMprisControls();
+        return;
     }
 
     if(should_skip) {
@@ -1651,13 +1880,18 @@ void services::Player::removeFromUserQueue(uint16_t index) {
             state.queue_position -= 1;
             should_skip = true;
         }
+
+        // Under the same lock as the erase, so the deferred load can't rebuild
+        // mpv's playlist in between (it would lose a second entry). While it is
+        // pending, mpv has nothing to remove.
+        if (!should_skip && !load_pending) mpv_service->removeAt(index);
     }
 
     if(should_skip) {
         this->skipForward();
+        if (!load_pending) mpv_service->removeAt(index);
     }
 
-    mpv_service->removeAt(index);
     this->updateMprisControls();
 }
 
@@ -1776,9 +2010,20 @@ void services::Player::skipTo(uint16_t index) {
                 state.user_queue.push_back(state.radio_queue.front());
                 state.radio_queue.pop_front();
 
-                mpv_service->load(streamUrlFor(state.user_queue.back()->getStreamUrl()));
+                if (!load_pending) mpv_service->load(streamUrlFor(state.user_queue.back()->getStreamUrl()));
             }
         }
+    }
+
+    // Still resolving the first track: mpv has nothing yet; resolve this one.
+    if (should_skip && load_pending) {
+        {
+            std::lock_guard lock(command_mutex);
+            command_queue.push(ResolveCurrentCommand{});
+        }
+        command_cv.notify_one();
+        updateMprisControls();
+        return;
     }
 
     if (should_skip) {
@@ -2117,6 +2362,14 @@ std::string services::Player::streamUrlFor(const std::string& url) {
     if (it == preloaded.end()) return url;
     std::string stream = it->second;
     preloaded.erase(it);
+
+    // Resolved URLs carry their expiry (unix time); don't hand out a dead one.
+    const size_t e = stream.find("expire=");
+    if (e != std::string::npos) {
+        const long long expire = std::atoll(stream.c_str() + e + 7);
+        const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if (expire > 0 && expire < now + 120) return url;
+    }
     return stream;
 }
 
@@ -2217,96 +2470,362 @@ void services::Player::moveInQueue(size_t from, size_t to) {
   swap its mpv entry for the direct stream URL, so it starts at once
 - Checked again before swapping (PreloadedCommand), in case the queue moved
 */
-void services::Player::preloadNext() {
-    size_t index;
-    std::string url;
+void services::Player::createPlaylist(const std::string& title, const std::string& video_id) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PlaylistEditCommand{title, "", video_id});
+    }
+    command_cv.notify_one();
+}
 
+void services::Player::addToPlaylist(const std::string& playlist_id, const std::string& title, const std::string& video_id) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PlaylistEditCommand{title, playlist_id, video_id});
+    }
+    command_cv.notify_one();
+}
+
+void services::Player::resolveCurrentAsync(const std::string& youtube_url) {
+    load_pending = true;
+    const uint64_t generation = ++load_generation;
+    std::thread([this, generation, youtube_url] {
+        const std::string direct = resolveStream(youtube_url);
+
+        /* A stream URL is refused (403) for its first 2-5 s: loading it at once
+        failed, then fell back to the slow path. Hand it to mpv as soon as it
+        is accepted.
+        */
+        if (!direct.empty()) waitStreamReady(direct, [this, generation] { return generation != load_generation; });
+        {
+            std::lock_guard lock(command_mutex);
+            command_queue.push(LoadCurrentCommand{generation, youtube_url, direct});
+        }
+        command_cv.notify_one();
+    }).detach();
+}
+
+void services::Player::preloadNext() {
+    // The next two tracks: skipping twice in a row stays instant too.
+    std::vector<std::pair<size_t, std::string>> wanted;
     {
         std::lock_guard lock(state_mutex);
         if (state.queue_position < 0) return;
-        index = static_cast<size_t>(state.queue_position) + 1;
-        if (index < state.user_queue.size()) {
-            url = state.user_queue[index]->getStreamUrl();
-        } else if (state.autoplay && !state.radio_queue.empty()) {
-            url = state.radio_queue.front()->getStreamUrl();     // the radio's next
-            index = SIZE_MAX;
-        } else {
-            return;
+        for (size_t index = static_cast<size_t>(state.queue_position) + 1; index < state.user_queue.size() && wanted.size() < 2; index++) {
+            wanted.emplace_back(index, state.user_queue[index]->getStreamUrl());
+        }
+        if (wanted.size() < 2 && state.autoplay && !state.radio_queue.empty()) {
+            wanted.emplace_back(SIZE_MAX, state.radio_queue.front()->getStreamUrl());   // the radio's next
         }
     }
 
-    if (url.rfind("http", 0) != 0 || url.find("youtube.com") == std::string::npos) return;
-
-    // Only plain YouTube video ids, and one resolution per track at a time.
     static const std::regex video(R"(watch\?v=[A-Za-z0-9_-]{11}(&|$))");
-    if (!std::regex_search(url, video)) return;
-    {
-        std::lock_guard lock(preloaded_mutex);
-        if (preloading.count(url) || preloaded.count(url)) return;
-        preloading.insert(url);
-    }
+    for (auto& [index, url] : wanted) {
+        if (!std::regex_search(url, video)) continue;
 
-    std::thread([this, index, url] {
-        const Config& cfg = Config::get();
-
-        // argv, no shell: nothing in the URL or paths is ever interpreted.
-        std::vector<std::string> args = { "yt-dlp", "--no-warnings", "-f", "bestaudio/best", "-g" };
-        const std::filesystem::path cookies = cfg.YTM_COOKIES_PATH / "cookies.txt";
-        std::error_code ec;
-        if (!Config::anonymous && std::filesystem::exists(cookies, ec)) { args.push_back("--cookies"); args.push_back(cookies.string()); }
-        args.push_back(url);
-
-        std::vector<char*> argv;
-        for (auto& a : args) argv.push_back(a.data());
-        argv.push_back(nullptr);
-
-        std::string out;
-        int fds[2];
-        if (pipe(fds) == 0) {
-            posix_spawn_file_actions_t actions;
-            posix_spawn_file_actions_init(&actions);
-            posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
-            posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-            posix_spawn_file_actions_addclose(&actions, fds[0]);
-
-            pid_t pid = 0;
-            const bool started = posix_spawnp(&pid, "yt-dlp", &actions, nullptr, argv.data(), environ) == 0;
-            posix_spawn_file_actions_destroy(&actions);
-            close(fds[1]);
-
-            if (started) {
-                // Read with a deadline: a stuck yt-dlp is killed after 25 s.
-                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
-                char buf[4096];
-                while (true) {
-                    fd_set set; FD_ZERO(&set); FD_SET(fds[0], &set);
-                    timeval tv{0, 200000};
-                    if (select(fds[0] + 1, &set, nullptr, nullptr, &tv) > 0) {
-                        const ssize_t n = read(fds[0], buf, sizeof(buf));
-                        if (n <= 0) break;
-                        out.append(buf, static_cast<size_t>(n));
-                    }
-                    if (std::chrono::steady_clock::now() > deadline) { kill(pid, SIGKILL); break; }
-                }
-                int status = 0;
-                waitpid(pid, &status, 0);
-            }
-            close(fds[0]);
-        }
-
+        std::string ready;
         {
             std::lock_guard lock(preloaded_mutex);
-            preloading.erase(url);
+            if (preloading.count(url)) continue;
+            auto it = preloaded.find(url);
+            if (it != preloaded.end()) {
+                if (index == SIZE_MAX) continue;        // stays there until loaded
+                ready = it->second;                     // resolved by warmStream
+                preloaded.erase(it);
+            } else {
+                preloading.insert(url);
+            }
         }
 
-        const std::string stream = out.substr(0, out.find('\n'));
-        if (stream.rfind("http", 0) != 0) return;
+        std::thread([this, index, url, ready] {
+            const std::string stream = ready.empty() ? resolveStream(url) : ready;
+            if (ready.empty()) {
+                std::lock_guard lock(preloaded_mutex);
+                preloading.erase(url);
+            }
+            if (stream.empty()) return;
 
+            {
+                std::lock_guard lock(command_mutex);
+                command_queue.push(PreloadedCommand{index, url, stream});
+            }
+            command_cv.notify_one();
+        }).detach();
+    }
+}
+
+namespace {
+
+/* A yt-dlp kept running (Python + extractor loaded once): ~1 s faster per
+track than spawning yt-dlp. Reads one URL per line, answers one JSON line.
+Two of them, so a selection pre-resolve never delays the track that starts.
+*/
+const char* RESOLVER_SCRIPT = R"PY(
+import sys, json
+import yt_dlp
+opts = {'quiet': True, 'no_warnings': True, 'noprogress': True, 'format': 'bestaudio/best', 'skip_download': True}
+if len(sys.argv) > 1: opts['cookiefile'] = sys.argv[1]
+y = yt_dlp.YoutubeDL(opts)
+for line in sys.stdin:
+    try:
+        d = y.extract_info(line.strip(), download=False)
+        out = {'url': d.get('url') or '', 'http_headers': d.get('http_headers') or {}}
+    except BaseException:
+        out = {}
+    sys.stdout.write(json.dumps(out) + '\n')
+    sys.stdout.flush()
+)PY";
+
+struct Resolver {
+    std::mutex mtx;
+    pid_t pid = 0;
+    int to = -1, from = -1;
+    std::string cookies;
+    std::string pending;     // bytes read past the last answer
+};
+
+Resolver resolvers[2];
+
+// The Python yt-dlp runs on (its shebang), so `import yt_dlp` works.
+std::string ytdlpPython() {
+    static const std::string python = [] {
+        const char* path = std::getenv("PATH");
+        std::string p = path ? path : "";
+        size_t start = 0;
+        while (start <= p.size()) {
+            const size_t end = std::min(p.find(':', start), p.size());
+            const std::filesystem::path f = std::filesystem::path(p.substr(start, end - start)) / "yt-dlp";
+            std::ifstream in(f);
+            std::string line;
+            if (in && std::getline(in, line)) {
+                if (line.rfind("#!", 0) == 0 && line.find("python") != std::string::npos && line.find(' ') == std::string::npos) return line.substr(2);
+                return std::string();
+            }
+            start = end + 1;
+        }
+        return std::string();
+    }();
+    return python;
+}
+
+void stopResolver(Resolver& r) {
+    if (r.pid > 0) { kill(r.pid, SIGKILL); waitpid(r.pid, nullptr, 0); }
+    if (r.to >= 0) close(r.to);
+    if (r.from >= 0) close(r.from);
+    r.pid = 0; r.to = r.from = -1; r.pending.clear();
+}
+
+bool startResolver(Resolver& r, const std::string& cookies) {
+    const std::string python = ytdlpPython();
+    if (python.empty()) return false;
+
+    int in[2], out[2];
+    if (pipe(in) != 0) return false;
+    if (pipe(out) != 0) { close(in[0]); close(in[1]); return false; }
+    fcntl(in[1], F_SETFD, FD_CLOEXEC);
+    fcntl(out[0], F_SETFD, FD_CLOEXEC);
+#ifdef F_SETNOSIGPIPE
+    fcntl(in[1], F_SETNOSIGPIPE, 1);
+#endif
+
+    std::vector<std::string> args = { python, "-I", "-c", RESOLVER_SCRIPT };
+    if (!cookies.empty()) args.push_back(cookies);
+    std::vector<char*> argv;
+    for (auto& a : args) argv.push_back(a.data());
+    argv.push_back(nullptr);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, in[0], STDIN_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+
+    // Only the fds set up above reach the child (other spawns' pipes would
+    // keep their readers from ever seeing EOF).
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#endif
+    pid_t pid = 0;
+    const bool ok = posix_spawn(&pid, python.c_str(), &actions, &attr, argv.data(), environ) == 0;
+    posix_spawnattr_destroy(&attr);
+    posix_spawn_file_actions_destroy(&actions);
+    close(in[0]);
+    close(out[1]);
+    if (!ok) { close(in[1]); close(out[0]); return false; }
+
+    r.pid = pid; r.to = in[1]; r.from = out[0]; r.cookies = cookies; r.pending.clear();
+    return true;
+}
+
+std::string resolverCookies() {
+    const std::filesystem::path cookies = Config::get().YTM_COOKIES_PATH / "cookies.txt";
+    std::error_code ec;
+    return (!Config::anonymous && std::filesystem::exists(cookies, ec)) ? cookies.string() : "";
+}
+
+void prestartResolvers() {
+    const std::string cookies = resolverCookies();
+    for (Resolver& r : resolvers) {
+        std::lock_guard lock(r.mtx);
+        if (r.pid <= 0) startResolver(r, cookies);
+    }
+}
+
+// One answer line from the resolver, "" on failure (the resolver is then restarted next time).
+std::string askResolver(Resolver& r, const std::string& url, const std::string& cookies) {
+    if (r.pid > 0 && r.cookies != cookies) stopResolver(r);
+    if (r.pid <= 0 && !startResolver(r, cookies)) return "";
+
+    const std::string line = url + "\n";
+    if (write(r.to, line.data(), line.size()) != static_cast<ssize_t>(line.size())) { stopResolver(r); return ""; }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+    char buf[16384];
+    while (true) {
+        const size_t nl = r.pending.find('\n');
+        if (nl != std::string::npos) {
+            std::string answer = r.pending.substr(0, nl);
+            r.pending.erase(0, nl + 1);
+            return answer;
+        }
+        if (std::chrono::steady_clock::now() > deadline) { stopResolver(r); return ""; }
+        fd_set set; FD_ZERO(&set); FD_SET(r.from, &set);
+        timeval tv{0, 200000};
+        if (select(r.from + 1, &set, nullptr, nullptr, &tv) > 0) {
+            const ssize_t n = read(r.from, buf, sizeof(buf));
+            if (n <= 0) { stopResolver(r); return ""; }
+            r.pending.append(buf, static_cast<size_t>(n));
+        }
+    }
+}
+
+} // namespace
+
+std::string services::Player::resolveStream(const std::string& url) {
+    static const std::regex video(R"(watch\?v=[A-Za-z0-9_-]{11}(&|$))");
+    if (!std::regex_search(url, video)) return "";
+
+    const Config& cfg = Config::get();
+
+    // argv, no shell: nothing in the URL or paths is ever interpreted.
+    // No --force-ipv4: the URL is tied to the address that asked for it, and
+    // mpv connects the same way the system does (IPv6 when there is one).
+    std::vector<std::string> args = { "yt-dlp", "--no-warnings", "-J", "-f", "bestaudio/best" };
+    const std::string cookies = resolverCookies();
+    const bool with_cookies = !cookies.empty();
+    if (with_cookies) { args.push_back("--cookies"); args.push_back(cookies); }
+    args.push_back(url);
+    const auto t0 = std::chrono::steady_clock::now();
+    auto took = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(); };
+
+    // A free kept-running resolver first; spawning yt-dlp is the fallback.
+    std::string out;
+    for (Resolver& r : resolvers) {
+        std::unique_lock lock(r.mtx, std::try_to_lock);
+        if (!lock.owns_lock()) continue;
+        out = askResolver(r, url, cookies);
+        break;
+    }
+    if (out.empty()) {
+        // Both busy: wait for the first one rather than paying a cold start.
+        std::lock_guard lock(resolvers[0].mtx);
+        out = askResolver(resolvers[0], url, cookies);
+    }
+    if (out.size() > 2) {
+        spdlog::info("PLAYER: stream resolved in {} ms", took());
+        return parseResolved(out);
+    }
+    out.clear();
+
+    std::vector<char*> argv;
+    for (auto& a : args) argv.push_back(a.data());
+    argv.push_back(nullptr);
+
+    int fds[2];
+    if (pipe(fds) != 0) return "";
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addclose(&actions, fds[0]);
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#endif
+    pid_t pid = 0;
+    const bool started = posix_spawnp(&pid, "yt-dlp", &actions, &attr, argv.data(), environ) == 0;
+    posix_spawnattr_destroy(&attr);
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[1]);
+
+    if (started) {
+        // A stuck yt-dlp is killed after 25 s.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+        char buf[16384];
+        while (true) {
+            fd_set set; FD_ZERO(&set); FD_SET(fds[0], &set);
+            timeval tv{0, 200000};
+            if (select(fds[0] + 1, &set, nullptr, nullptr, &tv) > 0) {
+                const ssize_t n = read(fds[0], buf, sizeof(buf));
+                if (n <= 0) break;
+                out.append(buf, static_cast<size_t>(n));
+            }
+            if (std::chrono::steady_clock::now() > deadline) { kill(pid, SIGKILL); break; }
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+    }
+    close(fds[0]);
+    return parseResolved(out);
+}
+
+std::string services::Player::parseResolved(const std::string& out) {
+    nlohmann::json j = nlohmann::json::parse(out, nullptr, false);
+    if (!j.is_object()) return "";
+    const std::string stream = utils::jstr(j, "url");
+    if (stream.rfind("http", 0) != 0) return "";
+
+    // The agent the URL was issued to goes with it (see MPV::load).
+    std::string ua;
+    if (j.contains("http_headers") && j["http_headers"].is_object()) ua = utils::jstr(j["http_headers"], "User-Agent");
+    if (ua.find('\n') != std::string::npos) ua.clear();
+    return ua.empty() ? stream : stream + "\n" + ua;
+}
+
+void services::Player::warmStream(const music::SongRef& song) {
+    if (song.id.empty()) return;
+    music::Song s;
+    s.setRef(song);
+    const std::string url = s.getStreamUrl();
+
+    {
+        std::lock_guard lock(preloaded_mutex);
+        if (preloaded.count(url) || preloading.count(url)) return;
+        warm_latest = url;
+    }
+
+    /* Debounced: scrolling through a list asks for many songs; only the one
+    the selection rests on (350 ms) is resolved, at most 2 yt-dlp at a time.
+    */
+    std::thread([this, url] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(350));
         {
-            std::lock_guard lock(command_mutex);
-            command_queue.push(PreloadedCommand{index, url, stream});
+            std::lock_guard lock(preloaded_mutex);
+            if (warm_latest != url || preloaded.count(url) || preloading.count(url) || preloading.size() >= 2) return;
+            preloading.insert(url);
         }
-        command_cv.notify_one();
+        const std::string stream = resolveStream(url);
+        std::lock_guard lock(preloaded_mutex);
+        preloading.erase(url);
+        if (stream.empty()) return;
+        if (preloaded.size() > 32) preloaded.clear();
+        preloaded[url] = stream;
     }).detach();
 }
 

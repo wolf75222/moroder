@@ -6,13 +6,40 @@
 #include "../../../include/config/config.hpp"
 
 #include "image_view.hpp"
+#include <ftxui/screen/string.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 
 using namespace ftxui;
 
 namespace {
+
+// Words of a line, wrapped to `width` columns: rows of word indices.
+std::vector<std::vector<int>> wrapWords(const std::vector<std::string>& words, int width) {
+    std::vector<std::vector<int>> rows(1);
+    int used = 0;
+    for (int k = 0; k < static_cast<int>(words.size()); k++) {
+        const int w = ftxui::string_width(words[k]) + 1;
+        if (used > 0 && used + w > width) { rows.emplace_back(); used = 0; }
+        rows.back().push_back(k);
+        used += w;
+    }
+    return rows;
+}
+
+std::vector<std::string> splitWords(const std::string& line) {
+    std::vector<std::string> words;
+    std::string w;
+    for (char ch : line) {
+        if (ch == ' ') { if (!w.empty()) words.push_back(w); w.clear(); }
+        else w += ch;
+    }
+    if (!w.empty()) words.push_back(w);
+    return words;
+}
 
 std::string clock(double s) {
     if (s < 0) s = 0;
@@ -37,6 +64,9 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // Cover: as large as the page allows, square in terminal cells (2:1).
     const int cover_h = std::clamp(height - 12, 8, 26);
     const int cover_w = cover_h * 2;
+
+    // Room for the lyrics: the page minus sidebar, cover and margins.
+    const int lyrics_w = std::max(20, width - 33 - cover_w - 10);
 
     Element cover = art.empty()
         ? filler() | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h) | border
@@ -72,20 +102,85 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     } else if (!ours || !state->lyrics->found) {
         lines.push_back(text("No lyrics found for this track") | dim);
     } else if (!state->lyrics->lines.empty()) {
+        /* Synced lyrics, sung along
+        - The current line fills word by word as it is sung; sung lines fade
+          to grey, the next ones wait in a lighter grey
+        - A change of line eases in (the old line fades out, the new one in)
+          instead of jumping
+        - Instrumental gaps show three dots that fill until the voice is back
+        */
         const auto& ls = state->lyrics->lines;
         int cur = -1;
-        for (size_t i = 0; i < ls.size(); i++) if (ls[i].first <= position + 0.2) cur = static_cast<int>(i);
+        for (size_t i = 0; i < ls.size(); i++) if (ls[i].first <= position + 0.15) cur = static_cast<int>(i);
 
-        const int visible = std::max(5, height - 6);
+        static std::string last_song;
+        static int last_cur = -2;
+        static std::chrono::steady_clock::time_point changed_at{};
+        const auto now = std::chrono::steady_clock::now();
+        if (last_song != ref.id) { last_song = ref.id; last_cur = cur; changed_at = now - std::chrono::seconds(1); }
+        if (cur != last_cur) { last_cur = cur; changed_at = now; }
+        const float ease = std::clamp(std::chrono::duration<float>(now - changed_at).count() / 0.35f, 0.f, 1.f);
+
+        const Color sung   = ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY);
+        const Color ahead  = ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY);
+        const Color bright = Color::RGB(255, 255, 255);
+        const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+
+        const int visible = std::max(5, height - 6);     // rows
         const int before = visible / 3;
-        const int start = std::clamp(cur - before, 0, std::max(0, static_cast<int>(ls.size()) - visible));
-        for (int i = start; i < std::min<int>(ls.size(), start + visible); i++) {
-            const std::string& t = ls[i].second.empty() ? std::string("♪") : ls[i].second;
-            Element e = paragraph(t);
-            if (i == cur) e = e | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY));
-            else if (i < cur) e = e | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY));
-            else e = e | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
-            lines.push_back(e);
+
+        // Rows each line takes once wrapped, to keep the current line a third
+        // of the way down whatever the line lengths.
+        auto rows_of = [&](int i) {
+            if (ls[i].second.empty()) return 1;
+            return static_cast<int>(wrapWords(splitWords(ls[i].second), lyrics_w).size());
+        };
+        int start = std::max(0, cur);
+        for (int used = 0; start > 0 && used + rows_of(start - 1) <= before; ) used += rows_of(--start);
+
+        int rows_left = visible;
+        for (int i = start; i < static_cast<int>(ls.size()) && rows_left > 0; i++) {
+            const double t0 = ls[i].first;
+            const double t1 = i + 1 < static_cast<int>(ls.size()) ? ls[i + 1].first : std::max(duration, t0 + 4.0);
+            const float sungness = static_cast<float>(std::clamp((position - t0) / std::max(0.5, (t1 - t0) * 0.85), 0.0, 1.0));
+
+            if (ls[i].second.empty()) {
+                // Instrumental: three dots filling over the gap.
+                if (i == cur) {
+                    Elements dots;
+                    for (int d = 0; d < 3; d++) {
+                        const bool on = sungness * 3.f > static_cast<float>(d);
+                        dots.push_back(text(on ? "\u25cf " : "\u25cb ") | color(on ? bright : ahead));
+                    }
+                    lines.push_back(hbox(std::move(dots)));
+                } else {
+                    lines.push_back(text("\u2022 \u2022 \u2022") | color(i < cur ? sung : ahead));
+                }
+                rows_left--;
+                continue;
+            }
+
+            const std::vector<std::string> words = splitWords(ls[i].second);
+            const auto rows = wrapWords(words, lyrics_w);
+            const int filled = i == cur ? static_cast<int>(std::ceil(sungness * static_cast<float>(words.size()))) : 0;
+
+            for (const auto& row : rows) {
+                if (rows_left-- <= 0) break;
+                Elements ws;
+                for (int k : row) {
+                    Color c;
+                    if (i == cur) {
+                        c = k < filled ? bright : ahead;
+                        if (ease < 1.f) c = Color::Interpolate(ease, ahead, c);         // fades in
+                    } else {
+                        c = i < cur ? sung : ahead;
+                        if (i == cur - 1 && ease < 1.f) c = Color::Interpolate(ease, bright, sung);   // fades out
+                    }
+                    Element w = text(words[k] + " ") | color(c);
+                    ws.push_back(i == cur ? w | bold : w);
+                }
+                lines.push_back(hbox(std::move(ws)));
+            }
         }
     } else {
         for (const auto& t : state->lyrics->plain) lines.push_back(paragraph(t.empty() ? " " : t) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
@@ -95,7 +190,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         text(""),
         text("Lyrics") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
         text(""),
-        vbox(std::move(lines)) | yframe | flex,
+        vbox(std::move(lines)) | flex,
     }) | flex;
 
     return hbox({

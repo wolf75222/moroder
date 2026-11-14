@@ -28,7 +28,6 @@ void ui::getSidebarData(services::Player::PlayerState* state, ui::SidebarData* d
         "02",
     };
 
-    // These buttons aren't functional yet (TM)
     if(state->is_logged_in) {
         data->entries.push_back({"  New playlist", ""});
     } else {
@@ -97,6 +96,9 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
 
         } else if(data->entries_spoof[*selected] == "02") {
             data->onLibrary();
+
+        } else if(data->entries_spoof[*selected] == "03") {
+            if (data->onThird) data->onThird();
 
         } else if (*selected > 2 && static_cast<size_t>(*selected - 3) < data->results.size()) {
             spdlog::info("SIDEBAR: pressed enter on playlist, " + data->results[*selected - 3].ref.title);

@@ -93,6 +93,20 @@ private:
         std::string expected_url, stream_url;
     };
 
+    // The track that starts was resolved off the worker thread: load it now.
+    struct LoadCurrentCommand {
+        uint64_t generation = 0;
+        std::string youtube_url, stream_url;
+    };
+
+    // Create a playlist (title set) or add a track to one (playlist_id set).
+    struct PlaylistEditCommand {
+        std::string title, playlist_id, video_id;
+    };
+
+    // A skip while the starting track resolves: resolve the new current one.
+    struct ResolveCurrentCommand {};
+
     struct OpenAlbumCommand {
         music::AlbumRef ref;
     };
@@ -268,6 +282,14 @@ public:
     void stopPreview(bool resume_main = true);
     bool previewing();
 
+    // Resolve a track's stream in the background (it is selected), so
+    // starting it is near-instant. One at a time; no-op if already done.
+    void warmStream(const music::SongRef& song);
+
+    // New playlist (with video_id as its first track if set) / add to one.
+    void createPlaylist(const std::string& title, const std::string& video_id = "");
+    void addToPlaylist(const std::string& playlist_id, const std::string& title, const std::string& video_id);
+
     // Insert a track right after the current one.
     void playNext(std::shared_ptr<music::IStreamable> streamable);
 
@@ -311,6 +333,12 @@ private:
 
     std::condition_variable command_cv;
     std::mutex callback_mutex;
+    /* While the starting track resolves (worker thread stays free), mpv's
+    playlist is one entry short: commands that touch mpv's playlist by index
+    wait in `postponed` until it is loaded. Worker thread only.
+    */
+    std::atomic<bool> load_pending{false};
+    std::atomic<uint64_t> load_generation{0};
     std::mutex command_mutex;
 
     using Command = std::variant<
@@ -338,9 +366,14 @@ private:
         ShuffleCommand,
         MoveCommand,
         PreloadedCommand,
+        LoadCurrentCommand,
+        ResolveCurrentCommand,
+        PlaylistEditCommand,
         PrefetchPlaylistCommand,
         PlayNextCommand
     >;
+    std::vector<Command> postponed;
+
 
     std::queue<Command> command_queue;
 
@@ -378,6 +411,16 @@ private:
 
     // Resolve the next track's stream ahead of time (yt-dlp), see preloadNext.
     void preloadNext();
+
+    /* resolveStream
+    - yt-dlp for a YouTube URL -> "<direct stream URL>\n<its User-Agent>"
+      ("" on failure); MPV::load / insertAt take that form
+    - Blocking (~2.5 s): call it off the UI thread
+    */
+    std::string resolveStream(const std::string& youtube_url);
+    std::string parseResolved(const std::string& yt_dlp_json);  // "<url>\n<agent>"
+    void resolveCurrentAsync(const std::string& youtube_url);   // -> LoadCurrentCommand
+    std::string warm_latest;                // last song asked by warmStream
 
     // Pre-resolved stream URLs by YouTube URL, for tracks not in mpv yet
     // (autoplay radio); taken by streamUrlFor().

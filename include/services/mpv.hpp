@@ -57,6 +57,12 @@ public:
     */
     void setVolume(int percent);
 
+    // Add to the playlist without starting it.
+    void append(const std::string& url);
+
+    // URL of a playlist entry ("" if none).
+    std::string entryUrl(uint16_t index);
+
     // Replace whatever plays with url, with per-file options (e.g. "start=30%").
     void play(const std::string& url, const std::string& options);
 

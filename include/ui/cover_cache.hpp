@@ -7,10 +7,14 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 
 namespace ui {
 
 std::string cover(const std::string& url);
+
+// Called (from a download thread) when a cover becomes available on disk.
+void onCoverReady(std::function<void()> callback);
 
 }

@@ -1,3 +1,5 @@
+#include "../include/ui/cover_cache.hpp"
+#include "../include/ui/viewport.hpp"
 #include "../include/ui/components/playback_bar.hpp"
 #include "../include/ui/components/now_playing.hpp"
 #include "../include/ui/components/search_bar.hpp"
@@ -188,6 +190,8 @@ int main(int argc, char *argv[]) {
     // ~12 fps redraws while `animating` (spinners), none otherwise.
     static std::atomic<bool> animating{false};
     static std::atomic<int> anim_period_ms{80};     // spinners 80 ms, lyrics 250 ms
+    static std::atomic<bool> help_held{false};      // h held down: cheatsheet shown while it repeats
+    static std::chrono::steady_clock::time_point last_h{};
     std::thread([&screen] {
         auto last = std::chrono::steady_clock::now();
         while (true) {
@@ -253,6 +257,19 @@ int main(int argc, char *argv[]) {
     };
     player.setOnStreamStart(reset_bar);
     player.setOnStreamEnd(reset_bar);
+
+    /* A cover finished downloading: redraw, at most every 60 ms (a page of
+    covers lands within a few hundred ms).
+    */
+    ui::onCoverReady([&screen] {
+        static std::atomic<bool> scheduled{false};
+        if (scheduled.exchange(true)) return;
+        std::thread([&screen] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            scheduled = false;
+            screen.PostEvent(Event::Custom);
+        }).detach();
+    });
 
     // Resume where the last session stopped (paused, same track and position);
     // after the callbacks above are set, which the restored track will fire.
@@ -484,6 +501,31 @@ int main(int argc, char *argv[]) {
         screen.PostEvent(Event::Custom);
     };
 
+    /* Prompt: a one-line text box over the page (new playlist name) */
+    struct Prompt {
+        bool open = false;
+        std::string title, value;
+        std::function<void(const std::string&)> done;
+    } prompt;
+
+    sidebar_data.onThird = [&player, &prompt] {
+        bool logged_in;
+        {
+            std::lock_guard lock(player.state_mutex);
+            logged_in = player.state.is_logged_in;
+        }
+        if (!logged_in) {
+            std::lock_guard lock(player.state_mutex);
+            player.state.notice = "Sign in: log in to music.youtube.com in your browser, then restart";
+            player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+            return;
+        }
+        prompt.open = true;
+        prompt.title = "New playlist";
+        prompt.value.clear();
+        prompt.done = [&player](const std::string& name) { player.createPlaylist(name); };
+    };
+
     sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen] {
         spdlog::info("SIDEBAR: Library pressed");
         current_state = ui::State::LIBRARY;
@@ -533,24 +575,47 @@ int main(int argc, char *argv[]) {
   Render only the shelves around the selected one: the frame scrolls to the
   selection anyway, and the window moves with it
     */
+    /* Volume popover: a click on the volume opens a slider above it */
+    struct VolumePop {
+        bool open = false;
+        Box bar, mute;
+        std::chrono::steady_clock::time_point opened;
+    } volume_pop;
+
+    ui::ViewportState page_view;
+    Component page_first;       // first child of the page drawn last: a new page resets the scroll
+
     auto render_page = [&]() -> Element {
         const int n = static_cast<int>(main_content->ChildCount());
         const bool home = current_state == ui::State::HOME || current_state == ui::State::ARTIST;
 
-        // Shelves are tall (a window of 7), list rows are 2-3 lines (60).
-        const int before = home ? 2 : 30;
-        const int after  = home ? 5 : 30;
-        if (n <= before + after) {
-            for (auto& item : main_content_items) *item.shown = true;
-            return main_content->Render();
+        if (n == 0 || main_content->ChildAt(0) != page_first) {
+            page_view = {};
+            page_first = n ? main_content->ChildAt(0) : nullptr;
         }
 
         int active = 0;
         Component a = main_content->ActiveChild();
         for (int i = 0; i < n; i++) if (main_content->ChildAt(i) == a) { active = i; break; }
 
-        const int lo = std::max(0, active - before);
-        const int hi = std::min(n, active + after);
+        /* After a wheel scroll the selection may have left the view: it moves
+        to the nearest row still in view (so keys and Enter act on what is
+        seen), and the view doesn't jump back to it.
+        */
+        if (!page_view.follow && page_view.first_visible >= 0 && n > 0) {
+            const int to = active < page_view.first_visible ? page_view.first_visible
+                         : active > page_view.last_visible  ? page_view.last_visible : active;
+            if (to != active && to < n && main_content->ChildAt(to)->Focusable()) {
+                main_content->SetActiveChild(main_content->ChildAt(to));
+                active = to;
+            }
+        }
+
+        // Home shelves are tall (a window of 7); list rows are 2-3 lines (60).
+        const int before = home ? 2 : 30;
+        const int after  = home ? 5 : 30;
+        const int lo = n <= before + after ? 0 : std::max(0, active - before);
+        const int hi = n <= before + after ? n : std::min(n, active + after);
 
         // Only the drawn ones may take clicks (the others' areas are stale).
         for (auto& item : main_content_items) {
@@ -560,8 +625,12 @@ int main(int argc, char *argv[]) {
         }
 
         Elements shown;
-        for (int i = lo; i < hi; i++) shown.push_back(main_content->ChildAt(i)->Render());
-        return vbox(std::move(shown));
+        std::vector<int> indices;
+        for (int i = lo; i < hi; i++) {
+            shown.push_back(main_content->ChildAt(i)->Render());
+            indices.push_back(i);
+        }
+        return ui::viewport(std::move(shown), std::move(indices), active, &page_view);
     };
 
     // MORODER_PROFILE=1 logs frame build times every 2 s.
@@ -617,6 +686,21 @@ int main(int argc, char *argv[]) {
                 last_prefetch = ref->id;
                 player.prefetchPlaylist(*ref);
             }
+
+            // Same for a song: resolve its stream, so Enter starts it at once.
+            static std::string last_warm;
+            if (!sidebar_focused) {
+                for (auto& item : main_content_items) {
+                    if (!item.component || !item.component->Focused()) continue;
+                    const music::ApiResult* r = (!item.carousel_data.results.empty() && item.selected >= 0 && static_cast<size_t>(item.selected) < item.carousel_data.results.size())
+                        ? &item.carousel_data.results[item.selected] : &item.result;
+                    if (const auto* s = std::get_if<music::SongRef>(&r->data); s && s->id != last_warm) {
+                        last_warm = s->id;
+                        player.warmStream(*s);
+                    }
+                    break;
+                }
+            }
         }
 
         const auto p1 = std::chrono::steady_clock::now();
@@ -637,14 +721,19 @@ int main(int argc, char *argv[]) {
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
                      || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
                      || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"));
-            anim_period_ms = spinner_on ? 80 : 250;
+            // Sung-along lyrics fill word by word: ~10 fps while on screen.
+            const bool singing = current_state == ui::State::NOWPLAYING && playback_bar_data.is_playing
+                              && state_copy.lyrics && !state_copy.lyrics->lines.empty();
+            anim_period_ms = (spinner_on || singing) ? 90 : 250;
 
             animating = ongoing("home") || ongoing("search") || ongoing("open_playlist")
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
                      || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
                      // Synced lyrics scroll smoothly while playing.
                      || (current_state == ui::State::NOWPLAYING && playback_bar_data.is_playing && state_copy.lyrics && !state_copy.lyrics->lines.empty())
-                     || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"));
+                     || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"))
+                     || help_held || volume_pop.open;
+            if (help_held) anim_period_ms = 80;
         }
 
         ui::getSidebarData(&state_copy, &sidebar_data);
@@ -828,9 +917,9 @@ int main(int argc, char *argv[]) {
                             }
 
                             return (has_error || notice)
-                                ? render_page() | yframe | flex
+                                ? render_page() | flex
                                 : current_state != ui::State::QUEUE
-                                    ? render_page() | yframe | yflex
+                                    ? render_page() | yflex
                                     : main_content->Render() | xflex;
                         }(),
                     }) | yflex,
@@ -895,6 +984,11 @@ int main(int argc, char *argv[]) {
         std::vector<Box> boxes;
     } ctx;
 
+    auto state_logged_in = [&player] {
+        std::lock_guard lock(player.state_mutex);
+        return player.state.is_logged_in;
+    };
+
     // Title of an API result, for the context menu header.
     auto result_title = [](const music::ApiResult& r) {
         std::string t;
@@ -924,6 +1018,7 @@ int main(int argc, char *argv[]) {
     // Double-click detection.
     auto last_click = std::chrono::steady_clock::time_point{};
     int last_click_x = -1, last_click_y = -1;
+    Component last_click_target;    // the page entry the first click selected
 
     // Content entry that has focus (a row, a carousel, the filters...), if any.
     auto focused_entry = [&]() -> ui::ContentEntry* {
@@ -949,7 +1044,36 @@ int main(int argc, char *argv[]) {
                 return true;
             }
 
+            if(prompt.open) {
+                if(click) prompt.open = false;
+                return true;
+            }
+
             auto in = [&](const Box& b) { return b.Contain(m.x, m.y); };
+
+            // Volume popover: click / drag on the bar sets the level, the icon mutes.
+            if(volume_pop.open) {
+                const bool drag = m.button == Mouse::Left && m.motion == Mouse::Moved;
+                if((click || drag) && in(volume_pop.bar) && volume_pop.bar.x_max > volume_pop.bar.x_min) {
+                    const int level = std::clamp(static_cast<int>(std::lround(100.0 * (m.x - volume_pop.bar.x_min) / (volume_pop.bar.x_max - volume_pop.bar.x_min))), 0, 100);
+                    player.changeVolume(level - playback_bar_data.volume);
+                    // Several drag events can come between two frames: keep the base current.
+                    playback_bar_data.volume = level;
+                    return true;
+                }
+                if(click && in(volume_pop.mute)) {
+                    static int before_mute = 100;
+                    const int now = playback_bar_data.volume;
+                    if (now > 0) { before_mute = now; player.changeVolume(-now); playback_bar_data.volume = 0; }
+                    else         { player.changeVolume(before_mute); playback_bar_data.volume = before_mute; }
+                    return true;
+                }
+                if(wheel && (in(volume_pop.bar) || in(volume_pop.mute))) {
+                    player.changeVolume(m.button == Mouse::WheelUp ? cfg.VOLUME_STEP : -cfg.VOLUME_STEP);
+                    return true;
+                }
+                if(m.motion == Mouse::Pressed && !in(playback_bar_data.box_volume)) volume_pop.open = false;
+            }
 
             if(wheel && in(playback_bar_data.box_volume)) {
                 const auto now = std::chrono::steady_clock::now();
@@ -976,11 +1100,8 @@ int main(int argc, char *argv[]) {
                     return true;
                 }
                 if(in(playback_bar_data.box_volume)) {
-                    // Mute, and unmute back to the level it had.
-                    static int before_mute = 100;
-                    const int now = playback_bar_data.volume;
-                    if (now > 0) { before_mute = now; player.changeVolume(-now); }
-                    else         { player.changeVolume(before_mute); }
+                    volume_pop.open = !volume_pop.open;
+                    volume_pop.opened = std::chrono::steady_clock::now();
                     return true;
                 }
             }
@@ -998,7 +1119,8 @@ int main(int argc, char *argv[]) {
                     for(size_t i = 0; i < ctx.boxes.size(); i++) {
                         if(in(ctx.boxes[i])) {
                             ctx.open = false;
-                            ctx.items[i].run();
+                            const auto run = ctx.items[i].run;   // an item may replace the items (submenu)
+                            run();
                             return true;
                         }
                     }
@@ -1026,9 +1148,18 @@ int main(int argc, char *argv[]) {
                 const bool back = m.button == Mouse::WheelUp || m.button == Mouse::WheelLeft;
 
                 const auto now = std::chrono::steady_clock::now();
-                const auto pace = horizontal ? std::chrono::milliseconds(70)
-                               : current_state == ui::State::HOME ? std::chrono::milliseconds(140)
-                               : std::chrono::milliseconds(30);
+
+                // The page scrolls by lines, like a web page: smooth on a
+                // trackpad, and the selection stays put while it is in view.
+                if(!horizontal && !(!sidebar_hidden && in(sidebar_box)) && current_state != ui::State::QUEUE && current_state != ui::State::NOWPLAYING) {
+                    if(back && page_view.at_top && page_view.pending <= 0) return true;
+                    if(!back && page_view.at_bottom && page_view.pending >= 0) return true;
+                    page_view.pending += back ? -2 : 2;
+                    page_view.follow = false;
+                    return true;
+                }
+
+                const auto pace = horizontal ? std::chrono::milliseconds(70) : std::chrono::milliseconds(30);
                 if(now - last_wheel < pace) return true;
                 last_wheel = now;
 
@@ -1122,6 +1253,29 @@ int main(int argc, char *argv[]) {
                                 player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                             }});
                             ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
+                            if(state_logged_in()) {
+                                ctx.items.push_back({"\uf0fe", "Add to playlist\u2026", "", [&, ref] {
+                                    // Second menu at the same place: the user's playlists.
+                                    std::vector<ContextItem> lists;
+                                    lists.push_back({"\uf067", "New playlist\u2026", "", [&, ref] {
+                                        prompt.open = true;
+                                        prompt.title = "New playlist with \u201c" + utils::trimSuffix(ref.title, 30, "...") + "\u201d";
+                                        prompt.value.clear();
+                                        prompt.done = [&player, id = ref.id](const std::string& name) { player.createPlaylist(name, id); };
+                                    }});
+                                    for (const auto& pl : sidebar_data.results) {
+                                        if (pl.ref.id == "LM" || pl.ref.id == "VLLM" || pl.ref.id == "SE" || pl.ref.id == "VLSE") continue;   // Liked Music / Episodes: not editable
+                                        const std::string pid = pl.ref.id, ptitle = pl.ref.title;
+                                        lists.push_back({"\uf03a", utils::trimSuffix(ptitle, 22, "..."), "", [&player, pid, ptitle, id = ref.id] { player.addToPlaylist(pid, ptitle, id); }});
+                                        if (lists.size() >= 15) break;
+                                    }
+                                    ctx.title = "Add to playlist";
+                                    ctx.items = std::move(lists);
+                                    ctx.hover = 0;
+                                    ctx.boxes.assign(ctx.items.size(), Box{});
+                                    ctx.open = true;
+                                }});
+                            }
                             ctx.items.push_back({"\uf1be", "Start radio", "", [&player, ref] {
                                 auto s = std::make_shared<music::Song>();
                                 s->setRef(ref);
@@ -1170,7 +1324,30 @@ int main(int argc, char *argv[]) {
                 last_click_y = m.y;
             }
 
+            /* The second press of a double-click plays what the first one
+            selected: re-dispatching it could select something else if the
+            page moved in between.
+            */
+            if(double_click && !search_bar->Focused()) {
+                ui::ContentEntry* e = focused_entry();
+                const bool self_acting = e && (e->category.rfind("__error__", 0) == 0 || e->category.rfind("__playlist__", 0) == 0);
+                // Only what the first click selected (not, say, the row that was
+                // selected before a click on empty space).
+                if(e && !self_acting && !sidebar->Focused() && last_click_target && e->component == last_click_target) {
+                    layout->OnEvent(Event::Return);
+                    return true;
+                }
+            }
+
+            // A click selects in place: the view follows the selection again.
+            if(click) page_view.follow = true;
+
             const bool handled = layout->OnEvent(event);
+
+            if(click) {
+                ui::ContentEntry* e = handled ? focused_entry() : nullptr;
+                last_click_target = e ? e->component : nullptr;
+            }
 
             /* Click model, like a desktop music app:
             - single click selects; on navigation (sidebar, library filters) it
@@ -1191,13 +1368,66 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
+        // Keys move the selection: the view follows it again.
+        if(event != Event::Custom) page_view.follow = true;
+
+        // An open prompt takes the keyboard.
+        if(prompt.open) {
+            if(event == Event::Escape) { prompt.open = false; return true; }
+            if(event == Event::Return) {
+                std::string v = prompt.value;
+                while (!v.empty() && v.back() == ' ') v.pop_back();
+                while (!v.empty() && v.front() == ' ') v.erase(v.begin());
+                prompt.open = false;
+                if (!v.empty() && prompt.done) prompt.done(v);
+                return true;
+            }
+            if(event == Event::Backspace) {
+                // Whole UTF-8 characters.
+                while (!prompt.value.empty() && (static_cast<unsigned char>(prompt.value.back()) & 0xC0) == 0x80) prompt.value.pop_back();
+                if (!prompt.value.empty()) prompt.value.pop_back();
+                return true;
+            }
+            if(event.is_character() && prompt.value.size() < 150) { prompt.value += event.character(); return true; }
+            return true;
+        }
+
         if(ctx.open) {
             if(event == Event::Escape)    { ctx.open = false; return true; }
             if(event == Event::ArrowDown) { ctx.hover = (ctx.hover + 1) % static_cast<int>(ctx.items.size()); return true; }
             if(event == Event::ArrowUp)   { ctx.hover = (ctx.hover + static_cast<int>(ctx.items.size()) - 1) % static_cast<int>(ctx.items.size()); return true; }
-            if(event == Event::Return)    { ctx.open = false; ctx.items[ctx.hover].run(); return true; }
+            if(event == Event::Return)    { ctx.open = false; const auto run = ctx.items[ctx.hover].run; run(); return true; }
             return true;
         }
+
+        /* Hold h: the cheatsheet, for as long as h is held (key repeat keeps
+        coming). A tap still seeks back; the seeks made before the hold was
+        recognised are undone.
+        */
+        if(Config::isKey(event, cfg.KEY_SEEK_BACKWARD) && !search_bar->Focused()) {
+            static int streak = 0, seeks = 0;
+            static std::chrono::steady_clock::time_point burst_start{};
+            const auto now = std::chrono::steady_clock::now();
+            const auto gap = now - last_h;
+            if (gap > std::chrono::milliseconds(700)) { streak = 0; seeks = 0; burst_start = now; }
+            else if (gap < std::chrono::milliseconds(200)) streak++;
+            last_h = now;
+
+            if (help_held) return true;
+            if (streak >= 2) {
+                help_held = true;
+                show_help = true;
+                if (seeks > 0) player.seekBy(static_cast<int64_t>(seeks) * static_cast<int64_t>(cfg.SEEK_SECONDS) * 1000000LL);
+                seeks = 0;
+                return true;
+            }
+            if (show_help) return true;
+            seeks++;
+            player.seekBy(-static_cast<int64_t>(cfg.SEEK_SECONDS) * 1000000LL);
+            return true;
+        }
+
+        if(volume_pop.open && event == Event::Escape) { volume_pop.open = false; return true; }
 
         // The help sheet is modal: it only listens for its own close keys.
         if(show_help) {
@@ -1214,6 +1444,33 @@ int main(int argc, char *argv[]) {
                 return true;
             }
             return false;
+        }
+
+        /* Arrows for the music
+        - Shift or Option + left / right: previous / next track; + up / down:
+          volume (plain arrows stay for moving around)
+        - In Now Playing, where nothing else uses them, plain arrows do it
+        */
+        {
+            const std::string& raw = event.input();
+            auto is = [&](std::initializer_list<const char*> seqs) {
+                for (const char* q : seqs) if (raw == q) return true;
+                return false;
+            };
+            const bool np = current_state == ui::State::NOWPLAYING;
+            if (is({"\x1b[1;2D", "\x1b[1;3D", "\x1b[1;9D", "\x1b" "b"}) || (np && event == Event::ArrowLeft))  { player.skipBackward(); return true; }
+            if (is({"\x1b[1;2C", "\x1b[1;3C", "\x1b[1;9C", "\x1b" "f"}) || (np && event == Event::ArrowRight)) { player.skipForward();  return true; }
+            if (is({"\x1b[1;2A", "\x1b[1;3A", "\x1b[1;9A"}) || (np && event == Event::ArrowUp))   { player.changeVolume(cfg.VOLUME_STEP);  return true; }
+            if (is({"\x1b[1;2B", "\x1b[1;3B", "\x1b[1;9B"}) || (np && event == Event::ArrowDown)) { player.changeVolume(-cfg.VOLUME_STEP); return true; }
+        }
+
+        // m: mute / unmute.
+        if(event == Event::Character("m")) {
+            static int before_mute = 100;
+            const int now = playback_bar_data.volume;
+            if (now > 0) { before_mute = now; player.changeVolume(-now); }
+            else         { player.changeVolume(before_mute); }
+            return true;
         }
 
         // v: full-screen Now Playing, and back.
@@ -1239,11 +1496,6 @@ int main(int argc, char *argv[]) {
 
         if(Config::isKey(event, cfg.KEY_HELP)) {
             show_help = true;
-            return true;
-        }
-
-        if(Config::isKey(event, cfg.KEY_SEEK_BACKWARD)) {
-            player.seekBy(-static_cast<int64_t>(cfg.SEEK_SECONDS) * 1000000LL);
             return true;
         }
 
@@ -1357,7 +1609,7 @@ int main(int argc, char *argv[]) {
     */
     auto help_sheet = [&cfg] {
         auto key = [](const std::string& k) {
-            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, 9);
+            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, 12);
         };
         auto row = [&](const std::string& k, const std::string& what) {
             return hbox({ text("  "), key(k), text(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text("  ") });
@@ -1366,49 +1618,104 @@ int main(int argc, char *argv[]) {
             return hbox({ text("  "), text(t) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) });
         };
 
-        return vbox({
-            text(""),
-            hbox({ filler(), text("Keybinds") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
-            text(""),
+        Element left = vbox({
             heading("Playback"),
             row(cfg.KEY_TOGGLE_PAUSE,  "play / pause"),
-            row(cfg.KEY_SKIP_FORWARD + " n",  "next track"),
-            row(cfg.KEY_SKIP_BACKWARD + " p", "previous track"),
+            row("\u21e7\u2192 " + cfg.KEY_SKIP_FORWARD + " n",  "next track"),
+            row("\u21e7\u2190 " + cfg.KEY_SKIP_BACKWARD + " p", "previous / restart"),
             row(cfg.KEY_SEEK_FORWARD,  "forward " + std::to_string(cfg.SEEK_SECONDS) + " s"),
-            row(cfg.KEY_SEEK_BACKWARD, "back " + std::to_string(cfg.SEEK_SECONDS) + " s"),
-            row(cfg.KEY_VOLUME_UP,     "volume up"),
-            row(cfg.KEY_VOLUME_DOWN,   "volume down"),
+            row(cfg.KEY_SEEK_BACKWARD, "back " + std::to_string(cfg.SEEK_SECONDS) + " s (hold: this sheet)"),
+            row("\u21e7\u2191 " + cfg.KEY_VOLUME_UP,     "volume up"),
+            row("\u21e7\u2193 " + cfg.KEY_VOLUME_DOWN,   "volume down"),
+            row("m",                   "mute / unmute"),
             row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
-            row(cfg.KEY_LIKE,          "like / unlike current track"),
             row(cfg.KEY_SHUFFLE,       "shuffle what comes next"),
-            row(cfg.KEY_PREVIEW,       "preview 15 s (middle click too)"),
-            row(cfg.KEY_PLAY_NEXT,     "play next"),
-            row(cfg.KEY_NOW_PLAYING,   "now playing: cover + lyrics"),
+            row(cfg.KEY_LIKE,          "like / unlike"),
+            row(cfg.KEY_NOW_PLAYING,   "now playing (arrows: skip, volume)"),
             text(""),
             heading("On the selected item"),
             row(cfg.KEY_PLAY_NOW,          "play now (starts a radio)"),
             row(cfg.KEY_ADD_TO_QUEUE,      "add to queue"),
+            row(cfg.KEY_PLAY_NEXT,         "play next"),
+            row(cfg.KEY_PREVIEW,           "preview 15 s (middle click)"),
             row(cfg.KEY_REMOVE_FROM_QUEUE, "remove from queue"),
             row(cfg.KEY_MOVE_UP + " " + cfg.KEY_MOVE_DOWN, "move up / down (queue)"),
-            text(""),
+        });
+        Element right = vbox({
             heading("Navigation"),
             row("arrows",                 "move around"),
-            row(cfg.KEY_FOCUS_SEARCH + " /",  "search"),
-            row("esc",                    "leave search / back to home"),
-            row("click",                  "select (sidebar: open)"),
-            row("dbl-click",              "play"),
-            row("right-click",            "menu: play, queue, open"),
-            row("wheel",                  "scroll; swipe / shift: sideways"),
+            row(cfg.KEY_FOCUS_SEARCH + " /",  "search (\u2191: past searches)"),
+            row("esc",                    "back"),
             row(cfg.KEY_QUEUE_VIEW,       "queue"),
             row(cfg.KEY_TOGGLE_SIDEBAR,   "toggle sidebar"),
-            row(cfg.KEY_HELP,             "this help"),
+            row(cfg.KEY_HELP,             "this sheet"),
             row(cfg.KEY_QUIT,             "quit"),
+            text(""),
+            heading("Mouse"),
+            row("click",                  "select (sidebar: open)"),
+            row("dbl-click",              "play"),
+            row("right-click",            "menu: play next, radio..."),
+            row("middle",                 "preview 15 s"),
+            row("wheel",                  "scroll (shift / swipe: sideways)"),
+            row("volume",                 "click: slider, wheel: level"),
+            row("bar",                    "click the line to seek"),
+            row("title",                  "now playing"),
+            text(""),
+            hbox({ text("  "), text("\u21e7 = shift or \u2325 option") | dim }),
+        });
+
+        return vbox({
+            text(""),
+            hbox({ filler(), text("Keys") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
+            text(""),
+            hbox({ left, text("   "), right }),
             text(""),
         }) | borderRounded | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
     };
 
-    ui = Renderer(ui, [ui, &show_help, help_sheet, &ctx, &screen] {
+    ui = Renderer(ui, [ui, &show_help, help_sheet, &ctx, &screen, &volume_pop, &playback_bar_data, &prompt] {
+        // The held-h cheatsheet goes away once h is let go (repeats stop).
+        if (help_held && std::chrono::steady_clock::now() - last_h > std::chrono::milliseconds(450)) {
+            help_held = false;
+            show_help = false;
+        }
+
         Element base = ui->Render();
+
+        if (volume_pop.open && playback_bar_data.box_volume.x_min >= 0) {
+            constexpr int BAR = 24;
+            const int v = std::clamp(playback_bar_data.volume, 0, 100);
+            const int filled = (v * BAR + 50) / 100;
+            const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+            const std::string icon = v == 0 ? "\U000f075f" : v < 34 ? "\U000f057f" : v < 67 ? "\U000f0580" : "\U000f057e";
+
+            std::string full, rest;
+            for (int i = 0; i < filled; i++) full += "\u2501";
+            for (int i = filled; i < BAR; i++) rest += "\u2501";
+
+            Element pop = hbox({
+                text(" "),
+                text(icon) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(volume_pop.mute),
+                text("  "),
+                hbox({ text(full) | color(accent), text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }) | reflect(volume_pop.bar),
+                text(" "),
+                text(std::to_string(v) + "%") | size(WIDTH, EQUAL, 4) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                text(" "),
+            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | bgcolor(Color::RGB(24, 24, 28)) | clear_under;
+
+            constexpr int W = BAR + 14;
+            const Box& vb = playback_bar_data.box_volume;
+            const int x = std::max(0, std::min(vb.x_max - W + 1, screen.dimx() - W - 1));
+            const int y = std::max(0, vb.y_min - 3);
+            base = dbox({
+                base,
+                vbox({
+                    filler() | size(HEIGHT, EQUAL, y),
+                    hbox({ filler() | size(WIDTH, EQUAL, x), pop, filler() }),
+                    filler(),
+                }),
+            });
+        }
 
         if (ctx.open) {
             constexpr int W = 30;
@@ -1458,6 +1765,20 @@ int main(int argc, char *argv[]) {
                     filler(),
                 }),
             });
+        }
+
+        if (prompt.open) {
+            const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+            Element box = vbox({
+                hbox({ text(" "), text(prompt.title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
+                text(""),
+                hbox({ text(" "), text(prompt.value), text(" ") | inverted | color(accent), filler() })
+                    | borderStyled(BorderStyle::ROUNDED, accent),
+                hbox({ filler(), text("enter: create   esc: cancel ") | dim }),
+            }) | size(WIDTH, EQUAL, 56)
+               | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+               | bgcolor(Color::RGB(24, 24, 28)) | clear_under | center;
+            base = dbox({ base, box });
         }
 
         if (!show_help) return base;

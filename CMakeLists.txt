@@ -85,6 +85,13 @@ endif()
 find_package(JPEG)
 find_package(PNG)
 find_package(CURL REQUIRED)
+# Covers are squared in-process too (src/ui/cover_cache.cpp).
+if(JPEG_FOUND)
+    set_property(SOURCE src/ui/cover_cache.cpp APPEND PROPERTY COMPILE_DEFINITIONS cimg_use_jpeg)
+endif()
+if(PNG_FOUND)
+    set_property(SOURCE src/ui/cover_cache.cpp APPEND PROPERTY COMPILE_DEFINITIONS cimg_use_png)
+endif()
 if(JPEG_FOUND)
     target_compile_definitions(ftxui-image-view PRIVATE cimg_use_jpeg)
     target_link_libraries(ftxui-image-view PUBLIC JPEG::JPEG)
@@ -133,6 +140,7 @@ set(SOURCES
 
     src/ui/constants/colors.cpp
     src/ui/cover_cache.cpp
+    src/ui/viewport.cpp
 
     src/ytm/http.cpp
     src/ytm/metadata.cpp

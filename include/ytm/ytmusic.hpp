@@ -85,6 +85,12 @@ public:
     */
     bool rateSong(const std::string& videoId, bool like);
 
+    // New private playlist (optionally with a first track); its id, "" on failure.
+    std::string createPlaylist(const std::string& title, const std::string& videoId = "");
+
+    // Append a track to one of the user's playlists.
+    bool addToPlaylist(const std::string& playlistId, const std::string& videoId);
+
     /* lastError
     - Empty when the last call succeeded.
     */

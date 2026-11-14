@@ -18,6 +18,7 @@ struct SidebarData {
 
     std::function<void()> onHome;
     std::function<void()> onLibrary;
+    std::function<void()> onThird;      // "New playlist" (signed in) / "Sign in"
 };
 
 void getSidebarData(services::Player::PlayerState* state, SidebarData* data);

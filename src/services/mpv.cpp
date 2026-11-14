@@ -89,6 +89,13 @@ services::MPV::MPV() {
     mpv_set_option_string(mpv, "ytdl", "yes");
     mpv_set_option_string(mpv, "ytdl-format", "bestaudio/best");
 
+    /* Direct stream URLs (resolved by the player, see Player::resolveStream)
+    are only served in ranged chunks: a plain request gets 403. This is what
+    the ytdl hook sets per file; set it for every file.
+    */
+    mpv_set_option_string(mpv, "stream-lavf-o", "request_size=10485760");
+    mpv_set_option_string(mpv, "curl-max-request-size", "10485760");  // curl backend (newer mpv)
+
     mpv_set_option_string(mpv, "log-file", std::string(utils::resolve_path(MORODER_LOG_PATH).string() + "/mpv.log").c_str());
 
     const Config& cfg = Config::get();
@@ -236,8 +243,31 @@ void services::MPV::command(const char** args) {
     }
 }
 
+/* A resolved stream comes as "<url>\n<user agent>": the URL only plays with
+the agent it was issued to, so that agent goes with this file alone.
+*/
+static std::pair<std::string, std::string> splitStream(const std::string& s) {
+    const size_t nl = s.find('\n');
+    if (nl == std::string::npos) return { s, "" };
+    const std::string ua = s.substr(nl + 1);
+    // %len% quoting: the agent has commas, the options separator.
+    return { s.substr(0, nl), ua.empty() ? "" : "user-agent=%" + std::to_string(ua.size()) + "%" + ua };
+}
+
 void services::MPV::load(const std::string& url) {
-    const char* args[] = {"loadfile", url.c_str(), "append-play", nullptr};
+    const auto [file, options] = splitStream(url);
+    if (options.empty()) {
+        const char* args[] = {"loadfile", file.c_str(), "append-play", nullptr};
+        command(args);
+    } else {
+        const char* args[] = {"loadfile", file.c_str(), "append-play", "-1", options.c_str(), nullptr};
+        command(args);
+    }
+}
+
+void services::MPV::append(const std::string& url) {
+    const auto [file, options] = splitStream(url);
+    const char* args[] = {"loadfile", file.c_str(), "append", "-1", options.empty() ? nullptr : options.c_str(), nullptr};
     command(args);
 }
 
@@ -277,7 +307,9 @@ void services::MPV::setLoopFile(bool enabled) {
 }
 
 void services::MPV::play(const std::string& url, const std::string& options) {
-    const char* args[] = {"loadfile", url.c_str(), "replace", "-1", options.c_str(), nullptr};
+    const auto [file, agent] = splitStream(url);
+    const std::string all = agent.empty() ? options : options.empty() ? agent : options + "," + agent;
+    const char* args[] = {"loadfile", file.c_str(), "replace", "-1", all.c_str(), nullptr};
     command(args);
 }
 
@@ -289,7 +321,8 @@ void services::MPV::move(uint16_t from, uint16_t to) {
 
 void services::MPV::insertAt(const std::string& url, uint16_t index) {
     const std::string i = std::to_string(index);
-    const char* args[] = {"loadfile", url.c_str(), "insert-at", i.c_str(), nullptr};
+    const auto [file, options] = splitStream(url);
+    const char* args[] = {"loadfile", file.c_str(), "insert-at", i.c_str(), options.empty() ? nullptr : options.c_str(), nullptr};
     command(args);
 }
 
@@ -399,6 +432,15 @@ void services::MPV::removeAt(uint16_t index) {
 
     command(args);
     spdlog::info("MPV: Removed song at index {}", index);
+}
+
+std::string services::MPV::entryUrl(uint16_t index) {
+    const std::string prop = "playlist/" + std::to_string(index) + "/filename";
+    std::lock_guard<std::mutex> lock(mtx);
+    char* v = mpv_get_property_string(mpv, prop.c_str());
+    std::string out = v ? v : "";
+    if (v) mpv_free(v);
+    return out;
 }
 
 void services::MPV::skipTo(uint16_t index) {

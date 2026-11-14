@@ -474,6 +474,20 @@ bool services::Music::rateSong(const std::string& videoId, bool like) {
     return ok && !last_error.failed;
 }
 
+std::string services::Music::createPlaylist(const std::string& title, const std::string& videoId) {
+    if (!ytm->isAuthenticated()) return "";
+    std::string id = ytm->createPlaylist(title, videoId);
+    captureError("create playlist");
+    return last_error.failed ? "" : id;
+}
+
+bool services::Music::addToPlaylist(const std::string& playlistId, const std::string& videoId) {
+    if (!ytm->isAuthenticated()) return false;
+    bool ok = ytm->addToPlaylist(playlistId, videoId);
+    captureError("add to playlist");
+    return ok && !last_error.failed;
+}
+
 std::vector<music::Playlist> services::Music::getLibraryPlaylists(bool cached_only) {
     if (!ytm->isAuthenticated()) {
         spdlog::info("MUSIC: not logged in, no library playlists");

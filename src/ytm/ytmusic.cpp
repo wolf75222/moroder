@@ -616,6 +616,33 @@ bool YTMusic::rateSong(const std::string& videoId, bool like) {
     return response.is_object() && !response.empty();
 }
 
+std::string YTMusic::createPlaylist(const std::string& title, const std::string& videoId) {
+    if (!authenticated || title.empty()) return "";
+
+    json body = json::object();
+    body["title"] = title;
+    body["description"] = "";
+    body["privacyStatus"] = "PRIVATE";
+    if (!videoId.empty()) body["videoIds"] = json::array({ videoId });
+
+    json response = sendRequest("playlist/create", body);
+    if (response.is_object() && response.contains("playlistId") && response["playlistId"].is_string()) {
+        return response["playlistId"].get<std::string>();
+    }
+    return "";
+}
+
+bool YTMusic::addToPlaylist(const std::string& playlistId, const std::string& videoId) {
+    if (!authenticated || playlistId.empty() || videoId.empty()) return false;
+
+    json body = json::object();
+    body["playlistId"] = playlistId.rfind("VL", 0) == 0 ? playlistId.substr(2) : playlistId;
+    body["actions"] = json::array({ { {"action", "ACTION_ADD_VIDEO"}, {"addedVideoId", videoId}, {"dedupeOption", "DEDUPE_OPTION_SKIP"} } });
+
+    json response = sendRequest("browse/edit_playlist", body);
+    return response.is_object() && response.value("status", std::string()) == "STATUS_SUCCEEDED";
+}
+
 json YTMusic::getHome(int limit) {
     json body = json::object();
     body["browseId"] = "FEmusic_home";
