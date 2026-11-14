@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <atomic>
 #include <cstdlib>
 #include <chrono>
 #include <thread>
@@ -143,9 +144,18 @@ int main(int argc, char *argv[]) {
         screen.PostEvent(Event::Custom);
     });
 
-    ftxui::setOnImageLoadedCallback([&screen](){
-        screen.PostEvent(Event::Custom);
-    });
+    /* Cover loads land one by one, dozens at a time on a big page; a redraw
+    each would redraw the whole screen dozens of times a second. Coalesce
+    them into at most one redraw every 80 ms.
+    */
+    static std::atomic<bool> image_redraw_pending{false};
+    ftxui::setOnImageLoadedCallback([] { image_redraw_pending = true; });
+    std::thread([&screen] {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            if (image_redraw_pending.exchange(false)) screen.PostEvent(Event::Custom);
+        }
+    }).detach();
 
     const Config& cfg = Config::get();
 
@@ -441,14 +451,18 @@ int main(int argc, char *argv[]) {
                 state_copy.current = player.state.current->clone();
             }
 
+            // Deep copies of the queues are only needed by the queue view; a
+            // queued 1,000-track playlist cloned every frame cost most of a core.
             state_copy.user_queue.clear();
-            for (auto& item : player.state.user_queue) {
-                state_copy.user_queue.push_back(item->clone());
-            }
-
             state_copy.radio_queue.clear();
-            for (auto& item : player.state.radio_queue) {
-                state_copy.radio_queue.push_back(item->clone());
+
+            if (current_state == ui::State::QUEUE) {
+                for (auto& item : player.state.user_queue) {
+                    state_copy.user_queue.push_back(item->clone());
+                }
+                for (auto& item : player.state.radio_queue) {
+                    state_copy.radio_queue.push_back(item->clone());
+                }
             }
 
             audio_playing = state_copy.flags["audio"] == services::Player::Flags::Ongoing;

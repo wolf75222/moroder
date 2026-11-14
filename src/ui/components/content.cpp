@@ -388,7 +388,15 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
         incoming_rows.push_back({ "__divider_user__", "", "", "", true, "Next in queue" });
     }
 
+    /* A queued 1,000-track playlist made the queue view build and draw every
+    row each frame. Show the next QUEUE_ROWS; the rest still plays in order.
+    Rows keep their queue index, so skip / remove stay exact.
+    */
+    constexpr size_t QUEUE_ROWS = 200;
+    size_t shown_user = 0;
+
     for (auto& item : state->user_queue) {
+        if (shown_user == QUEUE_ROWS) break;
         QueueEntry row;
         if (auto song = std::dynamic_pointer_cast<music::Song>(item)) {
             row.id     = song->ref.id;
@@ -407,9 +415,18 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
         }
 
         incoming_rows.push_back(row);
+        shown_user++;
     }
 
-    if (state->autoplay && !state->radio_queue.empty()) {
+    const bool truncated = state->user_queue.size() > QUEUE_ROWS;
+    if (truncated) {
+        incoming_rows.push_back({ "__divider_more__", "", "", "", true,
+            "+ " + std::to_string(state->user_queue.size() - QUEUE_ROWS) + " more in queue" });
+    }
+
+    // Autoplay follows the whole user queue; past a truncation its rows would
+    // not map to real queue indexes, and it is far away anyway.
+    if (!truncated && state->autoplay && !state->radio_queue.empty()) {
         incoming_rows.push_back({ "__divider_radio__", "", "", "", true, "Autoplay is on" });
 
         for (auto& item : state->radio_queue) {
@@ -673,8 +690,29 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     const bool loading = state->flags["open_playlist"] == services::Player::Flags::Ongoing;
     const auto tracks = playlist->getStreamables();
 
+    /* Paging
+    - Only PAGE rows exist at first and another page is added as the focus
+      nears the end: rendering 1,000+ rows (and fetching their covers) every
+      frame kept a core busy
+    */
+    constexpr size_t PAGE = 100;
+    static std::string paged_id;
+    static size_t shown = PAGE;
+    if (paged_id != playlist->ref.id) { paged_id = playlist->ref.id; shown = PAGE; }
+
+    int focused_track = -1;
+    for (auto& item : main_content_items) {
+        if (item.component && item.component->Focused() && item.category.rfind("__track__", 0) == 0) {
+            focused_track = std::stoi(item.category.substr(9)) - 1;
+        }
+    }
+    if (focused_track >= 0 && static_cast<size_t>(focused_track) + 10 >= shown && shown < tracks.size()) {
+        shown += PAGE;
+    }
+    const size_t visible = std::min(shown, tracks.size());
+
     // Rebuild only when what is shown changes.
-    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0");
+    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0") + ":" + std::to_string(visible);
     if (!main_content_items.empty() && main_content_items.front().category == signature) {
         for (auto& item : main_content_items) item.focused = item.component->Focused();
         return;
@@ -736,7 +774,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         main_content->Add(head.component);
     }
 
-    for (size_t i = 0; i < tracks.size(); i++) {
+    for (size_t i = 0; i < visible; i++) {
         auto song = std::dynamic_pointer_cast<music::Song>(tracks[i]);
         if (!song) continue;
 
@@ -771,6 +809,14 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const int index = static_cast<int>(i);
         item.component = CatchEvent(Button(opt), [on_track, index](const Event& e) { return on_track(e, index); });
         main_content->Add(item.component);
+    }
+
+    // Keep the focus on the row it was on when a page was added.
+    if (focused_track >= 0) {
+        const std::string want = "__track__" + std::to_string(focused_track + 1);
+        for (auto& item : main_content_items) {
+            if (item.category == want) { item.component->TakeFocus(); break; }
+        }
     }
 
     for (auto& item : main_content_items) item.focused = item.component->Focused();
