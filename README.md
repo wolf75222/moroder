@@ -506,11 +506,16 @@ unbind it.
 | `KEY_SEEK_FORWARD` | `l` | jump ahead `SEEK_SECONDS` |
 | `KEY_VOLUME_DOWN` | `-` | volume down by `VOLUME_STEP` (default 5) |
 | `KEY_VOLUME_UP` | `=` | volume up by `VOLUME_STEP` |
+| `KEY_LIKE` | `+` | like / un-like the current track (signed in) |
 | `KEY_HELP` | `?` | show every keybind |
 
 <kbd>Esc</kbd> leaves the search bar. The playback bar shows elapsed / total time and the volume.
 
 The volume is remembered between launches. Each new track raises a desktop notification (macOS Notification Center, `notify-send` on Linux); set `ENABLE_NOTIFICATIONS = false` to turn it off.
+
+Liking needs fresh session cookies: Google rotates them, and YouTube Music
+refuses writes with stale ones even while browsing still works. If a like is
+refused, the bar says so; copy a fresh cURL and run `pbpaste | moroder setup`.
 
 These act on whatever the cursor is over:
 

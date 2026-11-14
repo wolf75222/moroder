@@ -3,6 +3,7 @@
 
 #include <ftxui/dom/elements.hpp>
 #include <algorithm>
+#include <chrono>
 
 #include "image_view.hpp"
 
@@ -27,11 +28,18 @@ void ui::getPlaybackData(services::Player::PlayerState* state, PlaybackData* dat
     data->loop_mode = state->loop_mode;
     data->dimx = dimx;
     data->volume = state->volume;
+    data->can_like = false;
+    data->liked = false;
+    data->notice = std::chrono::steady_clock::now() < state->notice_until ? state->notice : "";
 
     if (auto song_ptr = std::dynamic_pointer_cast<music::Song>(state->current)) {
         data->title = song_ptr->ref.title;
         data->artist = !song_ptr->ref.artists.empty() ? song_ptr->ref.artists[0].name : "";
         data->image_url = song_ptr->ref.thumbnail_small;
+
+        data->can_like = !song_ptr->ref.id.empty();
+        auto it = state->liked.find(song_ptr->ref.id);
+        data->liked = it != state->liked.end() && it->second;
 
     } else if (auto episode_ptr = std::dynamic_pointer_cast<music::Episode>(state->current)) {
         data->title = episode_ptr->ref.title;
@@ -123,6 +131,12 @@ Component ui::PlaybackBar(PlaybackData* data) {
         Element right_controls = hbox({
             time,
             text("    "),
+            data->can_like
+                ? (data->liked
+                    ? text("\uf004") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY))
+                    : text("\uf08a") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)))
+                : emptyElement(),
+            data->can_like ? text("    ") : emptyElement(),
             text(volume_icon) | color(data->volume == 0 ? ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
             text(" " + std::to_string(data->volume) + "%") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | size(WIDTH, EQUAL, 5),
             text("   "),
@@ -136,7 +150,11 @@ Component ui::PlaybackBar(PlaybackData* data) {
             hbox({
                 left_controls,
                 filler(),
-                track_info,
+                // A transient notice (like result, errors) briefly takes the
+                // track's place, where the eye already is.
+                data->notice.empty()
+                    ? track_info
+                    : text(data->notice) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 filler(),
                 right_controls,
             }) | size(HEIGHT, EQUAL, 1)

@@ -54,6 +54,9 @@ public:
     std::vector<music::ApiResult> getSearch(const std::string& query);
 
     std::unordered_map<std::string, std::vector<music::ApiResult>> getHome();
+
+    // Like / un-like a track on the account. False if signed out or it failed.
+    bool rateSong(const std::string& videoId, bool like);
     // Shelf titles from the last getHome(), in YouTube Music's order.
     const std::vector<std::string>& homeOrder() const { return home_order; }
 

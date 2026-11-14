@@ -68,6 +68,15 @@ public:
         return authenticated;
     }
 
+    /* rateSong
+    - Like a track, or clear its rating, as the web player does
+    - The web player sends params "OAI=" with it; without it YouTube answers
+      "Precondition check failed"
+    - Writes need fresh session cookies (Google rotates them); reads don't, so
+      a session can browse fine and still be refused here
+    */
+    bool rateSong(const std::string& videoId, bool like);
+
     /* lastError
     - Empty when the last call succeeded.
     */

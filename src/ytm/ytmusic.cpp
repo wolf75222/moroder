@@ -566,6 +566,17 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
 
 
 
+bool YTMusic::rateSong(const std::string& videoId, bool like) {
+    if (!authenticated || videoId.empty()) return false;
+
+    json body = json::object();
+    body["target"] = { {"videoId", videoId} };
+    body["params"] = "OAI%3D";
+
+    json response = sendRequest(like ? "like/like" : "like/removelike", body);
+    return response.is_object() && !response.empty();
+}
+
 json YTMusic::getHome(int limit) {
     json body = json::object();
     body["browseId"] = "FEmusic_home";

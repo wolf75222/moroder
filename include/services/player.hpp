@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <chrono>
+
 #include "social.hpp"
 #include "mpris.hpp"
 #include "music.hpp"
@@ -64,6 +66,11 @@ private:
     struct LibraryArtistsCommand {};
     struct LibraryPodcastsCommand {};
     struct IsLoggedInCommand {};
+
+    struct RateCommand {
+        std::string video_id;
+        bool like = true;
+    };
 
 public:
     /* PlayerState
@@ -123,6 +130,11 @@ public:
         LoopMode loop_mode = LoopMode::None;
 
         int volume = 100;                                   // 0..100
+        std::unordered_map<std::string, bool> liked;        // video id -> liked, this session
+
+        // Short message for the playback bar (e.g. why a like failed).
+        std::string notice;
+        std::chrono::steady_clock::time_point notice_until;
     };
 
     PlayerState state;
@@ -179,6 +191,9 @@ public:
     // Volume step in percent, clamped to 0..100.
     void changeVolume(int delta);
 
+    // Like the current track, or remove the like if it was liked here.
+    void toggleLikeCurrent();
+
     void setOnStreamStart(std::function<void()> cb) {
         on_stream_start = std::move(cb);
     }
@@ -222,7 +237,8 @@ private:
         LibrarySongsCommand,
         LibraryArtistsCommand,
         LibraryPodcastsCommand,
-        IsLoggedInCommand
+        IsLoggedInCommand,
+        RateCommand
     >;
 
     std::queue<Command> command_queue;

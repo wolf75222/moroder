@@ -573,6 +573,11 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
+        if(Config::isKey(event, cfg.KEY_LIKE)) {
+            player.toggleLikeCurrent();
+            return true;
+        }
+
         if(Config::isKey(event, cfg.KEY_QUIT)) {
             screen.Exit();
             return true;
@@ -654,6 +659,7 @@ int main(int argc, char *argv[]) {
             row(cfg.KEY_VOLUME_UP,     "volume up"),
             row(cfg.KEY_VOLUME_DOWN,   "volume down"),
             row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
+            row(cfg.KEY_LIKE,          "like / unlike current track"),
             text(""),
             heading("On the selected item"),
             row(cfg.KEY_PLAY_NOW,          "play now (starts a radio)"),

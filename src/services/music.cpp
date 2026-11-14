@@ -343,6 +343,14 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     return response.results;
 }
 
+bool services::Music::rateSong(const std::string& videoId, bool like) {
+    if (!ytm->isAuthenticated()) return false;
+
+    bool ok = ytm->rateSong(videoId, like);
+    captureError("rate song");
+    return ok && !last_error.failed;
+}
+
 std::vector<music::Playlist> services::Music::getLibraryPlaylists() {
     if (!ytm->isAuthenticated()) {
         spdlog::info("MUSIC: not logged in, no library playlists");

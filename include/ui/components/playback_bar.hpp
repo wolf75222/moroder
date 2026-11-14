@@ -20,6 +20,9 @@ struct PlaybackData {
     uint64_t duration = 0;
 
     int volume = 100;
+    bool liked = false;
+    bool can_like = false;
+    std::string notice;     // transient message, empty when none
 
     bool is_playing = false;
     bool can_skip_forwards  = true;

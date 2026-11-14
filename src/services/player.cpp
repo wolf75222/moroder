@@ -786,6 +786,29 @@ void services::Player::worker_loop() {
                     refreshLibraryError(state);
                 }
 
+            } else if constexpr (std::is_same_v<T, RateCommand>) {
+                spdlog::info("PLAYER: RateCommand, {}", c.like ? "like" : "remove like");
+
+                const bool ok = music_service->rateSong(c.video_id, c.like);
+                const services::RequestError& err = music_service->lastError();
+
+                std::lock_guard lock(state_mutex);
+                state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+
+                if (ok) {
+                    state.notice = c.like ? "Added to Liked Music" : "Removed from Liked Music";
+                } else {
+                    // Roll the optimistic heart back and say why.
+                    state.liked[c.video_id] = !c.like;
+                    const std::string why = err.message + " " + err.detail;
+                    const bool auth = why.find("401") != std::string::npos
+                                   || why.find("signed in") != std::string::npos;
+                    state.notice = auth
+                        ? "Like refused: session too old for writes, run: pbpaste | moroder setup"
+                        : "Like failed: " + err.message;
+                    spdlog::warn("PLAYER: rating failed, {}", err.message);
+                }
+
             } else if constexpr (std::is_same_v<T, IsLoggedInCommand>) {
                 spdlog::info("PLAYER: IsLoggedInCommand");
 
@@ -1608,6 +1631,35 @@ void services::Player::changeVolume(int delta) {
 
     // Remembered for the next launch.
     std::ofstream(volumeFile(), std::ios::trunc) << volume << "\n";
+}
+
+void services::Player::toggleLikeCurrent() {
+    std::string id;
+    bool like;
+
+    {
+        std::lock_guard lock(state_mutex);
+
+        auto song = std::dynamic_pointer_cast<music::Song>(state.current);
+        if (!song || song->ref.id.empty()) return;
+
+        if (!state.is_logged_in) {
+            state.notice = "Sign in to like tracks: moroder setup";
+            state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            return;
+        }
+
+        id = song->ref.id;
+        like = !state.liked[id];
+        state.liked[id] = like;     // optimistic, rolled back if the request fails
+    }
+
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(RateCommand{id, like});
+    }
+
+    command_cv.notify_one();
 }
 
 void services::Player::togglePause() {
