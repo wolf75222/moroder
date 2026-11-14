@@ -71,6 +71,7 @@ FetchContent_Declare(
     ftxui
     GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui.git
     GIT_TAG v7.0.3
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_ftxui.cmake
 )
 FetchContent_MakeAvailable(ftxui)
 
