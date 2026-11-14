@@ -188,6 +188,9 @@ public:
     // Relative seek in the current track, in microseconds (negative = back).
     void seekBy(int64_t delta);
 
+    // Jump to a fraction (0..1) of the current track, e.g. a click on the bar.
+    void seekToFraction(double fraction);
+
     // Volume step in percent, clamped to 0..100.
     void changeVolume(int delta);
 

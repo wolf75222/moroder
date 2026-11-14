@@ -77,11 +77,11 @@ Component ui::PlaybackBar(PlaybackData* data) {
 
         Element left_controls = hbox({
             text("  "),
-            text("") | ((data->can_skip_backwards) ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
+            text("") | ((data->can_skip_backwards) ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_prev),
             text("  "),
-            text(data->is_playing ? "" : "") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+            text(data->is_playing ? "" : "") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(data->box_play),
             text("  "),
-            text("") | ((data->can_skip_forwards)  ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)))
+            text("") | ((data->can_skip_forwards)  ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_next)
         });
 
         Element track_info;
@@ -133,19 +133,21 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text("    "),
             data->can_like
                 ? (data->liked
-                    ? text("\uf004") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY))
-                    : text("\uf08a") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)))
+                    ? text("\uf004") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | reflect(data->box_like)
+                    : text("\uf08a") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_like))
                 : emptyElement(),
             data->can_like ? text("    ") : emptyElement(),
-            text(volume_icon) | color(data->volume == 0 ? ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-            text(" " + std::to_string(data->volume) + "%") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | size(WIDTH, EQUAL, 5),
+            hbox({
+                text(volume_icon) | color(data->volume == 0 ? ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                text(" " + std::to_string(data->volume) + "%") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | size(WIDTH, EQUAL, 5),
+            }) | reflect(data->box_volume),
             text("   "),
-            text("") | color(loop_color),
+            text("") | color(loop_color) | reflect(data->box_loop),
             text("  "),
         });
 
         return vbox({
-            hbox(std::move(progress_line)),
+            hbox(std::move(progress_line)) | reflect(data->box_progress),
             text(" "),
             hbox({
                 left_controls,

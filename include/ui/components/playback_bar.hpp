@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ftxui/screen/box.hpp>
+
 #include "../../services/player.hpp"
 
 #include <ftxui/component/component.hpp>
@@ -23,6 +25,9 @@ struct PlaybackData {
     bool liked = false;
     bool can_like = false;
     std::string notice;     // transient message, empty when none
+
+    // Screen areas of the clickable parts, filled at render time.
+    ftxui::Box box_progress, box_prev, box_play, box_next, box_like, box_volume, box_loop;
 
     bool is_playing = false;
     bool can_skip_forwards  = true;

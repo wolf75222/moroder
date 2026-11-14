@@ -1618,6 +1618,23 @@ void services::Player::seekBy(int64_t delta) {
     mpris_service->setPosition(new_position);
 }
 
+void services::Player::seekToFraction(double fraction) {
+    {
+        std::lock_guard lock(state_mutex);
+        if (!state.current) return;
+    }
+
+    const uint64_t duration = mpv_service->getStreamDuration();
+    if (duration == 0) return;
+
+    const uint64_t position = static_cast<uint64_t>(std::clamp(fraction, 0.0, 1.0) * static_cast<double>(duration));
+    mpv_service->setPosition(position);
+
+    social_service->setPosition(position);
+    mpris_service->setPosition(position);
+    mpris_service->sendSeekedSignal(position);
+}
+
 void services::Player::changeVolume(int delta) {
     int volume;
 

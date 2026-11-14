@@ -509,7 +509,12 @@ unbind it.
 | `KEY_LIKE` | `+` | like / un-like the current track (signed in) |
 | `KEY_HELP` | `?` | show every keybind |
 
-<kbd>Esc</kbd> leaves the search bar. The playback bar shows elapsed / total time and the volume.
+<kbd>/</kbd> also opens search, <kbd>Esc</kbd> leaves it (or goes back to Home
+from another page), and shortcuts like <kbd>q</kbd> work everywhere except
+while typing in the search bar. The mouse works too: click an item to play
+it, click the sidebar, the playback controls, the heart or the loop icon,
+click the progress line to seek, click the volume to mute, scroll the wheel
+over it to change it. The playback bar shows elapsed / total time and the volume.
 
 The volume is remembered between launches. Each new track raises a desktop notification (macOS Notification Center, `notify-send` on Linux); set `ENABLE_NOTIFICATIONS = false` to turn it off.
 

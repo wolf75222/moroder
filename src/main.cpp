@@ -36,6 +36,37 @@ namespace fs = std::filesystem;
 
 using namespace ftxui;
 
+namespace {
+
+/* FocusGate
+- Lets a component take focus only while *open is set, so arrow keys never
+  wander into it: the search bar is entered on purpose (f, /, a click) and left
+  with Enter or Esc, which keeps single-key shortcuts like q working everywhere
+- A click on the child opens the gate for it
+*/
+class FocusGate : public ComponentBase {
+public:
+    FocusGate(Component child, bool* open) : child_(child), open_(open) { Add(std::move(child)); }
+
+    bool Focusable() const override { return *open_ && child_->Focusable(); }
+
+    bool OnEvent(Event event) override {
+        if (event.is_mouse() && event.mouse().button == Mouse::Left && event.mouse().motion == Mouse::Pressed && !*open_) {
+            *open_ = true;
+            if (ChildAt(0)->OnEvent(event)) return true;
+            *open_ = false;
+            return false;
+        }
+        return ChildAt(0)->OnEvent(event);
+    }
+
+private:
+    Component child_;
+    bool* open_;
+};
+
+}
+
 int main(int argc, char *argv[]) {
     Config::app_name = APP_NAME;
 
@@ -102,7 +133,8 @@ int main(int argc, char *argv[]) {
 
     auto screen = ScreenInteractive::Fullscreen();
 
-    screen.TrackMouse(false);
+    // Mouse: click items and controls, wheel to scroll (see the handler below).
+    screen.TrackMouse(true);
 
     player.setOnRequestCompletedCallback([&screen]() {
         screen.PostEvent(Event::Custom);
@@ -144,6 +176,11 @@ int main(int argc, char *argv[]) {
 
     ui::SearchBarData search_bar_data = {};
     auto search_bar = ui::SearchBar(&search_bar_data);
+
+    // Search is entered on purpose and left after Enter / Esc (see FocusGate).
+    bool search_active = false;
+    int content_column = 1;     // 0 = search bar, 1 = page content
+    auto search_gate = Make<FocusGate>(search_bar, &search_active);
 
     ui::PlaybackData playback_bar_data = {};
     auto playback_bar = ui::PlaybackBar(&playback_bar_data);
@@ -323,15 +360,29 @@ int main(int argc, char *argv[]) {
             });
         }),
         Container::Vertical({
-            search_bar,
+            search_gate,
             main_content
-        }),
+        }, &content_column),
     });
 
     auto layout = Container::Vertical({
         main_content_container,
         playback_bar
     });
+
+    auto open_search = [&] {
+        search_active = true;
+        content_column = 0;
+        search_bar->TakeFocus();
+    };
+
+    // Back to the page; if it has nothing focusable yet (results loading),
+    // focus lands on it as soon as it does.
+    auto close_search = [&] {
+        search_active = false;
+        content_column = 1;
+        if (main_content->Focusable()) main_content->TakeFocus();
+    };
 
     sidebar_data.onHome = [&current_state, &main_content_items, &main_content, &screen] {
         spdlog::info("SIDEBAR: Home pressed");
@@ -356,8 +407,9 @@ int main(int argc, char *argv[]) {
         screen.PostEvent(Event::Custom);
     };
 
-    search_bar_data.onSearch = [&current_state, &player, &main_content_items, &main_content, &screen](const std::string& value) {
+    search_bar_data.onSearch = [&current_state, &player, &main_content_items, &main_content, &screen, &close_search](const std::string& value) {
         spdlog::info("SEARCHBAR: enter pressed with value, " + value);
+        close_search();
         current_state = ui::State::SEARCH;
 
         player.search(value);
@@ -529,7 +581,65 @@ int main(int argc, char *argv[]) {
 
     bool show_help = false;
 
-    ui = CatchEvent(ui, [&search_bar, &screen, &sidebar_hidden, &sidebar, &sidebar_container, &audio_playing, &current_state, &player, &cfg, &show_help, &main_content](Event event){
+    ui = CatchEvent(ui, [&](Event event){
+        /* Mouse
+        - A click on the playback bar hits its controls; the progress line seeks
+        - Anywhere else, the page handles the click (that focuses the item under
+          the pointer) and the same click then activates it, like Enter
+        - The wheel scrolls; over the volume it changes the volume
+        */
+        if(event.is_mouse()) {
+            const Mouse& m = event.mouse();
+            const bool click = m.button == Mouse::Left && m.motion == Mouse::Pressed;
+            const bool wheel = m.button == Mouse::WheelUp || m.button == Mouse::WheelDown;
+
+            if(show_help) {
+                if(click) show_help = false;
+                return true;
+            }
+
+            auto in = [&](const Box& b) { return b.Contain(m.x, m.y); };
+
+            if(wheel && in(playback_bar_data.box_volume)) {
+                player.changeVolume(m.button == Mouse::WheelUp ? cfg.VOLUME_STEP : -cfg.VOLUME_STEP);
+                return true;
+            }
+
+            if(click) {
+                const Box& p = playback_bar_data.box_progress;
+                if(in(p) && p.x_max > p.x_min) {
+                    player.seekToFraction(double(m.x - p.x_min) / double(p.x_max - p.x_min));
+                    return true;
+                }
+                if(in(playback_bar_data.box_prev))   { player.skipBackward();      return true; }
+                if(in(playback_bar_data.box_play))   { player.togglePause();       return true; }
+                if(in(playback_bar_data.box_next))   { player.skipForward();       return true; }
+                if(in(playback_bar_data.box_like))   { player.toggleLikeCurrent(); return true; }
+                if(in(playback_bar_data.box_loop))   { player.cycleLoop();         return true; }
+                if(in(playback_bar_data.box_volume)) {
+                    // Mute, and unmute back to the level it had.
+                    static int before_mute = 100;
+                    const int now = playback_bar_data.volume;
+                    if (now > 0) { before_mute = now; player.changeVolume(-now); }
+                    else         { player.changeVolume(before_mute); }
+                    return true;
+                }
+            }
+
+            const bool handled = layout->OnEvent(event);
+
+            if(click && handled && !search_bar->Focused()) {
+                layout->OnEvent(Event::Return);
+            }
+
+            // Wheel over something that doesn't scroll itself: move the focus.
+            if(wheel && !handled) {
+                layout->OnEvent(m.button == Mouse::WheelUp ? Event::ArrowUp : Event::ArrowDown);
+            }
+
+            return true;
+        }
+
         // The help sheet is modal: it only listens for its own close keys.
         if(show_help) {
             if(event == Event::Escape || Config::isKey(event, cfg.KEY_HELP) || Config::isKey(event, cfg.KEY_QUIT)) {
@@ -539,13 +649,18 @@ int main(int argc, char *argv[]) {
         }
 
         if(search_bar->Focused()) {
-            // Esc leaves the search bar for the page below (or the sidebar).
+            // Esc leaves the search bar for the page below.
             if(event == Event::Escape) {
-                if(main_content->Focusable()) main_content->TakeFocus();
-                else sidebar->TakeFocus();
+                close_search();
                 return true;
             }
             return false;
+        }
+
+        // Esc elsewhere goes back to Home, like a browser's back.
+        if(event == Event::Escape && current_state != ui::State::HOME) {
+            sidebar_data.onHome();
+            return true;
         }
 
         if(Config::isKey(event, cfg.KEY_HELP)) {
@@ -601,8 +716,9 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
-        if(Config::isKey(event, cfg.KEY_FOCUS_SEARCH)) {
-            search_bar->TakeFocus();
+        // "/" is the usual search key in terminal apps; f stays configurable.
+        if(Config::isKey(event, cfg.KEY_FOCUS_SEARCH) || event == Event::Character("/")) {
+            open_search();
             return true;
         }
 
@@ -637,7 +753,7 @@ int main(int argc, char *argv[]) {
     */
     auto help_sheet = [&cfg] {
         auto key = [](const std::string& k) {
-            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, 8);
+            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, 9);
         };
         auto row = [&](const std::string& k, const std::string& what) {
             return hbox({ text("  "), key(k), text(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text("  ") });
@@ -668,8 +784,9 @@ int main(int argc, char *argv[]) {
             text(""),
             heading("Navigation"),
             row("arrows",                 "move around"),
-            row(cfg.KEY_FOCUS_SEARCH,     "search"),
-            row("esc",                    "leave the search bar"),
+            row(cfg.KEY_FOCUS_SEARCH + " /",  "search"),
+            row("esc",                    "leave search / back to home"),
+            row("mouse",                  "click to play, wheel to scroll"),
             row(cfg.KEY_QUEUE_VIEW,       "queue"),
             row(cfg.KEY_TOGGLE_SIDEBAR,   "toggle sidebar"),
             row(cfg.KEY_HELP,             "this help"),
