@@ -1,4 +1,5 @@
 #include "../../include/services/scrobble.hpp"
+#include "../../include/services/cli_ui.hpp"
 #include "../../include/services/notify.hpp"
 #include "../../include/config/config.hpp"
 
@@ -163,36 +164,39 @@ void services::scrobble::scrobble(const std::string& artist, const std::string& 
 int services::scrobble::connect() {
     const Config& cfg = Config::get();
     if (cfg.LASTFM_API_KEY.empty() || cfg.LASTFM_API_SECRET.empty()) {
-        std::cerr << "Set LASTFM_API_KEY and LASTFM_API_SECRET in the config first\n"
-                     "(create an API account at https://www.last.fm/api/account/create).\n";
+        std::cerr << "\n  " << cli::yellow() << "!" << cli::reset() << "  Set LASTFM_API_KEY and LASTFM_API_SECRET in the config first\n"
+                  << "     " << cli::dim() << "An API account: https://www.last.fm/api/account/create" << cli::reset() << "\n\n";
         return 1;
     }
     const nlohmann::json t = call({ {"method", "auth.getToken"} }, false);
     if (!t.is_object() || !t.contains("token") || !t["token"].is_string()) {
-        std::cerr << "Last.fm refused the API key: " << (t.is_object() ? t.value("message", std::string("no answer")) : "no answer") << "\n";
+        std::cerr << "\n  " << cli::red() << "✗" << cli::reset() << "  Last.fm refused the API key: " << (t.is_object() ? t.value("message", std::string("no answer")) : "no answer") << "\n\n";
         return 1;
     }
     const std::string token = t["token"];
     const std::string url = "https://www.last.fm/api/auth/?api_key=" + cfg.LASTFM_API_KEY + "&token=" + token;
-    std::cout << "Allow moroder in the page that opens (or open it yourself):\n  " << url << "\n\nThen press Enter here.";
+    cli::title("Connect Last.fm", "scrobble what you play");
+    std::cout << "     Allow Moroder in the page that opens (or open it yourself):\n"
+              << "     " << cli::dim() << url << cli::reset() << "\n"
+              << "\n  " << cli::bold() << "?" << cli::reset() << "  Press Return once it's allowed " << std::flush;
     services::openUrl(url);
     std::string line;
     std::getline(std::cin, line);
 
     const nlohmann::json s = call({ {"method", "auth.getSession"}, {"token", token} }, false);
     if (!s.is_object() || !s.contains("session") || !s["session"].contains("key")) {
-        std::cerr << "No session: " << (s.is_object() ? s.value("message", std::string("not allowed yet?")) : "no answer") << "\n";
+        std::cerr << "\n  " << cli::red() << "✗" << cli::reset() << "  No session: " << (s.is_object() ? s.value("message", std::string("not allowed yet?")) : "no answer") << "\n\n";
         return 1;
     }
     const fs::path f = sessionFile();
     std::error_code ec;
     fs::create_directories(f.parent_path(), ec);
     const int fd = ::open(f.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
-    if (fd < 0) { std::cerr << "Can't write " << f << "\n"; return 1; }
+    if (fd < 0) { std::cerr << "\n  " << cli::red() << "✗" << cli::reset() << "  Can't write " << f.string() << "\n\n"; return 1; }
     const std::string body = nlohmann::json{ {"key", s["session"]["key"]}, {"name", s["session"].value("name", "")} }.dump();
     const bool ok = ::write(fd, body.data(), body.size()) == static_cast<ssize_t>(body.size());
     ::close(fd);
     if (!ok) return 1;
-    std::cout << "Scrobbling to Last.fm as " << s["session"].value("name", std::string("you")) << ".\n";
+    std::cout << "\n  " << cli::green() << "✓" << cli::reset() << "  Scrobbling to Last.fm as " << cli::bold() << s["session"].value("name", std::string("you")) << cli::reset() << "\n\n";
     return 0;
 }

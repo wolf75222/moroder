@@ -28,8 +28,10 @@ curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh |
 **2.** Sign in with your browser, once ([guide](docs/sign-in.md)):
 
 ```bash
-moroder setup --browser chrome    # or arc, brave, edge, firefox, safari...
+moroder setup
 ```
+
+It finds the session in your browser (asking first).
 
 Or skip it and play without an account (no library):
 

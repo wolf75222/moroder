@@ -2,29 +2,33 @@
 
 # Sign in
 
+```bash
+moroder setup
+```
+
 Moroder uses the YouTube Music session your browser already has. No password
 is typed into it and nothing is sent anywhere except YouTube.
 
-First, sign in at [music.youtube.com](https://music.youtube.com) in your
-browser. Then pick the line for your browser.
+## What setup does
 
-| Browser | What to run |
-|:--|:--|
-| Chrome, Arc, Brave, Edge, Vivaldi, Chromium (macOS) | `moroder setup --browser chrome` (or `arc`, `brave`...) |
-| Firefox, Zen, LibreWolf, Safari, or any browser on Linux | `moroder setup --browser firefox` (or your browser), then paste the headers |
-| No account | `moroder -a` |
+1. Looks for your browsers: Chrome, Arc, Brave, Edge, Vivaldi, Chromium,
+   Firefox, Zen, LibreWolf (and Opera, Floorp on Linux)
+2. Asks before reading them, then takes the session from the first one
+   signed in to YouTube. Nothing to copy, nothing to open
+3. Checks it with YouTube Music and saves it
 
-## Chromium browsers on macOS: automatic
+On macOS, Chrome, Arc, Brave, Edge, Vivaldi and Chromium keep their cookies
+encrypted: macOS asks to let moroder use the browser's "Safe Storage", choose
+**Always Allow**. With those, the session also stays fresh on its own: as long
+as you're signed in in the browser, Moroder is too.
 
-`moroder setup --browser arc` reads the session straight from the browser.
-macOS asks to let moroder use "Arc Safe Storage": choose **Always Allow**.
+Only one browser? `moroder setup --browser firefox` (or `arc`, `brave`...).
 
-The session is then refreshed on its own: as long as you stay signed in in the
-browser, moroder stays signed in.
+## None of them signed in?
 
-## Other browsers: paste the headers
-
-Setup asks you to copy one request from the browser:
+Sign in at [music.youtube.com](https://music.youtube.com), then run
+`moroder setup` again. Or, when setup can't read a browser (Safari, for one),
+it walks you through copying one request from it:
 
 1. Open [music.youtube.com](https://music.youtube.com), signed in
 2. Open DevTools (<kbd>⌘</kbd> <kbd>⌥</kbd> <kbd>I</kbd> on macOS, <kbd>F12</kbd> on Linux), then the **Network** tab
@@ -35,11 +39,7 @@ Setup asks you to copy one request from the browser:
    - Chrome and co.: right-click the request, **Copy as cURL**
 6. Paste into setup, then <kbd>Ctrl</kbd> <kbd>D</kbd> on a blank line
 
-On macOS, with the request copied as cURL, this does it in one go:
-
-```bash
-pbpaste | moroder setup
-```
+On macOS, with the request copied as cURL: `pbpaste | moroder setup`.
 
 Safari: enable **Settings › Advanced › Show features for web developers**
 first, to get DevTools.

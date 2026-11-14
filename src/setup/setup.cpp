@@ -3,11 +3,13 @@
 
 #include "../../include/config/config.hpp"
 #include "../../include/utils/utils.hpp"
+#include "../../include/services/cli_ui.hpp"
 #include "../../include/ytm/ytmusic.hpp"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -37,29 +39,20 @@ namespace {
 */
 bool colour_enabled = true;
 
-const char* dim()   { return colour_enabled ? "\033[2m"  : ""; }
-const char* bold()  { return colour_enabled ? "\033[1m"  : ""; }
-const char* red()   { return colour_enabled ? "\033[31m" : ""; }
-const char* green() { return colour_enabled ? "\033[32m" : ""; }
-const char* cyan()  { return colour_enabled ? "\033[36m" : ""; }
-const char* reset() { return colour_enabled ? "\033[0m"  : ""; }
+// Same look as the other commands (cli_ui.hpp); --no-colour turns it off.
+std::string dim()    { return colour_enabled ? cli::dim()    : ""; }
+std::string bold()   { return colour_enabled ? cli::bold()   : ""; }
+std::string red()    { return colour_enabled ? cli::red()    : ""; }
+std::string green()  { return colour_enabled ? cli::green()  : ""; }
+std::string yellow() { return colour_enabled ? cli::yellow() : ""; }
+std::string reset()  { return colour_enabled ? cli::reset()  : ""; }
 
-const char* BANNER = R"(
-ooooo    oooo  ooooooo  oooooooooo    ooooooo  ooooooooo  ooooooooooo oooooooooo
- 8888o   888 o888   888o 888    888 o888   888o 888    88o 888    88   888    888
- 88 888o8 88 888     888 888oooo88  888     888 888    888 888ooo8     888oooo88
- 88  888  88 888o   o888 888  88o   888o   o888 888    888 888    oo   888  88o
-o88o  8  o88o  88ooo88  o888o  88o8   88ooo88  o888ooo88  o888ooo8888 o888o  88o8
-)";
-
-void banner() { std::cout << cyan() << BANNER << reset() << "\n"; }
-
-void step(const std::string& t) { std::cout << "\n" << bold() << "==> " << t << reset() << "\n"; }
-void info(const std::string& t) { std::cout << "    " << t << "\n"; }
-void note(const std::string& t) { std::cout << "    " << dim() << t << reset() << "\n"; }
-void ok(const std::string& t)   { std::cout << "    " << green() << "ok" << reset() << "  " << t << "\n"; }
-void warn(const std::string& t) { std::cout << "    " << red() << "??" << reset() << "  " << t << "\n"; }
-void fail(const std::string& t) { std::cout << "    " << red() << "!!" << reset() << "  " << t << "\n"; }
+void step(const std::string& t) { std::cout << "\n  " << red() << "▸ " << reset() << bold() << t << reset() << "\n"; }
+void info(const std::string& t) { std::cout << "     " << t << "\n"; }
+void note(const std::string& t) { std::cout << "     " << dim() << t << reset() << "\n"; }
+void ok(const std::string& t)   { std::cout << "  " << green() << "✓" << reset() << "  " << t << "\n"; }
+void warn(const std::string& t) { std::cout << "  " << yellow() << "!" << reset() << "  " << t << "\n"; }
+void fail(const std::string& t) { std::cout << "  " << red() << "✗" << reset() << "  " << t << "\n"; }
 
 /* ask
 - A bare return means yes, which is what every prompt here wants
@@ -68,7 +61,7 @@ void fail(const std::string& t) { std::cout << "    " << red() << "!!" << reset(
 bool ask(const std::string& question) {
     if (!isatty(fileno(stdin))) return true;
 
-    std::cout << "\n    " << question << " [Y/n] " << std::flush;
+    std::cout << "\n  " << bold() << "?" << reset() << "  " << question << dim() << " [Y/n] " << reset() << std::flush;
 
     std::string answer;
     if (!std::getline(std::cin, answer)) return false;
@@ -187,13 +180,15 @@ bool checkDependencies() {
 
     for (const Dependency& dep : deps) {
         if (haveCommand(dep.name)) {
-            const std::string version = commandVersion(dep.name);
+            // Just the version: "mpv v0.42.0 Copyright ..." -> "v0.42.0".
+            std::string version;
+            std::istringstream words(commandVersion(dep.name));
+            for (std::string w; words >> w; )
+                if (std::isdigit(static_cast<unsigned char>(w[w[0] == 'v' && w.size() > 1 ? 1 : 0]))) { version = w; break; }
 
-            const std::string suffix = version.empty()
-                ? std::string()
-                : "  " + std::string(dim()) + version + reset();
-
-            ok(std::string(dep.name) + suffix);
+            std::string name = dep.name;
+            while (name.size() < 8) name += ' ';
+            ok(name + dim() + version + reset());
             continue;
         }
 
@@ -636,6 +631,97 @@ bool checkStructure(const Credentials& creds) {
 }
 
 // ---------------------------------------------------------------------------
+// the session, straight from a browser
+// ---------------------------------------------------------------------------
+
+/* installedBrowsers
+- Browsers with a profile on this machine, the configured one first: where
+  setup looks for a YouTube Music session before asking for a copy-paste
+- Each is a name and the directory yt-dlp is pointed at (Firefox forks are
+  read as Firefox from their own profile directory)
+*/
+struct FoundBrowser { std::string name; std::string ytdlp_spec; };
+
+std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
+    const fs::path h = utils::home();
+    std::vector<std::pair<std::string, std::vector<fs::path>>> known = {
+#ifdef __APPLE__
+        {"arc",      {h / "Library/Application Support/Arc/User Data"}},
+        {"chrome",   {h / "Library/Application Support/Google/Chrome"}},
+        {"brave",    {h / "Library/Application Support/BraveSoftware/Brave-Browser"}},
+        {"edge",     {h / "Library/Application Support/Microsoft Edge"}},
+        {"vivaldi",  {h / "Library/Application Support/Vivaldi"}},
+        {"chromium", {h / "Library/Application Support/Chromium"}},
+        {"firefox",  {h / "Library/Application Support/Firefox/Profiles"}},
+        {"zen",      {h / "Library/Application Support/zen/Profiles"}},
+        {"librewolf",{h / "Library/Application Support/librewolf/Profiles"}},
+#else
+        {"firefox",  {h / ".mozilla/firefox", h / "snap/firefox/common/.mozilla/firefox", h / ".var/app/org.mozilla.firefox/.mozilla/firefox"}},
+        {"chrome",   {h / ".config/google-chrome"}},
+        {"chromium", {h / ".config/chromium", h / "snap/chromium/common/chromium"}},
+        {"brave",    {h / ".config/BraveSoftware/Brave-Browser"}},
+        {"edge",     {h / ".config/microsoft-edge"}},
+        {"vivaldi",  {h / ".config/vivaldi"}},
+        {"opera",    {h / ".config/opera"}},
+        {"librewolf",{h / ".librewolf", h / ".var/app/io.gitlab.librewolf-community/.librewolf"}},
+        {"zen",      {h / ".zen", h / ".var/app/app.zen_browser.zen/.zen"}},
+        {"floorp",   {h / ".floorp"}},
+#endif
+    };
+    const std::vector<std::string> firefox_like = {"firefox", "zen", "librewolf", "floorp"};
+    std::vector<FoundBrowser> out;
+    std::error_code ec;
+    for (const auto& [name, dirs] : known) {
+        for (const auto& d : dirs) {
+            if (!fs::is_directory(d, ec)) continue;
+            const bool ff = std::find(firefox_like.begin(), firefox_like.end(), name) != firefox_like.end();
+            out.push_back({name, ff ? "firefox:" + d.string() : name});
+            break;
+        }
+    }
+    std::stable_partition(out.begin(), out.end(), [&](const FoundBrowser& b) { return b.name == utils::lower(preferred); });
+    return out;
+}
+
+// The Python yt-dlp runs on (its shebang), so its cookie reader can be used.
+std::string ytdlpPython() {
+    const std::string path = utils::trim(run("command -v yt-dlp").output);
+    std::ifstream in(path);
+    std::string line;
+    if (path.empty() || !in || !std::getline(in, line) || line.rfind("#!", 0) != 0) return "";
+    std::istringstream words(line.substr(2));
+    std::string interp, arg;
+    words >> interp >> arg;
+    if (interp.size() >= 4 && interp.compare(interp.size() - 4, 4, "/env") == 0) interp = arg;
+    return interp.find("python") != std::string::npos ? interp : "";
+}
+
+/* cookiesViaYtdlp
+- yt-dlp knows how to open every browser's cookie store (Firefox's sqlite,
+  Chromium's encrypted one with the system keyring): the youtube.com cookies
+  as one Cookie header, "" with error set when there are none
+*/
+std::string cookiesViaYtdlp(const FoundBrowser& b, std::string& error) {
+    const std::string python = ytdlpPython();
+    if (python.empty()) { error = "yt-dlp's Python not found"; return ""; }
+    static const char* script =
+        "import sys\n"
+        "from yt_dlp.cookies import extract_cookies_from_browser\n"
+        "spec = sys.argv[1]; name, _, profile = spec.partition(':')\n"
+        "jar = extract_cookies_from_browser(name, profile or None)\n"
+        "out = {}\n"
+        "for c in jar:\n"
+        "    d = (c.domain or '').lstrip('.')\n"
+        "    if d in ('youtube.com', 'music.youtube.com', 'www.youtube.com'):\n"
+        "        out.setdefault(c.name, c.value)\n"
+        "print('; '.join(k + '=' + v for k, v in out.items()))\n";
+    Command r = run(shellQuote(python) + " -I -c " + shellQuote(script) + " " + shellQuote(b.ytdlp_spec) + " 2>/dev/null");
+    std::string cookie = r.ok() ? utils::trim(r.output) : "";
+    if (!r.ok()) error = "couldn't read its cookies";
+    return cookie;
+}
+
+// ---------------------------------------------------------------------------
 // acquisition
 // ---------------------------------------------------------------------------
 
@@ -821,22 +907,23 @@ bool recordPaths(const fs::path& cookies_dir, const BrowserSpec& browser) {
         note("Set it by hand to your browser profile directory if streams fail.");
     }
 
-    ok("saved to " + Config::path());
+    ok("saved to " + utils::tildify(fs::path(Config::path())));
     return true;
 }
 
 void usage() {
-    std::cout << "usage: moroder setup [options]\n\n"
-              << "  --browser <name>   browser holding your session, saved as BROWSER\n"
-              << "                     firefox, librewolf, floorp, waterfox, zen, mercury,\n"
-              << "                     icecat, tor, chrome, chromium, brave, edge, opera,\n"
-#ifdef __APPLE__
-              << "                     safari,\n"
-#endif
-              << "                     vivaldi, whale, or a browser:profile spec\n"
-              << "  --profile <dir>    explicit browser profile directory, for stream cookies\n"
-              << "  --no-colour        plain output\n"
-              << "  --help             this text\n";
+    std::cout << "\n  " << bold() << red() << "▶ moroder setup" << reset() << "  " << dim() << "[options]" << reset() << "\n\n";
+    auto opt = [](const std::string& o, const std::string& what) {
+        std::string pad = o;
+        while (pad.size() < 18) pad += ' ';
+        std::cout << "    " << pad << dim() << what << reset() << "\n";
+    };
+    std::cout << "    " << dim() << "Without options it looks for your YouTube Music session in every browser" << reset() << "\n"
+              << "    " << dim() << "you have (asking first), and only asks for a copy-paste if none has one." << reset() << "\n\n";
+    opt("--browser NAME", "only that browser (chrome, arc, brave, edge, firefox, zen, ...)");
+    opt("--profile DIR", "browser profile directory, for stream cookies");
+    opt("--no-colour", "plain output");
+    std::cout << "\n    " << dim() << "Guide: https://github.com/" MORODER_REPO "/blob/main/docs/sign-in.md" << reset() << "\n\n";
 }
 
 }
@@ -891,33 +978,78 @@ int setup::run(int argc, char* argv[]) {
     const fs::path cookies_dir = fs::path(Config::path()).parent_path();
     const fs::path headers_file = cookies_dir / "browser.json";
 
-    banner();
-
-    std::cout << "    " << bold() << "Sign in to YouTube Music" << reset() << "\n\n";
-    info("Moroder talks to YouTube Music as your browser does, using the session");
-    info("cookie the browser already holds. No password is involved and nothing");
-    info("is sent anywhere except YouTube.");
+    std::cout << "\n  " << bold() << red() << "▶ Moroder setup" << reset() << "  " << dim() << "sign in to YouTube Music, once" << reset() << "\n\n";
+    info("Uses the session your browser already has: no password, and nothing");
+    info("is sent anywhere but YouTube.");
     std::cout << "\n";
-    info("You will be asked to copy the request headers out of your browser.");
-    std::cout << "\n";
-    info("This will write:");
-    info("  " + headers_file.string() + "   " + std::string(dim()) + "the session" + reset());
-    info("  " + Config::path() + "   " + std::string(dim()) + "the two cookie paths" + reset());
-    note("Treat browser.json like a password. Delete it to sign out.");
+    auto where = [](const std::string& label, const std::string& path, const std::string& what) {
+        std::string pad = label;
+        while (pad.size() < 10) pad += ' ';
+        std::cout << "     " << dim() << pad << reset() << path << "  " << dim() << what << reset() << "\n";
+    };
+    where("session", utils::tildify(headers_file), "like a password: delete it to sign out");
+    where("settings", utils::tildify(fs::path(Config::path())), "browser and cookie paths");
+    note("Help: https://github.com/" MORODER_REPO "/blob/main/docs/sign-in.md");
 
     step("Checking what is installed");
     checkDependencies();
 
-    step("Checking you are signed in");
+    Credentials creds;
+    bool got = false;
+    bool from_store = false;
 
-    if (ask("Open music.youtube.com in your browser to confirm?")) {
-        openInBrowser("https://music.youtube.com/");
-        info("Sign in there if you are not already, then come back here.");
+    /* First, the session the browsers already hold: no copy-paste. macOS +
+    a Chromium browser is read natively and stays fresh later (COOKIE_BROWSER);
+    any other browser through yt-dlp's cookie reader.
+    */
+    std::vector<FoundBrowser> found = installedBrowsers(browser);
+    if (browser_given) {
+        found.erase(std::remove_if(found.begin(), found.end(), [&](const FoundBrowser& b) { return b.name != utils::lower(browser); }), found.end());
+        if (found.empty()) found.push_back({utils::lower(browser), utils::lower(browser)});
+    }
 
-        if (isatty(fileno(stdin))) {
-            std::cout << "\n    Press return once you are signed in. " << std::flush;
-            std::string ignored;
-            std::getline(std::cin, ignored);
+    if (!found.empty()) {
+        step("Looking for your YouTube Music session");
+        std::string names;
+        for (const auto& b : found) names += (names.empty() ? "" : ", ") + b.name;
+        info("in " + names);
+        if (std::any_of(found.begin(), found.end(), [](const FoundBrowser& b) { return services::isCookieStoreBrowser(b.name); }))
+            note("macOS may ask to let moroder read a browser's \"Safe Storage\": choose Always Allow.");
+        if (ask("Read it from your browser?")) {
+            for (const auto& b : found) {
+                std::string error;
+                const bool native = services::isCookieStoreBrowser(b.name);
+                const std::string cookie = native ? services::readYouTubeCookies(b.name, error) : cookiesViaYtdlp(b, error);
+                if (contains(cookie, "SAPISID=")) {
+                    creds.cookie = cookie;
+                    creds.user_agent = DEFAULT_USER_AGENT;
+                    creds.origin = "https://music.youtube.com";
+                    creds.accept_language = "en-US,en;q=0.9";
+                    creds.source = b.name + " cookie store";
+                    browser = b.name;
+                    from_store = native;
+                    got = true;
+                    ok("signed in on " + b.name);
+                    break;
+                }
+                note(b.name + ": " + (cookie.empty() && !error.empty() ? error : "not signed in to YouTube"));
+            }
+        }
+    }
+
+    // Otherwise: signed in somewhere, then the headers pasted from that tab.
+    if (!got) {
+        step("Checking you are signed in");
+
+        if (ask("Open music.youtube.com in your browser to confirm?")) {
+            openInBrowser("https://music.youtube.com/");
+            info("Sign in there if you are not already, then come back here.");
+
+            if (isatty(fileno(stdin))) {
+                std::cout << "\n  " << bold() << "?" << reset() << "  Press Return once you are signed in " << std::flush;
+                std::string ignored;
+                std::getline(std::cin, ignored);
+            }
         }
     }
 
@@ -926,12 +1058,12 @@ int setup::run(int argc, char* argv[]) {
     */
     step("Looking for your " + browser + " profile");
 
-    if (!browser_given) note("from BROWSER in " + Config::path() + ", override with --browser");
+    if (!browser_given) note("from BROWSER in " + utils::tildify(fs::path(Config::path())) + ", override with --browser");
 
     BrowserSpec spec = resolveBrowser(browser, profile_override);
 
     if (spec.resolved && !spec.profile.empty()) {
-        ok("found " + spec.profile.string());
+        ok("found " + utils::tildify(spec.profile));
         note("yt-dlp reads this when opening a stream, so age-restricted and");
         note("premium tracks play. It is not where the session comes from.");
 
@@ -942,34 +1074,6 @@ int setup::run(int argc, char* argv[]) {
         warn(spec.problem);
         note("Only stream cookies are affected. Pass --profile <dir> to set it,");
         note("or fill in MPV_COOKIES_PATH by hand later.");
-    }
-
-    Credentials creds;
-    bool got = false;
-    bool from_store = false;
-
-    /* macOS + a Chromium-family browser: take the session straight from its
-    cookie store. No copy-paste, and Moroder keeps re-reading it later
-    (COOKIE_BROWSER), so it never expires while you stay signed in there.
-    */
-    if (services::isCookieStoreBrowser(browser)) {
-        step("Reading your session from " + browser);
-        note("macOS may ask to let moroder use \"" + browser + " Safe Storage\": choose Always Allow.");
-
-        std::string error;
-        creds.cookie = services::readYouTubeCookies(browser, error);
-
-        if (!creds.cookie.empty()) {
-            creds.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-            creds.origin = "https://music.youtube.com";
-            creds.accept_language = "en-US,en;q=0.9";
-            creds.source = browser + " cookie store";
-            ok("read the session from " + browser);
-            got = from_store = true;
-        } else {
-            warn(error);
-            note("falling back to pasting the headers");
-        }
     }
 
     if (!got) {
@@ -1033,7 +1137,7 @@ int setup::run(int argc, char* argv[]) {
         return 1;
     }
 
-    ok("wrote " + headers_file.string() + " (0600)");
+    ok("wrote " + utils::tildify(headers_file) + " (0600)");
 
     if (!recordPaths(cookies_dir, spec)) return 1;
 
@@ -1041,7 +1145,7 @@ int setup::run(int argc, char* argv[]) {
     Config::setValues({{"COOKIE_BROWSER", Config::quote(from_store ? utils::lower(browser) : "")}});
     if (from_store) ok("COOKIE_BROWSER    = " + utils::lower(browser) + "  (refreshed automatically)");
 
-    std::cout << "\n    " << green() << bold() << "Done." << reset()
+    std::cout << "\n  " << green() << "✓" << reset() << " " << bold() << "Signed in." << reset()
               << " Run " << bold() << "moroder" << reset() << " and your library will load.\n\n";
 
     note("If the library stops loading later, the session has expired.");

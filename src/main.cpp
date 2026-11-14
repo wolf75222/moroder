@@ -100,8 +100,9 @@ static int keyTest() {
 
     // Mouse reporting too (any event, SGR), so wheel / trackpad swipes show up.
     std::cout << "\x1b[?1003h\x1b[?1006h";
-    std::cout << "Press keys (Shift/Option + arrows, h, m...), scroll or swipe. q to quit.\n"
-              << "Also written to ~/.local/state/moroder/logs/keys.log\n\n" << std::flush;
+    cli::title("moroder keys", "what your terminal sends");
+    std::cout << "     Press keys (Shift/Option + arrows, h, m...), scroll or swipe. " << cli::bold() << "q" << cli::reset() << " quits.\n"
+              << "     " << cli::dim() << "Also written to ~/.local/state/moroder/logs/keys.log" << cli::reset() << "\n\n" << std::flush;
     std::ofstream log(utils::resolve_path(MORODER_LOG_PATH) / "keys.log", std::ios::trunc);
     const std::vector<std::pair<std::string, std::string>> known = {
         {"\x1b[1;2D", "previous track (Shift+Left)"},  {"\x1b[1;3D", "previous track (Option+Left)"},
@@ -157,7 +158,11 @@ static int keyTest() {
             if (meaning == "mouse move") { log << shown << " move\n" << std::flush; continue; }   // too many to print
         }
         log << shown << "   ->  " << meaning << "\n" << std::flush;
-        std::cout << "  " << shown << "   ->  " << meaning << "\n" << std::flush;
+        {
+            std::string key = shown;
+            while (key.size() < 18) key += ' ';
+            std::cout << "  " << cli::dim() << key << cli::reset() << " " << cli::red() << "→" << cli::reset() << "  " << meaning << "\r\n" << std::flush;
+        }
         }
         if (quit) break;
     }
@@ -308,14 +313,14 @@ int main(int argc, char *argv[]) {
     }
 
     if (!command.empty() && command != "--anonymous" && command != "search") {
-        std::cerr << "unknown command: " << command << "\n"
-                  << "try `" << APP_NAME << " --help`\n";
+        std::cerr << "\n  " << cli::red() << "✗" << cli::reset() << "  unknown command: " << cli::bold() << command << cli::reset() << "\n"
+                  << "     " << cli::dim() << "moroder --help lists them" << cli::reset() << "\n\n";
         return 2;
     }
 
     // A newer release: offer it before the interface starts, then restart into it.
     if (services::update::offerAtLaunch()) {
-        std::cout << "\nStarting the new version...\n";
+        std::cout << "\n  " << cli::bold() << cli::red() << "▶" << cli::reset() << " Starting the new version\n\n";
         setenv("MORODER_JUST_UPDATED", "1", 1);     // no second offer in the restarted one
         // The installed one, found on the PATH (not necessarily argv[0]).
         execvp("moroder", argv);
@@ -328,9 +333,9 @@ int main(int argc, char *argv[]) {
     once, here, rather than letting the library page explain it later.
     */
     if (!anonymous && !fs::exists(Config::get().YTM_COOKIES_PATH / "browser.json")) {
-        std::cerr << "No YouTube Music session found.\n"
-                  << "Run `" << APP_NAME << " setup` to sign in, or `" << APP_NAME
-                  << " --anonymous` to run without an account.\n";
+        std::cerr << "\n  " << cli::yellow() << "!" << cli::reset() << "  " << cli::bold() << "Not signed in yet" << cli::reset() << "\n\n"
+                  << "     " << cli::bold() << "moroder setup" << cli::reset() << "   " << cli::dim() << "sign in with your browser, once" << cli::reset() << "\n"
+                  << "     " << cli::bold() << "moroder -a" << cli::reset() << "      " << cli::dim() << "play without an account" << cli::reset() << "\n\n";
         return 1;
     }
 
