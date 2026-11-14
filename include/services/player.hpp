@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <atomic>
+#include <array>
 #include <nlohmann/json.hpp>
 #include <unordered_set>
 
@@ -102,6 +103,8 @@ private:
     // Create a playlist (title set) or add a track to one (playlist_id set).
     struct PlaylistEditCommand {
         std::string title, playlist_id, video_id;
+        enum class Kind { Create, Add, Remove, Rename, Delete } kind = Kind::Add;
+        std::string set_video_id;
     };
 
     // A skip while the starting track resolves: resolve the new current one.
@@ -285,10 +288,15 @@ public:
     // Resolve a track's stream in the background (it is selected), so
     // starting it is near-instant. One at a time; no-op if already done.
     void warmStream(const music::SongRef& song);
+    void warmNow(const std::string& youtube_url);     // no debounce (a playlist's first track)
 
     // New playlist (with video_id as its first track if set) / add to one.
+    void seekTo(double seconds);
     void createPlaylist(const std::string& title, const std::string& video_id = "");
     void addToPlaylist(const std::string& playlist_id, const std::string& title, const std::string& video_id);
+    void removeFromPlaylist(const std::string& playlist_id, const std::string& video_id, const std::string& set_video_id);
+    void renamePlaylist(const std::string& playlist_id, const std::string& title);
+    void deletePlaylist(const std::string& playlist_id, const std::string& title);
 
     // Insert a track right after the current one.
     void playNext(std::shared_ptr<music::IStreamable> streamable);
@@ -338,6 +346,15 @@ private:
     wait in `postponed` until it is loaded. Worker thread only.
     */
     std::atomic<bool> load_pending{false};
+    std::atomic<bool> fading_out{false};
+    std::atomic<uint64_t> file_generation{0};    // bumped when a file starts
+    std::string refreshed_url;                   // stream-error handler: link already refreshed once
+    // Last.fm: the track being listened to (artist, title, album), when, how long.
+    std::array<std::string, 3> scrobble_track;
+    std::atomic<long long> scrobble_started_at{0};
+    std::atomic<int> scrobble_played_s{0};
+    std::atomic<bool> scrobble_done{true};         // FADE_SECONDS: the end of a track is fading
+    std::atomic<uint64_t> fade_generation{0};    // a newer fade (or a volume change) stops the older
     std::atomic<uint64_t> load_generation{0};
     std::mutex command_mutex;
 
@@ -425,6 +442,9 @@ private:
     // Pre-resolved stream URLs by YouTube URL, for tracks not in mpv yet
     // (autoplay radio); taken by streamUrlFor().
     std::unordered_map<std::string, std::string> preloaded;
+    std::unordered_map<std::string, std::string> recent_streams;   // YouTube URL -> resolved, kept (saved at exit)
+    void rememberStream(const std::string& url, const std::string& stream);
+    void forgetStream(const std::string& url);
     std::unordered_set<std::string> preloading;             // in flight
     std::mutex preloaded_mutex;
     std::string streamUrlFor(const std::string& url);

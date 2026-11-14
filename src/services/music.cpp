@@ -488,6 +488,27 @@ bool services::Music::addToPlaylist(const std::string& playlistId, const std::st
     return ok && !last_error.failed;
 }
 
+bool services::Music::removeFromPlaylist(const std::string& playlistId, const std::string& videoId, const std::string& setVideoId) {
+    if (!ytm->isAuthenticated()) return false;
+    bool ok = ytm->removeFromPlaylist(playlistId, videoId, setVideoId);
+    captureError("remove from playlist");
+    return ok && !last_error.failed;
+}
+
+bool services::Music::renamePlaylist(const std::string& playlistId, const std::string& title) {
+    if (!ytm->isAuthenticated()) return false;
+    bool ok = ytm->renamePlaylist(playlistId, title);
+    captureError("rename playlist");
+    return ok && !last_error.failed;
+}
+
+bool services::Music::deletePlaylist(const std::string& playlistId) {
+    if (!ytm->isAuthenticated()) return false;
+    bool ok = ytm->deletePlaylist(playlistId);
+    captureError("delete playlist");
+    return ok && !last_error.failed;
+}
+
 std::vector<music::Playlist> services::Music::getLibraryPlaylists(bool cached_only) {
     if (!ytm->isAuthenticated()) {
         spdlog::info("MUSIC: not logged in, no library playlists");

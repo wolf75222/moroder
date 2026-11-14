@@ -69,6 +69,8 @@ std::string librarySignature(services::Player::PlayerState* state, const std::st
 using namespace ftxui;
 
 int ui::anim_frame = 0;
+std::vector<std::pair<int, std::shared_ptr<ftxui::Box>>> ui::queue_row_boxes;
+int ui::queue_drag_from = -1, ui::queue_drag_over = -1;
 bool ui::suppress_click = false;
 
 namespace {
@@ -524,6 +526,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
 
     main_content_items.clear();
     main_content->DetachAllChildren();
+    ui::queue_row_boxes.clear();
 
     int  queue_index = 0;
     auto queue_container = Container::Vertical({});
@@ -553,7 +556,9 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
 
         } else {
             ButtonOption opt;
-            opt.transform = [top_cap = row.top, bottom_cap = row.bottom, url_cap = row.url](const EntryState& s) {
+            auto row_box = std::make_shared<Box>();
+            ui::queue_row_boxes.emplace_back(queue_index, row_box);
+            opt.transform = [top_cap = row.top, bottom_cap = row.bottom, url_cap = row.url, row_box, idx = queue_index](const EntryState& s) {
 
                 Element thumb = url_cap.empty()
                     ? filler() | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2)
@@ -573,10 +578,13 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
                     }) | flex,
                 }) | size(HEIGHT, EQUAL, 2);
 
+                // Dragging a row: a line marks where it will land.
+                const bool target = ui::queue_drag_from >= 0 && ui::queue_drag_over == idx && ui::queue_drag_over != ui::queue_drag_from;
+                const bool dragged = ui::queue_drag_from == idx;
                 return vbox({
-                    text(" "),
-                    row_el
-                });
+                    target ? separatorHeavy() | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : text(" "),
+                    dragged ? row_el | dim : row_el
+                }) | reflect(*row_box);
             };
 
             auto button = Button(opt);

@@ -91,6 +91,11 @@ public:
     // Append a track to one of the user's playlists.
     bool addToPlaylist(const std::string& playlistId, const std::string& videoId);
 
+    // Remove a track (setVideoId: its place in the list), rename, delete.
+    bool removeFromPlaylist(const std::string& playlistId, const std::string& videoId, const std::string& setVideoId);
+    bool renamePlaylist(const std::string& playlistId, const std::string& title);
+    bool deletePlaylist(const std::string& playlistId);
+
     /* lastError
     - Empty when the last call succeeded.
     */

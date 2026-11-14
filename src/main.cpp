@@ -1,5 +1,9 @@
+#include <termios.h>
+#include <unistd.h>
 #include "../include/ui/cover_cache.hpp"
 #include "../include/ui/viewport.hpp"
+#include "../include/services/suggest.hpp"
+#include "../include/services/scrobble.hpp"
 #include "../include/ui/components/playback_bar.hpp"
 #include "../include/ui/components/now_playing.hpp"
 #include "../include/ui/components/search_bar.hpp"
@@ -78,6 +82,70 @@ private:
 
 }
 
+/* moroder keys
+- Shows what the terminal sends for each key, and what moroder makes of it:
+  Shift / Option + arrows differ between Terminal.app, iTerm2, Ghostty...
+*/
+static int keyTest() {
+    termios old{};
+    if (tcgetattr(STDIN_FILENO, &old) != 0) { std::cerr << "not a terminal\n"; return 1; }
+    termios raw = old;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1; raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+
+    std::cout << "Press keys (Shift/Option + arrows, h, m...). q to quit.\n\n" << std::flush;
+    const std::vector<std::pair<std::string, std::string>> known = {
+        {"\x1b[1;2D", "previous track (Shift+Left)"},  {"\x1b[1;3D", "previous track (Option+Left)"},
+        {"\x1b[1;9D", "previous track (Meta+Left)"},   {"\x1b" "b",  "previous track (Option+Left, as Esc b)"},
+        {"\x1b[1;2C", "next track (Shift+Right)"},     {"\x1b[1;3C", "next track (Option+Right)"},
+        {"\x1b[1;9C", "next track (Meta+Right)"},      {"\x1b" "f",  "next track (Option+Right, as Esc f)"},
+        {"\x1b[1;2A", "volume up (Shift+Up)"},         {"\x1b[1;3A", "volume up (Option+Up)"},
+        {"\x1b[1;2B", "volume down (Shift+Down)"},     {"\x1b[1;3B", "volume down (Option+Down)"},
+        {"<", "previous track"}, {">", "next track"},
+        {"\x1b[D", "left (moves around)"}, {"\x1b[C", "right (moves around)"},
+        {"\x1b[A", "up (moves around)"},   {"\x1b[B", "down (moves around)"},
+    };
+    while (true) {
+        char buf[32];
+        const ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+        if (n <= 0) break;
+        // One read can hold several keys (pasted, or fast): split them.
+        const std::string all(buf, static_cast<size_t>(n));
+        std::vector<std::string> keys;
+        for (size_t i = 0; i < all.size(); ) {
+            size_t j = i + 1;
+            if (all[i] == '\x1b' && j < all.size()) {
+                if (all[j] == '[' || all[j] == 'O') {
+                    j++;
+                    while (j < all.size() && !(all[j] >= 0x40 && all[j] <= 0x7e)) j++;
+                    j = std::min(all.size(), j + 1);
+                } else {
+                    j++;
+                }
+            }
+            keys.push_back(all.substr(i, j - i));
+            i = j;
+        }
+        bool quit = false;
+        for (const std::string& seq : keys) {
+        if (seq == "q") { quit = true; break; }
+        std::string shown;
+        for (unsigned char ch : seq) {
+            if (ch == 0x1b) shown += "ESC ";
+            else if (ch < 0x20 || ch == 0x7f) { char h[8]; std::snprintf(h, sizeof(h), "0x%02x ", ch); shown += h; }
+            else shown += static_cast<char>(ch);
+        }
+        std::string meaning = "-";
+        for (const auto& [k, v] : known) if (k == seq) meaning = v;
+        std::cout << "  " << shown << "   ->  " << meaning << "\n" << std::flush;
+        }
+        if (quit) break;
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &old);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     Config::app_name = APP_NAME;
 
@@ -97,6 +165,12 @@ int main(int argc, char *argv[]) {
     if (command == "setup") {
         return setup::run(argc, argv);
     }
+    if (command == "keys") {
+        return keyTest();
+    }
+    if (command == "lastfm") {
+        return services::scrobble::connect();
+    }
 
     /* Anonymous mode
     - Everything except the account works without a session: search, radio and
@@ -110,6 +184,8 @@ int main(int argc, char *argv[]) {
     if (command == "--help" || command == "-h") {
         std::cout << "usage: " << APP_NAME << " [command]\n\n"
                   << "  setup         sign in to YouTube Music and fill in the config\n"
+                  << "  keys          show what your terminal sends for each key\n"
+                  << "  lastfm        connect Last.fm scrobbling (needs LASTFM_API_KEY / _SECRET)\n"
                   << "  --anonymous   run without an account, -a for short\n"
                   << "  --help        this text\n\n"
                   << "Run with no arguments to start the player.\n";
@@ -177,13 +253,6 @@ int main(int argc, char *argv[]) {
     ftxui::setMaxConcurrentImageLoads(cfg.MAX_CONCURRENT_IMAGE_LOADS);
 
 
-    player.isLoggedIn();
-    player.getHome();
-    player.getLibraryPlaylists();
-    player.getLibraryAlbums();
-    player.getLibraryArtists();
-    player.getLibraryPodcasts();
-    player.getLibrarySongs();
 
     int spinner_frame = 0;
 
@@ -191,6 +260,9 @@ int main(int argc, char *argv[]) {
     static std::atomic<bool> animating{false};
     static std::atomic<int> anim_period_ms{80};     // spinners 80 ms, lyrics 250 ms
     static std::atomic<bool> help_held{false};      // h held down: cheatsheet shown while it repeats
+    // Sleep timer: pause at a time (ms since epoch, 0: off), or at the end of the track.
+    static std::atomic<long long> sleep_at_ms{0};
+    static std::atomic<bool> sleep_end_of_track{false};
     static std::chrono::steady_clock::time_point last_h{};
     std::thread([&screen] {
         auto last = std::chrono::steady_clock::now();
@@ -229,7 +301,27 @@ int main(int argc, char *argv[]) {
     playback_bar_data every frame: hand the writes to the UI thread
     (screen.Post) instead of racing it.
     */
-    player.setOnPositionTick([&screen, &playback_bar_data](uint64_t position, uint64_t duration) {
+    player.setOnPositionTick([&screen, &playback_bar_data, &player](uint64_t position, uint64_t duration) {
+        // Sleep timer: pause when the time is up, or as this track ends.
+        const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if (sleep_at_ms > 0 && now_ms >= sleep_at_ms) {
+            sleep_at_ms = 0;
+            std::thread([&player] {
+                player.pause();
+                std::lock_guard lock(player.state_mutex);
+                player.state.notice = "Sleep timer: paused";
+                player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            }).detach();
+        }
+        if (sleep_end_of_track && duration > 0 && position + 1300000ULL >= duration) {
+            sleep_end_of_track = false;
+            const auto left = std::chrono::microseconds(duration > position + 150000ULL ? duration - position - 150000ULL : 0);
+            std::thread([&player, left] {
+                std::this_thread::sleep_for(left);
+                player.pause();
+            }).detach();
+        }
+
         int progress = -1;
         // Remove two seconds to account for UI refresh period, so the bar
         // reaches the end. duration is unsigned: guard before subtracting.
@@ -255,7 +347,11 @@ int main(int argc, char *argv[]) {
         });
         screen.PostEvent(Event::Custom);
     };
-    player.setOnStreamStart(reset_bar);
+    player.setOnStreamStart([reset_bar, &player] {
+        reset_bar();
+        // Sleep timer "end of track" missed its last tick: stop at the next one.
+        if (sleep_end_of_track.exchange(false)) std::thread([&player] { player.pause(); }).detach();
+    });
     player.setOnStreamEnd(reset_bar);
 
     /* A cover finished downloading: redraw, at most every 60 ms (a page of
@@ -274,6 +370,16 @@ int main(int argc, char *argv[]) {
     // Resume where the last session stopped (paused, same track and position);
     // after the callbacks above are set, which the restored track will fire.
     player.restoreSession();
+
+    // After the resume: the worker runs commands in order, and these are
+    // network calls that held the resumed track back by seconds.
+    player.isLoggedIn();
+    player.getHome();
+    player.getLibraryPlaylists();
+    player.getLibraryAlbums();
+    player.getLibraryArtists();
+    player.getLibraryPodcasts();
+    player.getLibrarySongs();
 
     std::deque<ui::ContentEntry> main_content_items;
     auto main_content = Container::Vertical({ Renderer([]{ return emptyElement(); }) });
@@ -481,9 +587,47 @@ int main(int argc, char *argv[]) {
         search_bar->TakeFocus();
     };
 
+    /* Suggestions while typing: past searches that match first, then YouTube
+    Music's, fetched 180 ms after the last keystroke (one at a time).
+    */
+    search_bar_data.onTyped = [&screen, &search_bar_data](const std::string& text) {
+        static std::atomic<uint64_t> generation{0};
+        const uint64_t gen = ++generation;
+        if (text.empty()) { search_bar_data.suggestions.clear(); return; }
+
+        std::vector<std::string> mine;
+        std::string lower = text;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        for (const auto& h : search_bar_data.history) {
+            std::string hl = h;
+            std::transform(hl.begin(), hl.end(), hl.begin(), ::tolower);
+            if (hl.rfind(lower, 0) == 0 && hl != lower) mine.push_back(h);
+            if (mine.size() == 3) break;
+        }
+
+        std::thread([&screen, &search_bar_data, text, gen, mine] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+            if (generation != gen) return;
+            std::vector<std::string> list = mine;
+            for (auto& s : services::searchSuggestions(text)) {
+                if (list.size() >= 8) break;
+                if (std::find(list.begin(), list.end(), s) == list.end()) list.push_back(s);
+            }
+            if (generation != gen) return;
+            screen.Post([&search_bar_data, text, list] {
+                if (search_bar_data.value != text) return;
+                search_bar_data.suggestions = list;
+                search_bar_data.suggestions_for = text;
+                search_bar_data.suggestion_index = -1;
+            });
+            screen.PostEvent(Event::Custom);
+        }).detach();
+    };
+
     // Back to the page; if it has nothing focusable yet (results loading),
     // focus lands on it as soon as it does.
     auto close_search = [&] {
+        search_bar_data.suggestions.clear();
         search_active = false;
         content_column = 1;
         if (main_content->Focusable()) main_content->TakeFocus();
@@ -738,6 +882,11 @@ int main(int argc, char *argv[]) {
 
         ui::getSidebarData(&state_copy, &sidebar_data);
         ui::getPlaybackData(&state_copy, &playback_bar_data, screen.dimx());
+        {
+            const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            playback_bar_data.sleep_label = sleep_end_of_track ? "end of track"
+                : sleep_at_ms > now_ms ? std::to_string((sleep_at_ms - now_ms + 59999) / 60000) + "m" : "";
+        }
 
         if(current_state == ui::State::HOME) {
             ui::buildHome(&state_copy, main_content_items, main_content, on_item_press, [&player, &main_content, &main_content_items, &screen]{
@@ -1129,6 +1278,49 @@ int main(int argc, char *argv[]) {
                 return true;
             }
 
+            // A click on a search suggestion searches it.
+            // Only the list on screen (it is hidden while new ones load).
+            if(click && search_bar->Focused() && !search_bar_data.suggestions.empty() && search_bar_data.suggestions_for == search_bar_data.value) {
+                for (size_t i = 0; i < search_bar_data.suggestion_boxes.size() && i < search_bar_data.suggestions.size(); i++) {
+                    if (in(search_bar_data.suggestion_boxes[i])) {
+                        search_bar_data.suggestion_index = static_cast<int>(i);
+                        search_bar->OnEvent(Event::Return);
+                        return true;
+                    }
+                }
+            }
+
+            // Now Playing: a click on a lyrics line jumps to it.
+            if(click && current_state == ui::State::NOWPLAYING && playback_bar_data.duration > 0) {
+                for (const auto& [b, t] : ui::lyric_boxes) {
+                    if (b && in(*b)) {
+                        player.seekTo(t);
+                        return true;
+                    }
+                }
+            }
+
+            /* Queue: drag a row onto another to move it (after the current
+            track, like K / J). Press picks it up, moving shows where it lands,
+            release drops it.
+            */
+            if(current_state == ui::State::QUEUE) {
+                auto row_at = [&]() {
+                    for (const auto& [idx, b] : ui::queue_row_boxes) if (b && in(*b)) return idx;
+                    return -1;
+                };
+                const bool drag_move = m.button == Mouse::Left && m.motion == Mouse::Moved;
+                if (click) { ui::queue_drag_from = row_at(); ui::queue_drag_over = ui::queue_drag_from; }
+                else if (drag_move && ui::queue_drag_from >= 0) { const int r = row_at(); if (r >= 0) ui::queue_drag_over = r; return true; }
+                else if (m.motion == Mouse::Released && ui::queue_drag_from >= 0) {
+                    const int from = ui::queue_drag_from, to = ui::queue_drag_over;
+                    ui::queue_drag_from = ui::queue_drag_over = -1;
+                    // The marker sits above the target: moving down, that is one before it.
+                    if (to >= 0 && to != from) player.moveInQueue(static_cast<size_t>(from), static_cast<size_t>(to > from ? to - 1 : to));
+                    return true;
+                }
+            }
+
             /* Hover doesn't move the selection: following the pointer made the
             focus jump around while scrolling or just passing over the page.
             Releases are dropped too: everything acts on press, and a menu
@@ -1216,6 +1408,32 @@ int main(int argc, char *argv[]) {
                             player.queue(std::static_pointer_cast<music::IStreamableContainer>(std::make_shared<music::Playlist>(pl)), true, true);
                         }});
                         ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, key(cfg.KEY_ADD_TO_QUEUE)});
+
+                        // The user's own playlists (not Liked Music / Episodes).
+                        const std::string pid = pl.ref.id, ptitle = pl.ref.title;
+                        const bool editable = state_logged_in() && pid != "LM" && pid != "VLLM" && pid != "SE" && pid != "VLSE";
+                        if(editable) {
+                            ctx.items.push_back({"\uf040", "Rename\u2026", "", [&, pid, ptitle] {
+                                prompt.open = true;
+                                prompt.title = "Rename \u201c" + utils::trimSuffix(ptitle, 30, "...") + "\u201d";
+                                prompt.value = ptitle;
+                                prompt.done = [&player, pid](const std::string& name) { player.renamePlaylist(pid, name); };
+                            }});
+                            ctx.items.push_back({"\uf1f8", "Delete\u2026", "", [&, pid, ptitle] {
+                                // Asked again: it can't be undone.
+                                ctx.title = "Delete \u201c" + utils::trimSuffix(ptitle, 18, "...") + "\u201d?";
+                                ctx.items = {
+                                    {"\uf00d", "Cancel", "esc", [] {}},
+                                    {"\uf1f8", "Delete for good", "", [&, pid, ptitle] {
+                                        player.deletePlaylist(pid, ptitle);
+                                        if (current_state == ui::State::PLAYLIST) sidebar_data.onHome();
+                                    }},
+                                };
+                                ctx.hover = 0;
+                                ctx.boxes.assign(ctx.items.size(), Box{});
+                                ctx.open = true;
+                            }});
+                        }
                     }
                 } else if(ui::ContentEntry* e = focused_entry()) {
                     const std::string& c = e->category;
@@ -1245,6 +1463,19 @@ int main(int argc, char *argv[]) {
                                 s->setRef(ref);
                                 player.playNext(std::static_pointer_cast<music::IStreamable>(s));
                             }});
+                            // In one of the user's playlists: it can come out of it.
+                            if(current_state == ui::State::PLAYLIST && !ref.set_video_id.empty()) {
+                                std::string pid;
+                                {
+                                    std::lock_guard lock(player.state_mutex);
+                                    if (player.state.open_playlist) pid = player.state.open_playlist->ref.id;
+                                }
+                                if(!pid.empty()) {
+                                    ctx.items.push_back({"\uf068", "Remove from playlist", "", [&player, pid, ref] {
+                                        player.removeFromPlaylist(pid, ref.id, ref.set_video_id);
+                                    }});
+                                }
+                            }
                             const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
                             ctx.items.push_back({"\uf0c5", "Copy link", "", [&player, link] {
                                 const bool ok = services::copyToClipboard(link);
@@ -1458,18 +1689,36 @@ int main(int argc, char *argv[]) {
                 return false;
             };
             const bool np = current_state == ui::State::NOWPLAYING;
-            if (is({"\x1b[1;2D", "\x1b[1;3D", "\x1b[1;9D", "\x1b" "b"}) || (np && event == Event::ArrowLeft))  { player.skipBackward(); return true; }
-            if (is({"\x1b[1;2C", "\x1b[1;3C", "\x1b[1;9C", "\x1b" "f"}) || (np && event == Event::ArrowRight)) { player.skipForward();  return true; }
+            // < > work in every terminal (Shift/Option arrows depend on it: `moroder keys`).
+            if (is({"\x1b[1;2D", "\x1b[1;3D", "\x1b[1;9D", "\x1b" "b", "<"}) || (np && event == Event::ArrowLeft))  { player.skipBackward(); return true; }
+            if (is({"\x1b[1;2C", "\x1b[1;3C", "\x1b[1;9C", "\x1b" "f", ">"}) || (np && event == Event::ArrowRight)) { player.skipForward();  return true; }
             if (is({"\x1b[1;2A", "\x1b[1;3A", "\x1b[1;9A"}) || (np && event == Event::ArrowUp))   { player.changeVolume(cfg.VOLUME_STEP);  return true; }
             if (is({"\x1b[1;2B", "\x1b[1;3B", "\x1b[1;9B"}) || (np && event == Event::ArrowDown)) { player.changeVolume(-cfg.VOLUME_STEP); return true; }
         }
 
-        // m: mute / unmute.
-        if(event == Event::Character("m")) {
+        // m (KEY_MUTE): mute / unmute.
+        if(Config::isKey(event, cfg.KEY_MUTE)) {
             static int before_mute = 100;
             const int now = playback_bar_data.volume;
             if (now > 0) { before_mute = now; player.changeVolume(-now); }
             else         { player.changeVolume(before_mute); }
+            return true;
+        }
+
+        // t (KEY_SLEEP_TIMER): sleep timer, off -> 15 -> 30 -> 60 min -> end of track -> off.
+        if(Config::isKey(event, cfg.KEY_SLEEP_TIMER)) {
+            static int step = 0;
+            const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            if (sleep_at_ms == 0 && !sleep_end_of_track) step = 0;     // it went off meanwhile
+            step = (step + 1) % 5;
+            const int minutes[] = {0, 15, 30, 60, 0};
+            sleep_end_of_track = step == 4;
+            sleep_at_ms = minutes[step] ? now_ms + minutes[step] * 60000LL : 0;
+            std::lock_guard lock(player.state_mutex);
+            player.state.notice = step == 0 ? "Sleep timer off"
+                                : step == 4 ? "Sleep timer: at the end of this track"
+                                : "Sleep timer: " + std::to_string(minutes[step]) + " min";
+            player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
             return true;
         }
 
@@ -1621,14 +1870,15 @@ int main(int argc, char *argv[]) {
         Element left = vbox({
             heading("Playback"),
             row(cfg.KEY_TOGGLE_PAUSE,  "play / pause"),
-            row("\u21e7\u2192 " + cfg.KEY_SKIP_FORWARD + " n",  "next track"),
-            row("\u21e7\u2190 " + cfg.KEY_SKIP_BACKWARD + " p", "previous / restart"),
+            row("\u21e7\u2192 > " + cfg.KEY_SKIP_FORWARD + " n",  "next track"),
+            row("\u21e7\u2190 < " + cfg.KEY_SKIP_BACKWARD + " p", "previous / restart"),
             row(cfg.KEY_SEEK_FORWARD,  "forward " + std::to_string(cfg.SEEK_SECONDS) + " s"),
             row(cfg.KEY_SEEK_BACKWARD, "back " + std::to_string(cfg.SEEK_SECONDS) + " s (hold: this sheet)"),
             row("\u21e7\u2191 " + cfg.KEY_VOLUME_UP,     "volume up"),
             row("\u21e7\u2193 " + cfg.KEY_VOLUME_DOWN,   "volume down"),
-            row("m",                   "mute / unmute"),
+            row(cfg.KEY_MUTE,          "mute / unmute"),
             row(cfg.KEY_TOGGLE_LOOP,   "loop: off, queue, track"),
+            row(cfg.KEY_SLEEP_TIMER,   "sleep timer: 15, 30, 60 min, end"),
             row(cfg.KEY_SHUFFLE,       "shuffle what comes next"),
             row(cfg.KEY_LIKE,          "like / unlike"),
             row(cfg.KEY_NOW_PLAYING,   "now playing (arrows: skip, volume)"),
@@ -1660,6 +1910,8 @@ int main(int argc, char *argv[]) {
             row("volume",                 "click: slider, wheel: level"),
             row("bar",                    "click the line to seek"),
             row("title",                  "now playing"),
+            row("lyrics",                 "click a line: jump there"),
+            row("queue",                  "drag a row to move it"),
             text(""),
             hbox({ text("  "), text("\u21e7 = shift or \u2325 option") | dim }),
         });
@@ -1673,7 +1925,7 @@ int main(int argc, char *argv[]) {
         }) | borderRounded | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
     };
 
-    ui = Renderer(ui, [ui, &show_help, help_sheet, &ctx, &screen, &volume_pop, &playback_bar_data, &prompt] {
+    ui = Renderer(ui, [ui, &show_help, help_sheet, &ctx, &screen, &volume_pop, &playback_bar_data, &prompt, &search_bar_data, search_bar] {
         // The held-h cheatsheet goes away once h is let go (repeats stop).
         if (help_held && std::chrono::steady_clock::now() - last_h > std::chrono::milliseconds(450)) {
             help_held = false;
@@ -1681,6 +1933,39 @@ int main(int argc, char *argv[]) {
         }
 
         Element base = ui->Render();
+
+        // Search suggestions, under the bar.
+        auto& sb = search_bar_data;
+        if (search_bar->Focused() && !sb.suggestions.empty() && sb.suggestions_for == sb.value && !sb.value.empty()) {
+            const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+            sb.suggestion_boxes.assign(sb.suggestions.size(), Box{});
+            Elements rows;
+            for (size_t i = 0; i < sb.suggestions.size(); i++) {
+                const bool on = static_cast<int>(i) == sb.suggestion_index;
+                const bool past = std::find(sb.history.begin(), sb.history.end(), sb.suggestions[i]) != sb.history.end();
+                Element row = hbox({
+                    text(" "),
+                    text(past ? "\uf1da " : "\uf002 ") | dim,
+                    text(" " + sb.suggestions[i]),
+                    filler(),
+                });
+                row = on ? row | bold | color(Color::White) | bgcolor(accent) : row | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY));
+                rows.push_back(row | reflect(sb.suggestion_boxes[i]));
+            }
+            rows.push_back(hbox({ filler(), text("\u2191\u2193 pick   tab fill   enter search ") | dim }));
+            const int W = std::max(40, std::min(70, sb.box.x_max - sb.box.x_min - 4));
+            Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W)
+                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+                | bgcolor(Color::RGB(24, 24, 28)) | clear_under;
+            base = dbox({
+                base,
+                vbox({
+                    filler() | size(HEIGHT, EQUAL, std::max(0, sb.box.y_max + 1)),
+                    hbox({ filler() | size(WIDTH, EQUAL, std::max(0, sb.box.x_min + 4)), list, filler() }),
+                    filler(),
+                }),
+            });
+        }
 
         if (volume_pop.open && playback_bar_data.box_volume.x_min >= 0) {
             constexpr int BAR = 24;
@@ -1774,7 +2059,7 @@ int main(int argc, char *argv[]) {
                 text(""),
                 hbox({ text(" "), text(prompt.value), text(" ") | inverted | color(accent), filler() })
                     | borderStyled(BorderStyle::ROUNDED, accent),
-                hbox({ filler(), text("enter: create   esc: cancel ") | dim }),
+                hbox({ filler(), text("enter: ok   esc: cancel ") | dim }),
             }) | size(WIDTH, EQUAL, 56)
                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
                | bgcolor(Color::RGB(24, 24, 28)) | clear_under | center;

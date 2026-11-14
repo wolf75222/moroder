@@ -45,6 +45,10 @@ void buildQueue(services::Player::PlayerState* state, std::deque<ContentEntry>& 
 // Animation frame, advanced by the UI's animation clock while something loads.
 extern int anim_frame;
 
+// Queue view drag & drop: each row's area by queue index, and the drag state.
+extern std::vector<std::pair<int, std::shared_ptr<ftxui::Box>>> queue_row_boxes;
+extern int queue_drag_from, queue_drag_over;
+
 /* buildPlaylist
 - The open playlist (state->open_playlist): a header with Play / Add to queue,
   then its tracks; on_track gets the key event and the track's index

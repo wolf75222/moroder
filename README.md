@@ -231,6 +231,8 @@ moroder --anonymous     # or -a
 |---|---|
 | `moroder` | starts the player |
 | `moroder setup` | signs in and fills in the config |
+| `moroder keys` | shows what your terminal sends for each key (Shift / Option + arrows) |
+| `moroder lastfm` | connects Last.fm scrobbling |
 | `moroder --anonymous`, `-a` | starts without an account |
 | `moroder --help`, `-h` | usage |
 
@@ -425,6 +427,9 @@ A free key: <https://www.last.fm/api/account/create>
 | `FETCH_ALBUMS` | `true` | look up album details for tracks that arrive without them |
 | `SEARCH_RESULT_LIMIT` | `40` | results per search |
 | `RADIO_RESULT_LIMIT` | `50` | tracks per radio continuation |
+| `NORMALIZE_VOLUME` | `true` | level tracks with YouTube's loudness figure (loud masters come down) |
+| `FADE_SECONDS` | `0` | fade out the end of a track and fade in the next one (0: off) |
+| `LASTFM_API_SECRET` | `""` | with `LASTFM_API_KEY`, enables scrobbling (`moroder lastfm` once) |
 
 `FETCH_ALBUMS` costs an extra request per track. Turn it off if queueing feels
 slow.
@@ -508,12 +513,15 @@ unbind it.
 | `KEY_VOLUME_UP` | `=` | volume up by `VOLUME_STEP` |
 | `KEY_LIKE` | `+` | like / un-like the current track (signed in) |
 | `KEY_HELP` | `?` | show every keybind |
+| `KEY_MUTE` | `m` | mute / unmute |
+| `KEY_SLEEP_TIMER` | `t` | sleep timer: 15, 30, 60 min, end of the track, off |
 
 Always on: <kbd>Shift</kbd> or <kbd>Option</kbd> + <kbd>←</kbd> / <kbd>→</kbd>
+(or <kbd>&lt;</kbd> / <kbd>&gt;</kbd>, which every terminal sends the same way)
 skip to the previous / next track and + <kbd>↑</kbd> / <kbd>↓</kbd> change the
 volume (plain arrows keep moving around); in Now Playing the plain arrows do
-it. <kbd>m</kbd> mutes and unmutes. Holding <kbd>h</kbd> shows the keys sheet
-for as long as it is held.
+it. `moroder keys` shows whether your terminal sends Shift / Option + arrows.
+Holding <kbd>h</kbd> shows the keys sheet for as long as it is held.
 
 <kbd>/</kbd> also opens search, <kbd>Esc</kbd> leaves it (or goes back to Home
 from another page), and shortcuts like <kbd>q</kbd> work everywhere except
@@ -532,6 +540,12 @@ move the selection.
 
 Playlists open in their own view: header with Play and Add to queue, then
 every track; playing a track continues with the rest of the playlist.
+Right-click a track in one of your playlists to remove it; right-click one of
+your playlists in the sidebar to rename or delete it (asked twice).
+Search suggests as you type (your past searches first, then YouTube Music's):
+<kbd>↑</kbd> / <kbd>↓</kbd> pick, <kbd>Tab</kbd> fills it in, <kbd>Enter</kbd> or a click searches.
+In the queue view, drag a row onto another to move it. In Now Playing, click a
+lyrics line to jump to it.
 **New playlist** in the sidebar asks for a name and creates a private
 playlist; right-click a track, *Add to playlist…*, to add it to one of yours
 (or to a new one).
@@ -570,7 +584,24 @@ playlist; right-click a track, *Add to playlist…*, to add it to one of yours
   the ~9 s of mpv's YouTube hook: moroder keeps a yt-dlp process running,
   hands mpv the direct stream URL and starts it as soon as YouTube accepts it.
 - Covers are shown square: video thumbnails lose their black bars and are
-  cropped to the centre.
+  cropped to the centre. Each cover is drawn once per size and reused.
+- Selecting a playlist resolves its first track too, so Play starts at once.
+- Resolved stream links are kept (they last 6 h, saved in
+  `~/.cache/moroder/streams.json` at exit): the resumed track and recent ones
+  start immediately on the next launch. A link that no longer works is
+  replaced by a fresh one.
+- Tracks follow each other without a gap (the next one is opened before the
+  current one ends) and are levelled to the same loudness.
+
+### Last.fm
+
+Scrobbling is optional. Create an API account at
+[last.fm/api](https://www.last.fm/api/account/create), put its key and secret in
+the config (`LASTFM_API_KEY`, `LASTFM_API_SECRET`), then run `moroder lastfm`
+once and allow it in the page that opens. The session key is kept in
+`~/.config/moroder/lastfm.json` (readable by you only). A track is shown as
+now playing when it starts, and scrobbled once half of it (or four minutes)
+has played.
 
 ### Picking up where you left off
 

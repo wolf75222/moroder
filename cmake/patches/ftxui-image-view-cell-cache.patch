@@ -1,0 +1,138 @@
+diff --git a/src/image_view.cpp b/src/image_view.cpp
+index be105cc..0a3326d 100644
+--- a/src/image_view.cpp
++++ b/src/image_view.cpp
+@@ -202,6 +202,30 @@ struct CharKeyHash {
+     }
+ };
+ 
++// Cache key / value for an image's finished cells at one size.
++struct CellsKey {
++    uint64_t url_hash;
++    uint64_t version;
++    uint16_t width;
++    uint16_t height;
++    bool operator==(const CellsKey& o) const {
++        return url_hash == o.url_hash && version == o.version && width == o.width && height == o.height;
++    }
++};
++struct CellsKeyHash {
++    size_t operator()(const CellsKey& k) const {
++        std::size_t seed = std::hash<uint64_t>{}(k.url_hash);
++        hash_combine(seed, k.version);
++        hash_combine(seed, k.width);
++        hash_combine(seed, k.height);
++        return seed;
++    }
++};
++struct CellGrid {
++    int rows = 0, cols = 0;
++    std::vector<ftxui::Cell> cells;
++};
++
+ class ImageView: public Node {
+ public:
+     // All three caches are bounded, so all three are what actually caps
+@@ -227,6 +251,7 @@ public:
+     inline static BoundedCache<std::string, ImageEntry> image_cache_{100};
+     inline static BoundedCache<ResizeKey, cimg_library::CImg<unsigned char>, ResizeKeyHash> resized_cache_{200};
+     inline static BoundedCache<CharKey, CharData, CharKeyHash> char_cache_{15000};
++    inline static BoundedCache<CellsKey, CellGrid, CellsKeyHash> cells_cache_{600};
+ 
+     // URLs currently being loaded by a background thread. Entries are
+     // erased as soon as a load finishes (see the loader thread below)
+@@ -375,56 +400,47 @@ public:
+             original = &it->second;
+         }
+ 
+-        auto get_pixel = [original](int row, int col) -> unsigned long {
+-            return (((unsigned long) (*original)(row, col, 0, 0)) << 16)
+-                | (((unsigned long) (*original)(row, col, 0, 1)) << 8)
+-                | (((unsigned long) (*original)(row, col, 0, 2)));
+-        };
+-
+-        auto screen_y = box_.y_min;
+-
+-        for (uint16_t y = 0; y <= original->height() - 8; y += 8) {
+-            auto screen_x = box_.x_min;
+-
+-            for (uint16_t x = 0; x <= original->width() - 4; x += 4) {
+-                if(screen_x > box_.x_max)
+-                    break;
+-
+-                CharKey char_key{
+-                    url_hash_,
+-                    x,
+-                    y,
+-                    version,
+-                    static_cast<uint16_t>(new_size.width),
+-                    static_cast<uint16_t>(new_size.height)
+-                };
+-
+-                const CharData* charData;
+-
+-                auto cache_it = char_cache_.find(char_key);
+-                if (cache_it != char_cache_.end()) {
+-                    charData = &cache_it->second;
+-                } else {
+-                    auto [new_it, _] = char_cache_.emplace(char_key, findCharData(get_pixel, x, y, kCharSelectionFlags));
+-                    charData = &new_it->second;
++        // The cells of this image at this size, built once: rebuilding them
++        // (a stringstream and a colour lookup per cell) cost several ms per
++        // frame on a page of covers.
++        CellsKey cells_key{url_hash_, version, static_cast<uint16_t>(new_size.width), static_cast<uint16_t>(new_size.height)};
++        auto cells_it = cells_cache_.find(cells_key);
++        if (cells_it == cells_cache_.end()) {
++            auto get_pixel = [original](int row, int col) -> unsigned long {
++                return (((unsigned long) (*original)(row, col, 0, 0)) << 16)
++                    | (((unsigned long) (*original)(row, col, 0, 1)) << 8)
++                    | (((unsigned long) (*original)(row, col, 0, 2)));
++            };
++
++            CellGrid grid;
++            for (int y = 0; y + 8 <= original->height(); y += 8) {
++                grid.rows++;
++                int cols = 0;
++                for (int x = 0; x + 4 <= original->width(); x += 4) {
++                    const CharData data = findCharData(get_pixel, x, y, kCharSelectionFlags);
++                    std::stringstream output;
++                    WriteUtf8Codepoint(output, data.codePoint);
++                    ftxui::Cell cell;
++                    cell.background_color = ftxui::Color(data.bgColor[0], data.bgColor[1], data.bgColor[2]);
++                    cell.foreground_color = ftxui::Color(data.fgColor[0], data.fgColor[1], data.fgColor[2]);
++                    cell.character = output.str();
++                    grid.cells.push_back(std::move(cell));
++                    cols++;
+                 }
++                grid.cols = cols;
++            }
++            cells_it = cells_cache_.emplace(cells_key, std::move(grid)).first;
++        }
+ 
+-                std::stringstream output;
+-
+-                ftxui::Color bgColor(charData->bgColor[0], charData->bgColor[1], charData->bgColor[2]);
+-                ftxui::Color fgColor(charData->fgColor[0], charData->fgColor[1], charData->fgColor[2]);
+-
+-                WriteUtf8Codepoint(output, charData->codePoint);
+-
+-                auto cell = ftxui::Cell();
+-
+-                cell.background_color = bgColor;
+-                cell.foreground_color = fgColor;
+-                cell.character = output.str();
+-
+-                screen.PixelAt(screen_x++, screen_y) = cell;
++        const CellGrid& grid = cells_it->second;
++        for (int r = 0; r < grid.rows; r++) {
++            const int screen_y = box_.y_min + r;
++            if (screen_y > box_.y_max) break;
++            for (int c = 0; c < grid.cols; c++) {
++                const int screen_x = box_.x_min + c;
++                if (screen_x > box_.x_max) break;
++                screen.PixelAt(screen_x, screen_y) = grid.cells[static_cast<size_t>(r * grid.cols + c)];
+             }
+-            ++screen_y;
+         }
+     }
+ 

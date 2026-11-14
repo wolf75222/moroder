@@ -70,6 +70,9 @@ public:
     bool rateSong(const std::string& videoId, bool like);
     std::string createPlaylist(const std::string& title, const std::string& videoId);
     bool addToPlaylist(const std::string& playlistId, const std::string& videoId);
+    bool removeFromPlaylist(const std::string& playlistId, const std::string& videoId, const std::string& setVideoId);
+    bool renamePlaylist(const std::string& playlistId, const std::string& title);
+    bool deletePlaylist(const std::string& playlistId);
     // Shelf titles from the last getHome(), in YouTube Music's order.
     const std::vector<std::string>& homeOrder() const { return home_order; }
 

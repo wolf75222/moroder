@@ -51,7 +51,10 @@ std::string clock(double s) {
 
 }
 
+std::vector<std::pair<std::shared_ptr<Box>, double>> ui::lyric_boxes;
+
 Element ui::renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height) {
+    ui::lyric_boxes.clear();
     auto song = std::dynamic_pointer_cast<music::Song>(state->current);
     if (!song) {
         return text("Nothing is playing. Press v or Esc to go back.") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | center | flex;
@@ -92,6 +95,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     // Lyrics: synced lines around the current one, or the plain text.
     Elements lines;
+    ui::lyric_boxes.clear();
     const bool ours = state->lyrics && state->lyrics_id == ref.id;
     const auto lyrics_flag = state->flags.count("lyrics") ? state->flags["lyrics"] : services::Player::Flags::Done;
 
@@ -154,7 +158,9 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                     }
                     lines.push_back(hbox(std::move(dots)));
                 } else {
-                    lines.push_back(text("\u2022 \u2022 \u2022") | color(i < cur ? sung : ahead));
+                    auto b = std::make_shared<Box>();
+                    ui::lyric_boxes.emplace_back(b, t0);
+                    lines.push_back(text("\u2022 \u2022 \u2022") | color(i < cur ? sung : ahead) | reflect(*b));
                 }
                 rows_left--;
                 continue;
@@ -179,7 +185,9 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                     Element w = text(words[k] + " ") | color(c);
                     ws.push_back(i == cur ? w | bold : w);
                 }
-                lines.push_back(hbox(std::move(ws)));
+                auto b = std::make_shared<Box>();
+                ui::lyric_boxes.emplace_back(b, t0);
+                lines.push_back(hbox(std::move(ws)) | reflect(*b));
             }
         }
     } else {

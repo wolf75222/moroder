@@ -142,6 +142,8 @@ Component ui::PlaybackBar(PlaybackData* data) {
                     : text("\uf08a") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_like))
                 : emptyElement(),
             data->can_like ? text("    ") : emptyElement(),
+            data->sleep_label.empty() ? emptyElement()
+                : hbox({ text("\U000f04b2 " + data->sleep_label) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)), text("    ") }),
             hbox({
                 text(volume_icon) | color(data->volume == 0 ? ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                 text(" " + std::to_string(data->volume) + "%") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | size(WIDTH, EQUAL, 5),

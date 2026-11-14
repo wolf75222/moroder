@@ -117,6 +117,11 @@ public:
     bool ENABLE_LYRICS                = true;
     std::string KEY_NOW_PLAYING       = "v";
     int VOLUME_STEP                   = 5;
+    std::string KEY_MUTE              = "m";
+    std::string KEY_SLEEP_TIMER       = "t";
+    bool NORMALIZE_VOLUME             = true;   // level tracks with YouTube's loudness figure
+    int FADE_SECONDS                  = 0;      // fade out / in between tracks (0: off)
+    std::string LASTFM_API_SECRET     = "";     // with LASTFM_API_KEY: scrobbling (see README)
 
     /* Lazy initialization using a lambda:
     - Ensures config is loaded once at first access
@@ -674,6 +679,11 @@ private:
             {"ENABLE_LYRICS",        makeSetter(&Config::ENABLE_LYRICS),         true},
             {"KEY_NOW_PLAYING",      makeSetter(&Config::KEY_NOW_PLAYING),       true},
             {"VOLUME_STEP",          makeSetter(&Config::VOLUME_STEP),           true},
+            {"KEY_MUTE",             makeSetter(&Config::KEY_MUTE),              true},
+            {"KEY_SLEEP_TIMER",      makeSetter(&Config::KEY_SLEEP_TIMER),       true},
+            {"NORMALIZE_VOLUME",     makeSetter(&Config::NORMALIZE_VOLUME),      true},
+            {"FADE_SECONDS",         makeSetter(&Config::FADE_SECONDS),          true},
+            {"LASTFM_API_SECRET",    makeSetter(&Config::LASTFM_API_SECRET),     true},
         };
 
         return table;

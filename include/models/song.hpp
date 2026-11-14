@@ -27,6 +27,9 @@ struct SongRef {
 
     std::vector<ArtistRef> artists;
 
+    // Its place in one of the user's playlists (removing it needs this).
+    std::string set_video_id;
+
     // Inverse of from_json (search-result shape), for history / session files.
     nlohmann::json to_json() const {
         nlohmann::json j;
@@ -44,6 +47,7 @@ struct SongRef {
 
         s.id = utils::jstr(j, "videoId");
         s.title = utils::jstr(j, "title");
+        s.set_video_id = utils::jstr(j, "setVideoId");
 
         if (j.contains("artists") && j["artists"].is_array()) {
             for (const auto& a : j["artists"]) {

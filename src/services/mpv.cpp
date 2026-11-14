@@ -96,6 +96,11 @@ services::MPV::MPV() {
     mpv_set_option_string(mpv, "stream-lavf-o", "request_size=10485760");
     mpv_set_option_string(mpv, "curl-max-request-size", "10485760");  // curl backend (newer mpv)
 
+    // Gapless: the next file is opened while this one ends (its stream URL is
+    // already resolved), and audio carries over without a gap when formats match.
+    mpv_set_option_string(mpv, "prefetch-playlist", "yes");
+    mpv_set_option_string(mpv, "gapless-audio", "weak");
+
     mpv_set_option_string(mpv, "log-file", std::string(utils::resolve_path(MORODER_LOG_PATH).string() + "/mpv.log").c_str());
 
     const Config& cfg = Config::get();
@@ -247,11 +252,20 @@ void services::MPV::command(const char** args) {
 the agent it was issued to, so that agent goes with this file alone.
 */
 static std::pair<std::string, std::string> splitStream(const std::string& s) {
-    const size_t nl = s.find('\n');
-    if (nl == std::string::npos) return { s, "" };
-    const std::string ua = s.substr(nl + 1);
+    // "<url>\n<user agent>\n<gain dB>", the last two optional.
+    const size_t a = s.find('\n');
+    if (a == std::string::npos) return { s, "" };
+    const size_t b = s.find('\n', a + 1);
+    const std::string ua = s.substr(a + 1, b == std::string::npos ? std::string::npos : b - a - 1);
+    const std::string gain = b == std::string::npos ? "" : s.substr(b + 1);
+
+    std::string options;
     // %len% quoting: the agent has commas, the options separator.
-    return { s.substr(0, nl), ua.empty() ? "" : "user-agent=%" + std::to_string(ua.size()) + "%" + ua };
+    if (!ua.empty()) options = "user-agent=%" + std::to_string(ua.size()) + "%" + ua;
+    // Per file, so the next track starts at its own level (mpv resets it after).
+    if (!gain.empty() && gain.find_first_not_of("-+.0123456789") == std::string::npos)
+        options += std::string(options.empty() ? "" : ",") + "volume-gain=" + gain;
+    return { s.substr(0, a), options };
 }
 
 void services::MPV::load(const std::string& url) {

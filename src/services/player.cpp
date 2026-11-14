@@ -2,6 +2,7 @@
 
 #include "../../include/config/config.hpp"
 #include "../../include/services/notify.hpp"
+#include "../../include/services/scrobble.hpp"
 #include "../../include/utils/json_str.hpp"
 #include "../../include/utils/utils.hpp"
 #include <fstream>
@@ -149,6 +150,16 @@ namespace {
 
 void prestartResolvers();
 
+// Still usable for a while (stream URLs carry their expiry, unix time)?
+bool streamFresh(const std::string& stream, long long margin_s = 120) {
+    const size_t e = stream.find("expire=");
+    if (e == std::string::npos) return true;
+    const long long expire = std::atoll(stream.c_str() + e + 7);
+    const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return expire <= 0 || expire >= now + margin_s;
+}
+
+
 /* YouTube refuses a stream URL (403) for ~2-3 s after issuing it. It expires
 6 h after issue, which dates it: wait until issue + 3 s (seconds are rounded).
 */
@@ -166,7 +177,8 @@ std::chrono::milliseconds streamNotReadyFor(const std::string& stream) {
 bool streamAccepted(const std::string& stream) {
     const size_t nl = stream.find('\n');
     const std::string url = stream.substr(0, nl);
-    const std::string ua = nl == std::string::npos ? "" : stream.substr(nl + 1);
+    std::string ua = nl == std::string::npos ? "" : stream.substr(nl + 1);
+    ua = ua.substr(0, ua.find('\n'));
 
     CURL* curl = curl_easy_init();
     if (!curl) return true;     // can't tell: let mpv try
@@ -387,6 +399,42 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
     mpris_service->startLoopAsync();
 
     mpv_service->setOnStreamStart([this] {
+        // A new file: older tick readings no longer count, nothing is being
+        // scrobbled until we know it is a song, a failed link may be refreshed again.
+        ++file_generation;
+        scrobble_done = true;
+        refreshed_url.clear();
+
+        // Last.fm: now playing; the scrobble comes from the position tick.
+        if (services::scrobble::enabled()) {
+            std::lock_guard lock(state_mutex);
+            if (auto song = std::dynamic_pointer_cast<music::Song>(state.current)) {
+                scrobble_track = { song->ref.artists.empty() ? "" : song->ref.artists[0].name, song->ref.title, song->album.title };
+                scrobble_started_at = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                scrobble_played_s = 0;
+                scrobble_done = false;
+                services::scrobble::nowPlaying(scrobble_track[0], scrobble_track[1], scrobble_track[2], 0);
+            }
+        }
+
+        // After a fade out, the new track fades in; a skip mid-fade ends it.
+        if (fading_out.exchange(false)) {
+            const uint64_t gen = ++fade_generation;
+            const int fade_s = std::max(1, Config::get().FADE_SECONDS);
+            std::thread([this, gen, fade_s] {
+                const int steps = fade_s * 20;
+                for (int i = 1; i <= steps && fade_generation == gen; i++) {
+                    int vol;
+                    { std::lock_guard sl(state_mutex); vol = state.volume; }
+                    mpv_service->setVolume(vol * i / steps);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                int vol;
+                { std::lock_guard sl(state_mutex); vol = state.volume; }
+                if (fade_generation == gen) mpv_service->setVolume(vol);
+            }).detach();
+        }
+
         spdlog::info("PLAYER: Stream start");
         uint64_t song_duration = mpv_service->getStreamDuration();
         {
@@ -609,8 +657,32 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
         const std::string youtube = state.user_queue[pos]->getStreamUrl();
 
         // Refused because it is still fresh: the same URL again in 2 s, once.
+        // A link old enough to be past YouTube's first seconds won't get better
+        // (saved from another network, revoked): get a fresh one at once.
         static std::string retried;
-        if (failed.find("googlevideo.com") != std::string::npos && failed != retried) {
+        std::string& refreshed = refreshed_url;
+        const bool is_stream = failed.find("googlevideo.com") != std::string::npos;
+        if (is_stream) forgetStream(youtube);
+        if (is_stream && failed != retried && streamNotReadyFor(failed).count() == 0 && refreshed != youtube) retried = failed;
+
+        if (is_stream && failed == retried && refreshed != youtube && !youtube.empty()) {
+            refreshed = youtube;
+            spdlog::warn("PLAYER: stream URL refused again, getting a fresh one");
+            std::thread([this, pos, failed, youtube] {
+                const std::string fresh = resolveStream(youtube);
+                if (!fresh.empty()) waitStreamReady(fresh, [] { return false; });
+                std::lock_guard lock(state_mutex);
+                if (state.queue_position != pos || static_cast<size_t>(pos) >= state.user_queue.size()
+                    || state.user_queue[pos]->getStreamUrl() != youtube) return;
+                if (mpv_service->entryUrl(static_cast<uint16_t>(pos)) != failed) return;
+                mpv_service->insertAt(fresh.empty() ? youtube : fresh, static_cast<uint16_t>(pos));   // else the hook
+                mpv_service->removeAt(static_cast<uint16_t>(pos + 1));
+                mpv_service->skipTo(static_cast<uint16_t>(pos));
+            }).detach();
+            return;
+        }
+
+        if (is_stream && failed != retried) {
             retried = failed;
             spdlog::warn("PLAYER: stream URL refused, retrying it shortly");
             std::thread([this, pos, failed, youtube] {
@@ -856,30 +928,27 @@ void services::Player::worker_loop() {
                     return;
                 }
 
+                /* Its tracks go before anything already waiting (home, library
+                loads at startup): what the user asked to play comes first.
+                */
+                std::queue<Command> mine;
                 for(auto streamable : container->getStreamables()) {
-                    {
-                        std::lock_guard lock(command_mutex);
-                        command_queue.push(QueueStreamableCommand{
-                            .streamable=streamable,
-                            .fetch_album=false,
-                            .start_radio=false,
-                            .start_fresh=c.start_fresh,
-                            .queue_in_radio=false
-                        });
-                    }
-
-                    if(c.start_fresh) {
-                        c.start_fresh = false;
-                    }
+                    mine.push(QueueStreamableCommand{
+                        .streamable=streamable,
+                        .fetch_album=false,
+                        .start_radio=false,
+                        .start_fresh=c.start_fresh,
+                        .queue_in_radio=false
+                    });
+                    c.start_fresh = false;
                 }
-
-                if(c.start_radio) {
-                    {
-                        std::lock_guard lock(command_mutex);
-                        command_queue.push(QueueStreamableContainerRadioCommand{container});
-                    }
-                    command_cv.notify_one();
+                if(c.start_radio) mine.push(QueueStreamableContainerRadioCommand{container});
+                {
+                    std::lock_guard lock(command_mutex);
+                    while (!command_queue.empty()) { mine.push(std::move(command_queue.front())); command_queue.pop(); }
+                    command_queue.swap(mine);
                 }
+                command_cv.notify_one();
             }
 
             else if constexpr (std::is_same_v<T, QueueStreamableRadioCommand>) {
@@ -1129,26 +1198,49 @@ void services::Player::worker_loop() {
                 preloadNext();
 
             } else if constexpr (std::is_same_v<T, PlaylistEditCommand>) {
+                using K = PlaylistEditCommand::Kind;
                 music_service->refreshCookies();    // writes want fresh cookies
 
-                const bool create = c.playlist_id.empty();
-                bool ok;
-                if (create) ok = !music_service->createPlaylist(c.title, c.video_id).empty();
-                else        ok = music_service->addToPlaylist(c.playlist_id, c.video_id);
+                bool ok = false;
+                switch (c.kind) {
+                    case K::Create: ok = !music_service->createPlaylist(c.title, c.video_id).empty(); break;
+                    case K::Add:    ok = music_service->addToPlaylist(c.playlist_id, c.video_id); break;
+                    case K::Remove: ok = music_service->removeFromPlaylist(c.playlist_id, c.video_id, c.set_video_id); break;
+                    case K::Rename: ok = music_service->renamePlaylist(c.playlist_id, c.title); break;
+                    case K::Delete: ok = music_service->deletePlaylist(c.playlist_id); break;
+                }
                 const services::RequestError& err = music_service->lastError();
 
+                std::optional<music::PlaylistRef> reopen;
                 {
                     std::lock_guard lock(state_mutex);
                     state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
-                    if (ok) state.notice = create ? "Created \u201c" + c.title + "\u201d" : "Added to " + c.title;
-                    else    state.notice = (create ? "Couldn't create the playlist: " : "Couldn't add it: ") + err.message;
+                    const char* what[] = { "Created \u201c", "Added to ", "Removed from the playlist", "Renamed to \u201c", "Deleted \u201c" };
+                    if (ok) {
+                        switch (c.kind) {
+                            case K::Create: case K::Rename: case K::Delete: state.notice = what[static_cast<int>(c.kind)] + c.title + "\u201d"; break;
+                            case K::Add:    state.notice = what[1] + c.title; break;
+                            case K::Remove: state.notice = what[2]; break;
+                        }
+                    } else {
+                        state.notice = "Couldn't change the playlist: " + err.message;
+                    }
+
+                    // The open page shows the change: fetch it again.
+                    if (ok && c.kind != K::Create) {
+                        playlist_cache.erase(c.playlist_id);
+                        if (state.open_playlist && state.open_playlist->ref.id == c.playlist_id && c.kind != K::Delete) {
+                            reopen = state.open_playlist->ref;
+                            if (c.kind == K::Rename) reopen->title = c.title;
+                        }
+                    }
                 }
 
-                // The sidebar shows the new playlist / the new count.
                 if (ok) {
                     std::lock_guard lock(command_mutex);
-                    command_queue.push(LibraryPlaylistsCommand{});
+                    command_queue.push(LibraryPlaylistsCommand{});      // the sidebar shows the change
                 }
+                if (reopen) openPlaylist(*reopen);
 
             } else if constexpr (std::is_same_v<T, ResolveCurrentCommand>) {
                 if (!load_pending) return;
@@ -1263,12 +1355,19 @@ void services::Player::worker_loop() {
                 if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
 
             } else if constexpr (std::is_same_v<T, PrefetchPlaylistCommand>) {
+                // Its first track is resolved too, so Play starts at once.
+                auto warm_first = [this](const music::Playlist& pl) {
+                    const auto items = pl.getStreamables();
+                    if (!items.empty()) warmNow(items.front()->getStreamUrl());
+                };
                 {
                     std::lock_guard lock(state_mutex);
-                    if (playlist_cache.count(c.ref.id)) return;
+                    auto it = playlist_cache.find(c.ref.id);
+                    if (it != playlist_cache.end()) { auto pl = it->second; warm_first(*pl); return; }
                 }
                 music::Playlist playlist = music_service->getPlaylist(c.ref);
                 if (music_service->lastError().failed || playlist.getStreamables().empty()) return;
+                warm_first(playlist);
 
                 std::lock_guard lock(state_mutex);
                 if (playlist_cache.size() > 40) playlist_cache.clear();
@@ -1928,6 +2027,7 @@ void services::Player::startPositionTick() {
             if (!position_tick_running) break;
             lock.unlock();
 
+            const uint64_t file_gen = file_generation;
             uint64_t duration = mpv_service->getStreamDuration();
             uint64_t pos = mpv_service->getStreamPosition();
 
@@ -1946,6 +2046,75 @@ void services::Player::startPositionTick() {
             }
 
             last_position = pos;
+
+            // Last.fm: scrobble once half the track (or 4 min) has been played.
+            bool paused_now;
+            {
+                std::lock_guard sl(state_mutex);
+                auto it = state.flags.find("paused");
+                paused_now = it != state.flags.end() && it->second == Flags::True;
+            }
+            if (!scrobble_done && !paused_now && duration >= 30000000ULL && services::scrobble::enabled()) {
+                scrobble_played_s++;
+                const uint64_t need = std::min<uint64_t>(duration / 2000000ULL, 240);
+                if (static_cast<uint64_t>(scrobble_played_s) >= need) {
+                    scrobble_done = true;
+                    std::array<std::string, 3> t;
+                    { std::lock_guard sl(state_mutex); t = scrobble_track; }
+                    services::scrobble::scrobble(t[0], t[1], t[2], static_cast<int>(duration / 1000000ULL), scrobble_started_at);
+                }
+            }
+
+            /* Fade out over the last FADE_SECONDS (the next track fades in, see
+            the stream start). Not on a looping track or the queue's last one.
+            */
+            const int fade_s = Config::get().FADE_SECONDS;
+            // Seeked back out of the fade: full volume again.
+            if (fading_out && duration > 0 && pos + static_cast<uint64_t>(fade_s + 1) * 1000000ULL < duration) {
+                fading_out = false;
+                ++fade_generation;
+                int vol;
+                { std::lock_guard sl(state_mutex); vol = state.volume; }
+                mpv_service->setVolume(vol);
+            }
+            bool paused_fade;
+            {
+                std::lock_guard sl(state_mutex);
+                auto it = state.flags.find("paused");
+                paused_fade = it != state.flags.end() && it->second == Flags::True;
+            }
+            // Not while paused, and not on a reading from the previous file.
+            if (fade_s > 0 && !paused_fade && file_gen == file_generation && duration > 0
+                && pos + static_cast<uint64_t>(fade_s) * 1000000ULL >= duration && !fading_out) {
+                bool has_next;
+                {
+                    std::lock_guard sl(state_mutex);
+                    has_next = state.loop_mode != LoopMode::Track
+                            && (state.queue_position + 1 < static_cast<int>(state.user_queue.size()) || !state.radio_queue.empty());
+                }
+                if (has_next) {
+                    fading_out = true;
+                    const uint64_t gen = ++fade_generation;
+                    const double left = static_cast<double>(duration - std::min(duration, pos)) / 1000000.0;
+                    std::thread([this, gen, left] {
+                        const int steps = std::max(1, static_cast<int>(left * 20));
+                        for (int i = 1; i <= steps && fade_generation == gen; i++) {
+                            int vol;
+                            bool paused;
+                            {
+                                std::lock_guard sl(state_mutex);
+                                vol = state.volume;
+                                auto it = state.flags.find("paused");
+                                paused = it != state.flags.end() && it->second == Flags::True;
+                            }
+                            // Follows playback: a pause holds the fade where it is.
+                            if (paused) { i--; std::this_thread::sleep_for(std::chrono::milliseconds(100)); continue; }
+                            mpv_service->setVolume(vol * (steps - i) / steps);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        }
+                    }).detach();
+                }
+            }
 
             if (on_position_tick) {
                 on_position_tick(pos, duration);
@@ -2194,6 +2363,16 @@ void services::Player::seekBy(int64_t delta) {
     mpris_service->setPosition(new_position);
 }
 
+void services::Player::seekTo(double seconds) {
+    {
+        std::lock_guard lock(state_mutex);
+        if (!state.current) return;
+    }
+    const uint64_t position = static_cast<uint64_t>(std::max(0.0, seconds) * 1000000.0);
+    mpv_service->setPosition(position);
+    social_service->setPosition(position);
+}
+
 void services::Player::seekToFraction(double fraction) {
     {
         std::lock_guard lock(state_mutex);
@@ -2229,10 +2408,7 @@ void services::Player::changeVolume(int delta) {
 void services::Player::prefetchPlaylist(const music::PlaylistRef& ref) {
     if (ref.id.empty()) return;
     {
-        std::lock_guard lock(state_mutex);
-        if (playlist_cache.count(ref.id)) return;
-    }
-    {
+        // Cached or not: the command also warms its first track.
         std::lock_guard lock(command_mutex);
         command_queue.push(PrefetchPlaylistCommand{ref});
     }
@@ -2320,10 +2496,28 @@ void services::Player::saveSession() {
     }
     session["position"] = static_cast<double>(mpv_service->getStreamPosition()) / 1000000.0;
     writeJson("session.json", session);
+
+    // Stream URLs still valid for a while: the next launch starts them at once.
+    nlohmann::json streams = nlohmann::json::object();
+    {
+        std::lock_guard lock(preloaded_mutex);
+        for (const auto& [k, v] : recent_streams) if (streamFresh(v, 900)) streams[k] = v;
+        for (const auto& [k, v] : preloaded)      if (streamFresh(v, 900)) streams[k] = v;
+    }
+    writeJson("streams.json", streams);
 }
 
 bool services::Player::restoreSession() {
     if (Config::anonymous) return false;
+
+    {
+        nlohmann::json streams = readJson("streams.json");
+        if (streams.is_object()) {
+            std::lock_guard lock(preloaded_mutex);
+            for (auto it = streams.begin(); it != streams.end(); ++it)
+                if (it.value().is_string() && streamFresh(it.value().get<std::string>(), 300)) recent_streams[it.key()] = it.value().get<std::string>();
+        }
+    }
 
     nlohmann::json session = readJson("session.json");
     if (!session.is_object() || !session.contains("current")) return false;
@@ -2356,21 +2550,39 @@ bool services::Player::restoreSession() {
     return true;
 }
 
+
 std::string services::Player::streamUrlFor(const std::string& url) {
     std::lock_guard lock(preloaded_mutex);
     auto it = preloaded.find(url);
-    if (it == preloaded.end()) return url;
-    std::string stream = it->second;
-    preloaded.erase(it);
-
-    // Resolved URLs carry their expiry (unix time); don't hand out a dead one.
-    const size_t e = stream.find("expire=");
-    if (e != std::string::npos) {
-        const long long expire = std::atoll(stream.c_str() + e + 7);
-        const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        if (expire > 0 && expire < now + 120) return url;
+    if (it != preloaded.end()) {
+        std::string stream = it->second;
+        preloaded.erase(it);
+        if (streamFresh(stream)) return stream;
     }
-    return stream;
+    // Resolved earlier (this run or the last one, see saveSession): valid 6 h;
+    // with 15 min left at least, so a long track doesn't outlive its link.
+    auto r = recent_streams.find(url);
+    if (r != recent_streams.end()) {
+        if (streamFresh(r->second, 900)) return r->second;
+        recent_streams.erase(r);
+    }
+    return url;
+}
+
+void services::Player::rememberStream(const std::string& url, const std::string& stream) {
+    if (stream.empty()) return;
+    std::lock_guard lock(preloaded_mutex);
+    if (recent_streams.size() > 300) {
+        for (auto it = recent_streams.begin(); it != recent_streams.end(); ) it = streamFresh(it->second, 600) ? std::next(it) : recent_streams.erase(it);
+        if (recent_streams.size() > 300) recent_streams.clear();
+    }
+    recent_streams[url] = stream;
+}
+
+void services::Player::forgetStream(const std::string& url) {
+    std::lock_guard lock(preloaded_mutex);
+    recent_streams.erase(url);
+    preloaded.erase(url);
 }
 
 void services::Player::preview(const music::SongRef& song) {
@@ -2473,7 +2685,7 @@ void services::Player::moveInQueue(size_t from, size_t to) {
 void services::Player::createPlaylist(const std::string& title, const std::string& video_id) {
     {
         std::lock_guard lock(command_mutex);
-        command_queue.push(PlaylistEditCommand{title, "", video_id});
+        command_queue.push(PlaylistEditCommand{title, "", video_id, PlaylistEditCommand::Kind::Create});
     }
     command_cv.notify_one();
 }
@@ -2481,7 +2693,31 @@ void services::Player::createPlaylist(const std::string& title, const std::strin
 void services::Player::addToPlaylist(const std::string& playlist_id, const std::string& title, const std::string& video_id) {
     {
         std::lock_guard lock(command_mutex);
-        command_queue.push(PlaylistEditCommand{title, playlist_id, video_id});
+        command_queue.push(PlaylistEditCommand{title, playlist_id, video_id, PlaylistEditCommand::Kind::Add});
+    }
+    command_cv.notify_one();
+}
+
+void services::Player::removeFromPlaylist(const std::string& playlist_id, const std::string& video_id, const std::string& set_video_id) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PlaylistEditCommand{"", playlist_id, video_id, PlaylistEditCommand::Kind::Remove, set_video_id});
+    }
+    command_cv.notify_one();
+}
+
+void services::Player::renamePlaylist(const std::string& playlist_id, const std::string& title) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PlaylistEditCommand{title, playlist_id, "", PlaylistEditCommand::Kind::Rename});
+    }
+    command_cv.notify_one();
+}
+
+void services::Player::deletePlaylist(const std::string& playlist_id, const std::string& title) {
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PlaylistEditCommand{title, playlist_id, "", PlaylistEditCommand::Kind::Delete});
     }
     command_cv.notify_one();
 }
@@ -2528,10 +2764,14 @@ void services::Player::preloadNext() {
             std::lock_guard lock(preloaded_mutex);
             if (preloading.count(url)) continue;
             auto it = preloaded.find(url);
+            auto r = recent_streams.find(url);
             if (it != preloaded.end()) {
                 if (index == SIZE_MAX) continue;        // stays there until loaded
                 ready = it->second;                     // resolved by warmStream
                 preloaded.erase(it);
+            } else if (r != recent_streams.end() && streamFresh(r->second, 600)) {
+                if (index == SIZE_MAX) continue;        // streamUrlFor finds it
+                ready = r->second;                      // resolved earlier / last run
             } else {
                 preloading.insert(url);
             }
@@ -2563,6 +2803,21 @@ Two of them, so a selection pre-resolve never delays the track that starts.
 const char* RESOLVER_SCRIPT = R"PY(
 import sys, json
 import yt_dlp
+# The player response has YouTube's loudness figure (dB above its reference);
+# yt-dlp drops it, so catch it on the way.
+LOUD = {}
+try:
+    from yt_dlp.extractor.youtube import _video
+    _orig = _video.YoutubeIE._extract_player_response
+    def _wrapped(self, client, video_id, *a, **k):
+        pr = _orig(self, client, video_id, *a, **k)
+        try:
+            l = ((pr or {}).get('playerConfig') or {}).get('audioConfig', {}).get('loudnessDb')
+            if l is not None: LOUD[video_id] = l
+        except Exception: pass
+        return pr
+    _video.YoutubeIE._extract_player_response = _wrapped
+except Exception: pass
 opts = {'quiet': True, 'no_warnings': True, 'noprogress': True, 'format': 'bestaudio/best', 'skip_download': True}
 if len(sys.argv) > 1: opts['cookiefile'] = sys.argv[1]
 y = yt_dlp.YoutubeDL(opts)
@@ -2570,6 +2825,7 @@ for line in sys.stdin:
     try:
         d = y.extract_info(line.strip(), download=False)
         out = {'url': d.get('url') or '', 'http_headers': d.get('http_headers') or {}}
+        if d.get('id') in LOUD: out['loudness'] = LOUD[d['id']]
     except BaseException:
         out = {}
     sys.stdout.write(json.dumps(out) + '\n')
@@ -2735,7 +2991,9 @@ std::string services::Player::resolveStream(const std::string& url) {
     }
     if (out.size() > 2) {
         spdlog::info("PLAYER: stream resolved in {} ms", took());
-        return parseResolved(out);
+        const std::string r = parseResolved(out);
+        rememberStream(url, r);
+        return r;
     }
     out.clear();
 
@@ -2782,7 +3040,9 @@ std::string services::Player::resolveStream(const std::string& url) {
         waitpid(pid, &status, 0);
     }
     close(fds[0]);
-    return parseResolved(out);
+    const std::string r = parseResolved(out);
+    rememberStream(url, r);
+    return r;
 }
 
 std::string services::Player::parseResolved(const std::string& out) {
@@ -2791,11 +3051,41 @@ std::string services::Player::parseResolved(const std::string& out) {
     const std::string stream = utils::jstr(j, "url");
     if (stream.rfind("http", 0) != 0) return "";
 
-    // The agent the URL was issued to goes with it (see MPV::load).
+    // The agent the URL was issued to goes with it (see MPV::load), and the
+    // gain that levels the track: YouTube's loudness is in dB above its
+    // reference; loud masters come down, quiet ones up a little.
     std::string ua;
     if (j.contains("http_headers") && j["http_headers"].is_object()) ua = utils::jstr(j["http_headers"], "User-Agent");
     if (ua.find('\n') != std::string::npos) ua.clear();
-    return ua.empty() ? stream : stream + "\n" + ua;
+    std::string gain;
+    if (Config::get().NORMALIZE_VOLUME && j.contains("loudness") && j["loudness"].is_number()) {
+        const double g = std::clamp(4.0 - j["loudness"].get<double>(), -10.0, 3.0);
+        // Not printf: a decimal-comma locale would write "-3,50".
+        const long centi = std::lround(g * 100.0);
+        const long a = std::labs(centi);
+        gain = (centi < 0 ? "-" : "") + std::to_string(a / 100) + "." + (a % 100 < 10 ? "0" : "") + std::to_string(a % 100);
+    }
+    return stream + "\n" + ua + "\n" + gain;
+}
+
+void services::Player::warmNow(const std::string& url) {
+    if (url.find("youtube.com/watch") == std::string::npos) return;
+    {
+        std::lock_guard lock(preloaded_mutex);
+        // One at a time: the two resolvers stay free for the track that starts.
+        if (preloaded.count(url) || preloading.count(url) || !preloading.empty()) return;
+        auto r = recent_streams.find(url);
+        if (r != recent_streams.end() && streamFresh(r->second, 600)) return;
+        preloading.insert(url);
+    }
+    std::thread([this, url] {
+        const std::string stream = resolveStream(url);
+        std::lock_guard lock(preloaded_mutex);
+        preloading.erase(url);
+        if (stream.empty()) return;
+        if (preloaded.size() > 32) preloaded.clear();
+        preloaded[url] = stream;
+    }).detach();
 }
 
 void services::Player::warmStream(const music::SongRef& song) {
@@ -2807,6 +3097,8 @@ void services::Player::warmStream(const music::SongRef& song) {
     {
         std::lock_guard lock(preloaded_mutex);
         if (preloaded.count(url) || preloading.count(url)) return;
+        auto r = recent_streams.find(url);
+        if (r != recent_streams.end() && streamFresh(r->second, 600)) return;   // resolved earlier
         warm_latest = url;
     }
 

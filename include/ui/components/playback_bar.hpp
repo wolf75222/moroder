@@ -26,6 +26,7 @@ struct PlaybackData {
     bool liked = false;
     bool can_like = false;
     std::string notice;     // transient message, empty when none
+    std::string sleep_label;   // sleep timer: "25m", "end", empty when off
 
     // Screen areas of the clickable parts, filled at render time.
     ftxui::Box box_progress, box_prev, box_play, box_next, box_like, box_volume, box_loop, box_shuffle, box_track;

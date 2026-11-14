@@ -72,6 +72,10 @@ FetchContent_Declare(
     ftxui-image-view
     GIT_REPOSITORY https://github.com/orrnithogalum/ftxui-image-view-async.git
     GIT_TAG 1501b3263789b9b0a4aaa61143d78e02d48ad550
+    # Caches each cover's finished cells per size (drawing a page of covers
+    # rebuilt every cell every frame). Applied once; skipped if already in.
+    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-cell-cache.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-cell-cache.patch'"
+    UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(ftxui-image-view)
 # tiv links X11 but never uses it (CImg display is disabled); there is no X11 on macOS.
@@ -125,6 +129,8 @@ set(SOURCES
     src/services/player.cpp
     src/services/notify.cpp
     src/services/lyrics.cpp
+    src/services/suggest.cpp
+    src/services/scrobble.cpp
 
     src/setup/setup.cpp
 
