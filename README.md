@@ -523,7 +523,7 @@ Hovering doesn't move the selection.
 Playlists open in their own view: header with Play and Add to queue, then
 every track; playing a track continues with the rest of the playlist. The playback bar shows elapsed / total time and the volume.
 
-The volume is remembered between launches. Each new track raises a desktop notification (macOS Notification Center, `notify-send` on Linux); set `ENABLE_NOTIFICATIONS = false` to turn it off.
+The volume is remembered between launches. Each new track raises a desktop notification (`notify-send` on Linux); on macOS it comes from a small helper app installed with Moroder (`share/moroder/Moroder.app`), so it carries Moroder's icon and the track's cover. Set `ENABLE_NOTIFICATIONS = false` to turn it off.
 
 Liking needs fresh session cookies: Google rotates them, and YouTube Music
 refuses writes with stale ones even while browsing still works. If a like is

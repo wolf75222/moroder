@@ -253,3 +253,50 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 )
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+
+# macOS notifications: a tiny helper app, "Moroder.app", so notifications carry
+# Moroder's icon and the track's cover (osascript shows Script Editor's icon).
+# The icon is drawn at build time; the bundle is ad-hoc signed.
+if(APPLE)
+    set(MORODER_HELPER_APP "${CMAKE_BINARY_DIR}/Moroder.app")
+
+    add_executable(moroder-make-icon tools/make_icon.m)
+    set_target_properties(moroder-make-icon PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(moroder-make-icon PRIVATE "-framework AppKit")
+
+    set(ICONSET "${CMAKE_BINARY_DIR}/Moroder.iconset")
+    set(ICNS "${CMAKE_BINARY_DIR}/Moroder.icns")
+    set(icon_cmds "")
+    foreach(sz 16 32 128 256 512)
+        math(EXPR sz2 "${sz} * 2")
+        list(APPEND icon_cmds
+            COMMAND $<TARGET_FILE:moroder-make-icon> ${sz}  ${ICONSET}/icon_${sz}x${sz}.png
+            COMMAND $<TARGET_FILE:moroder-make-icon> ${sz2} ${ICONSET}/icon_${sz}x${sz}@2x.png)
+    endforeach()
+    add_custom_command(
+        OUTPUT ${ICNS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${ICONSET}
+        ${icon_cmds}
+        COMMAND iconutil -c icns ${ICONSET} -o ${ICNS}
+        DEPENDS moroder-make-icon
+        COMMENT "Drawing the Moroder icon")
+
+    add_executable(moroder-notify src/macos/notify_helper.m)
+    set_target_properties(moroder-notify PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc"
+        RUNTIME_OUTPUT_DIRECTORY "${MORODER_HELPER_APP}/Contents/MacOS")
+    target_link_libraries(moroder-notify PRIVATE "-framework AppKit")
+
+    add_custom_target(moroder-helper-app ALL
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/res/macos/Info.plist ${MORODER_HELPER_APP}/Contents/Info.plist
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${MORODER_HELPER_APP}/Contents/Resources
+        COMMAND ${CMAKE_COMMAND} -E copy ${ICNS} ${MORODER_HELPER_APP}/Contents/Resources/Moroder.icns
+        COMMAND codesign --force --sign - ${MORODER_HELPER_APP}
+        DEPENDS moroder-notify ${ICNS}
+        COMMENT "Assembling Moroder.app (notification helper)")
+
+    add_dependencies(${PROJECT_NAME} moroder-helper-app)
+
+    # Next to the binary's prefix: <prefix>/share/moroder/Moroder.app
+    install(DIRECTORY ${MORODER_HELPER_APP} DESTINATION share/moroder USE_SOURCE_PERMISSIONS)
+endif()

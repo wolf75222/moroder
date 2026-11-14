@@ -1298,7 +1298,8 @@ void services::Player::updateSocialData() {
             const std::string t = utils::lower(song->ref.title), a = utils::lower(song->album.title);
             const std::string head = t.substr(0, std::min<size_t>(t.size(), 8));
             const bool redundant = a.empty() || a.rfind(head, 0) == 0 || t.find(a) != std::string::npos;
-            notifyTrack(song->ref.title, redundant ? artist : artist + "  \u00b7  " + song->album.title);
+            notifyTrack(song->ref.title, redundant ? artist : artist + "  \u00b7  " + song->album.title,
+                        song->ref.thumbnail_large.empty() ? song->ref.thumbnail_small : song->ref.thumbnail_large);
         }
 
         std::string status_label =

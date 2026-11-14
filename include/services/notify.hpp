@@ -11,6 +11,7 @@
 
 namespace services {
 
-void notifyTrack(const std::string& title, const std::string& subtitle);
+// cover: image URL (or path) shown in the notification where supported.
+void notifyTrack(const std::string& title, const std::string& subtitle, const std::string& cover = "");
 
 }
