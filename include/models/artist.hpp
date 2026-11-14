@@ -24,9 +24,11 @@ struct ArtistRef {
             const auto& first_artist = j["artists"].front();
             a.id = first_artist.value("id", "");
             a.name = first_artist.value("name", "");
+            if (a.id.empty() && j.contains("browseId") && j["browseId"].is_string()) a.id = j["browseId"];
 
         } else if (j.contains("title")) {
             a.name = j.value("title", "");
+            a.id = j.value("browseId", "");     // artist shelves carry it here
 
         } else {
             a.id = j.value("browseId", "");

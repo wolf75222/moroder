@@ -82,6 +82,14 @@ public:
     music::Radio    getRadioNext(const music::Radio& radio);
 
     music::Album    getAlbum(const music::AlbumRef& album);
+
+    // Artist page: name, picture and its shelves (Top songs, Albums...).
+    struct ArtistPage {
+        music::ArtistRef ref;
+        std::unordered_map<std::string, std::vector<music::ApiResult>> shelves;
+        std::vector<std::string> order;
+    };
+    ArtistPage getArtist(const music::ArtistRef& artist);
     music::Playlist getPlaylist(const music::PlaylistRef& playlist);
 
 private:

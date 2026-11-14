@@ -836,6 +836,54 @@ void services::Player::worker_loop() {
                     refreshLibraryError(state);
                 }
 
+            } else if constexpr (std::is_same_v<T, OpenAlbumCommand>) {
+                spdlog::info("PLAYER: OpenAlbumCommand, {}", c.ref.title);
+
+                music::Album album = music_service->getAlbum(c.ref);
+                const services::RequestError& err = music_service->lastError();
+
+                // Shown through the playlist view: same header, same rows.
+                music::PlaylistRef as_list;
+                as_list.id = c.ref.id;
+                as_list.title = album.ref.title.empty() ? c.ref.title : album.ref.title;
+                const auto& artists = album.ref.artists.empty() ? c.ref.artists : album.ref.artists;
+                as_list.author = artists.empty() ? "" : artists[0].name;
+                if (!album.ref.year.empty()) as_list.author += (as_list.author.empty() ? "" : "  \u2022  ") + album.ref.year;
+                as_list.thumbnail_large = album.ref.thumbnail_large.empty() ? c.ref.thumbnail_large : album.ref.thumbnail_large;
+                as_list.thumbnail_small = album.ref.thumbnail_small.empty() ? c.ref.thumbnail_small : album.ref.thumbnail_small;
+
+                auto list = std::make_shared<music::Playlist>();
+                list->setRef(as_list);
+                for (auto& s : album.getStreamables()) list->addStreamable(s);
+
+                std::lock_guard lock(state_mutex);
+                if (!state.open_playlist || state.open_playlist->ref.id != c.ref.id) return;
+
+                if (err.failed && !err.cancelled) {
+                    state.flags["open_playlist"] = Flags::Error;
+                    state.errors["open_playlist"] = { err.message, err.retryable };
+                } else {
+                    state.open_playlist = list;
+                    state.flags["open_playlist"] = Flags::Done;
+                }
+
+            } else if constexpr (std::is_same_v<T, OpenArtistCommand>) {
+                spdlog::info("PLAYER: OpenArtistCommand, {}", c.ref.name);
+
+                auto page = std::make_shared<services::Music::ArtistPage>(music_service->getArtist(c.ref));
+                const services::RequestError& err = music_service->lastError();
+
+                std::lock_guard lock(state_mutex);
+                if (!state.open_artist || state.open_artist->ref.id != c.ref.id) return;
+
+                if (err.failed && !err.cancelled) {
+                    state.flags["open_artist"] = Flags::Error;
+                    state.errors["open_artist"] = { err.message, err.retryable };
+                } else {
+                    state.open_artist = page;
+                    state.flags["open_artist"] = Flags::Done;
+                }
+
             } else if constexpr (std::is_same_v<T, RefreshSessionCommand>) {
                 if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
 
@@ -1740,6 +1788,7 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
         auto placeholder = std::make_shared<music::Playlist>();
         placeholder->setRef(ref);
         state.open_playlist = placeholder;
+        state.open_kind = "playlist";
         state.flags["open_playlist"] = Flags::Ongoing;
         state.errors.erase("open_playlist");
     }
@@ -1749,6 +1798,48 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
         command_queue.push(OpenPlaylistCommand{ref});
     }
 
+    command_cv.notify_one();
+}
+
+void services::Player::openAlbum(const music::AlbumRef& ref) {
+    {
+        std::lock_guard lock(state_mutex);
+        music::PlaylistRef as_list;
+        as_list.id = ref.id;
+        as_list.title = ref.title;
+        as_list.author = ref.artists.empty() ? "" : ref.artists[0].name;
+        as_list.thumbnail_large = ref.thumbnail_large;
+        as_list.thumbnail_small = ref.thumbnail_small;
+
+        auto placeholder = std::make_shared<music::Playlist>();
+        placeholder->setRef(as_list);
+        state.open_playlist = placeholder;
+        state.open_kind = "album";
+        state.flags["open_playlist"] = Flags::Ongoing;
+        state.errors.erase("open_playlist");
+    }
+
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(OpenAlbumCommand{ref});
+    }
+    command_cv.notify_one();
+}
+
+void services::Player::openArtist(const music::ArtistRef& ref) {
+    {
+        std::lock_guard lock(state_mutex);
+        auto placeholder = std::make_shared<services::Music::ArtistPage>();
+        placeholder->ref = ref;
+        state.open_artist = placeholder;
+        state.flags["open_artist"] = Flags::Ongoing;
+        state.errors.erase("open_artist");
+    }
+
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(OpenArtistCommand{ref});
+    }
     command_cv.notify_one();
 }
 

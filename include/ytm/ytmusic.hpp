@@ -116,6 +116,12 @@ public:
     */
     json getAlbum(const std::string& browseId);
 
+    /* getArtist
+    - {name, thumbnail, sections}: sections as in getHome (title + contents),
+      "Top songs" first, then Albums, Singles, Playlists, related artists...
+    */
+    json getArtist(const std::string& browseId);
+
     /* getPlayList
     - Playlist object with a "tracks" array. limit < 0 means "all tracks".
     */

@@ -44,6 +44,10 @@ void buildPlaylist(services::Player::PlayerState* state, std::deque<ContentEntry
                    std::function<bool(const ftxui::Event&, int)> on_track, std::function<void()> on_play_all,
                    std::function<void()> on_queue_all, std::function<void()> on_retry);
 
+// Artist page (state->open_artist): header, then one carousel per section.
+void buildArtist(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container,
+                 std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
+
 void buildLibrary(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content, int rows, const std::string& query, std::function<bool(const ftxui::Event&, const ui::ChipEntry&)> on_chip_press, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_item_press, std::function<void()> on_retry);
 
 }

@@ -388,6 +388,32 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     return response.results;
 }
 
+services::Music::ArtistPage services::Music::getArtist(const music::ArtistRef& artist) {
+    ArtistPage page;
+    page.ref = artist;
+
+    nlohmann::json data = ytm->getArtist(artist.id);
+    captureError("artist");
+
+    if (data.value("name", std::string()) != "") page.ref.name = data["name"];
+    if (data.value("thumbnail", std::string()) != "") page.ref.thumbnail_large = data["thumbnail"];
+
+    ipc::HomeResponse response;
+    if (data.contains("sections") && data["sections"].is_array()) {
+        for (const nlohmann::json& section : data["sections"]) {
+            const std::string category = section.value("title", std::string());
+            if (!section.contains("contents") || !section["contents"].is_array()) continue;
+            for (const nlohmann::json& item : section["contents"]) {
+                tryAdd(item, "artist", [&] { response.addItem(category, item); });
+            }
+        }
+    }
+
+    page.shelves = response.results;
+    page.order = response.order;
+    return page;
+}
+
 bool services::Music::refreshCookies() {
     const Config& cfg = Config::get();
     if (Config::anonymous || cfg.COOKIE_BROWSER.empty()) return false;

@@ -253,6 +253,7 @@ int main(int argc, char *argv[]) {
 
         bool queued = false;
         bool opened_playlist = false;
+        bool opened_artist = false;
 
         std::visit([&](auto&& data) {
             using T = std::decay_t<decltype(data)>;
@@ -268,9 +269,21 @@ int main(int argc, char *argv[]) {
                 queued = true;
 
             } else if constexpr (std::is_same_v<T, music::AlbumRef>) {
-                auto container = make_streamable(music::Album{});
-                player.queue(container, !should_queue, !should_queue);
-                queued = true;
+                if (should_queue) {
+                    auto container = make_streamable(music::Album{});
+                    player.queue(container, false, false);
+                    queued = true;
+                } else {
+                    // Enter / double-click opens the album page.
+                    player.openAlbum(data);
+                    opened_playlist = true;
+                }
+
+            } else if constexpr (std::is_same_v<T, music::ArtistRef>) {
+                if (!should_queue && !data.id.empty()) {
+                    player.openArtist(data);
+                    opened_artist = true;
+                }
 
             } else if constexpr (std::is_same_v<T, music::EpisodeRef>) {
                 auto streamable = make_streamable(music::Episode{});
@@ -291,8 +304,8 @@ int main(int argc, char *argv[]) {
 
         }, result.data);
 
-        if (opened_playlist) {
-            current_state = ui::State::PLAYLIST;
+        if (opened_playlist || opened_artist) {
+            current_state = opened_artist ? ui::State::ARTIST : ui::State::PLAYLIST;
             main_content_items.clear();
             main_content->DetachAllChildren();
             main_content->Add(Renderer([] { return emptyElement(); }));
@@ -473,7 +486,7 @@ int main(int argc, char *argv[]) {
     */
     auto render_page = [&]() -> Element {
         const int n = static_cast<int>(main_content->ChildCount());
-        const bool home = current_state == ui::State::HOME;
+        const bool home = current_state == ui::State::HOME || current_state == ui::State::ARTIST;
 
         // Shelves are tall (a window of 7), list rows are 2-3 lines (60).
         const int before = home ? 2 : 30;
@@ -619,6 +632,21 @@ int main(int argc, char *argv[]) {
                     screen.PostEvent(Event::Custom);
                 });
 
+        } else if(current_state == ui::State::ARTIST) {
+            ui::buildArtist(&state_copy, main_content_items, main_content, on_item_press,
+                [&player, &main_content_items, &main_content, &screen] {
+                    std::shared_ptr<services::Music::ArtistPage> open;
+                    {
+                        std::lock_guard lock(player.state_mutex);
+                        open = player.state.open_artist;
+                    }
+                    if (open) player.openArtist(open->ref);
+                    main_content_items.clear();
+                    main_content->DetachAllChildren();
+                    main_content->Add(Renderer([] { return emptyElement(); }));
+                    screen.PostEvent(Event::Custom);
+                });
+
         } else if(current_state == ui::State::LIBRARY) {
             int library_rows = std::max(1, (screen.dimy() - 12) / ui::GRID_TILE_HEIGHT);
 
@@ -679,6 +707,7 @@ int main(int argc, char *argv[]) {
                                 : current_state == ui::State::SEARCH  ? "search"
                                 : current_state == ui::State::LIBRARY ? "library"
                                 : current_state == ui::State::PLAYLIST ? "open_playlist"
+                                : current_state == ui::State::ARTIST ? "open_artist"
                                                                       : "";
 
                             const bool has_error = !error_key.empty() && state_copy.errors.count(error_key) > 0;
@@ -924,6 +953,32 @@ int main(int argc, char *argv[]) {
                             ctx.title = result_title(e->result);
 
                         ctx.items.push_back({"\uf04b", track ? "Play from here" : "Play", play_hint, key(cfg.KEY_PLAY_NOW)});
+
+                        // Song under the pointer, for "radio" and "go to artist".
+                        const music::ApiResult* r = nullptr;
+                        if(!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
+                            r = &e->carousel_data.results[e->selected];
+                        else
+                            r = &e->result;
+                        if(const auto* song = std::get_if<music::SongRef>(&r->data)) {
+                            const music::SongRef ref = *song;
+                            ctx.items.push_back({"\uf1be", "Start radio", "", [&player, ref] {
+                                auto s = std::make_shared<music::Song>();
+                                s->setRef(ref);
+                                player.queue(std::static_pointer_cast<music::IStreamable>(s), true, true);
+                            }});
+                            if(!ref.artists.empty() && !ref.artists[0].id.empty()) {
+                                const music::ArtistRef artist = ref.artists[0];
+                                ctx.items.push_back({"\uf007", "Go to " + utils::trimSuffix(artist.name, 16, "..."), "", [&, artist] {
+                                    player.openArtist(artist);
+                                    current_state = ui::State::ARTIST;
+                                    main_content_items.clear();
+                                    main_content->DetachAllChildren();
+                                    main_content->Add(Renderer([] { return emptyElement(); }));
+                                    screen.PostEvent(Event::Custom);
+                                }});
+                            }
+                        }
                         if(current_state == ui::State::QUEUE) {
                             ctx.items.push_back({"\uf00d", "Remove from queue", cfg.KEY_REMOVE_FROM_QUEUE, key(cfg.KEY_REMOVE_FROM_QUEUE)});
                         } else {

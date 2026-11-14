@@ -10,11 +10,17 @@
 using namespace ftxui;
 
 void ui::getCarouselData(services::Player::PlayerState* state, std::string category, CarouselData* data) {
+    getCarouselDataFrom(state->home, category, data);
+    data->is_loading = state->flags["home"] == services::Player::Flags::Ongoing;
+
+}
+
+void ui::getCarouselDataFrom(const std::unordered_map<std::string, std::vector<music::ApiResult>>& shelves, std::string category, CarouselData* data) {
     data->entries_spoof.clear();
     data->entries.clear();
 
-    auto it = state->home.find(category);
-    if (it == state->home.end())
+    auto it = shelves.find(category);
+    if (it == shelves.end())
         return;
 
     if (utils::lower(category) == "listen again") {
@@ -79,7 +85,6 @@ void ui::getCarouselData(services::Player::PlayerState* state, std::string categ
         });
     }
 
-    data->is_loading = state->flags["home"] == services::Player::Flags::Ongoing;
     data->category_name = category;
 }
 

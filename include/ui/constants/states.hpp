@@ -9,7 +9,8 @@ enum class State {
     SEARCH,
     QUEUE,
     LIBRARY,
-    PLAYLIST
+    PLAYLIST,
+    ARTIST
 };
 
 }

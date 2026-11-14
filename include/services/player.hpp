@@ -69,6 +69,14 @@ private:
 
     struct RefreshSessionCommand {};
 
+    struct OpenAlbumCommand {
+        music::AlbumRef ref;
+    };
+
+    struct OpenArtistCommand {
+        music::ArtistRef ref;
+    };
+
     struct OpenPlaylistCommand {
         music::PlaylistRef ref;
     };
@@ -140,6 +148,10 @@ public:
 
         // Playlist shown in the playlist view, with its tracks once loaded.
         std::shared_ptr<music::Playlist> open_playlist;
+        std::string open_kind = "playlist";                 // "playlist" or "album", for the header
+
+        // Artist page shown in the artist view.
+        std::shared_ptr<services::Music::ArtistPage> open_artist;
 
         // Short message for the playback bar (e.g. why a like failed).
         std::string notice;
@@ -209,6 +221,12 @@ public:
     // Load a playlist's tracks for the playlist view (state.open_playlist).
     void openPlaylist(const music::PlaylistRef& ref);
 
+    // Album page: an album's tracks in the playlist view.
+    void openAlbum(const music::AlbumRef& ref);
+
+    // Artist page: top songs, albums, singles, related artists...
+    void openArtist(const music::ArtistRef& ref);
+
     // Play the open playlist starting at `index`, then carry on with the rest.
     void playOpenPlaylistFrom(size_t index);
 
@@ -258,7 +276,9 @@ private:
         IsLoggedInCommand,
         RateCommand,
         OpenPlaylistCommand,
-        RefreshSessionCommand
+        RefreshSessionCommand,
+        OpenAlbumCommand,
+        OpenArtistCommand
     >;
 
     std::queue<Command> command_queue;

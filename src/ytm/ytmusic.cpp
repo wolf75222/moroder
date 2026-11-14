@@ -638,6 +638,41 @@ json YTMusic::getHome(int limit) {
 
 
 
+json YTMusic::getArtist(const std::string& browseId) {
+    json body = json::object();
+    body["browseId"] = browseId;
+
+    json response = sendRequest("browse", body);
+
+    json out = json::object();
+    out["name"] = str(nav(response, {"header", "musicImmersiveHeaderRenderer", "title", "runs", 0, "text"}));
+    if (out["name"].get<std::string>().empty())
+        out["name"] = str(nav(response, {"header", "musicVisualHeaderRenderer", "title", "runs", 0, "text"}));
+
+    const json* thumbs = nav(response, {"header", "musicImmersiveHeaderRenderer", "thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"});
+    out["thumbnail"] = (thumbs && thumbs->is_array() && !thumbs->empty()) ? str(nav(&thumbs->back(), {"url"})) : "";
+
+    json rows = json::array();
+    if (const json* list = nav(response, SINGLE_COLUMN_TAB + SECTION_LIST); list && list->is_array()) {
+        for (const json& row : *list) {
+            // "Top songs" is a list shelf; give it a carousel's shape so the
+            // home parser reads it like the other sections.
+            if (row.contains("musicShelfRenderer")) {
+                const json& shelf = row["musicShelfRenderer"];
+                json wrapped;
+                wrapped["musicCarouselShelfRenderer"]["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"] = shelf.value("title", json::object());
+                wrapped["musicCarouselShelfRenderer"]["contents"] = shelf.value("contents", json::array());
+                rows.push_back(wrapped);
+            } else {
+                rows.push_back(row);
+            }
+        }
+    }
+
+    out["sections"] = parse::mixedContent(rows);
+    return out;
+}
+
 json YTMusic::getAlbum(const std::string& browseId) {
     if (browseId.empty() || !startsWith(browseId, "MPRE")) {
         setError(Error::Kind::Request, "invalid album browseId, must start with MPRE: " + browseId);

@@ -21,6 +21,8 @@ struct CarouselData {
 };
 
 void getCarouselData(services::Player::PlayerState* state, std::string category, CarouselData* data);
+// Same, from any set of shelves (an artist page's, for one).
+void getCarouselDataFrom(const std::unordered_map<std::string, std::vector<music::ApiResult>>& shelves, std::string category, CarouselData* data);
 ftxui::Component Carousel(CarouselData* data, int* selected, bool* focused, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press);
 
 }

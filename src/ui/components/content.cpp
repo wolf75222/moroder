@@ -739,7 +739,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     const size_t visible = std::min(shown, tracks.size());
 
     // Rebuild only when what is shown changes.
-    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0") + ":" + std::to_string(visible);
+    const std::string signature = "__playlist__:" + playlist->ref.id + ":" + std::to_string(tracks.size()) + ":" + (loading ? "1" : "0") + ":" + std::to_string(visible) + ":" + state->open_kind;
     if (!main_content_items.empty() && main_content_items.front().category == signature) {
         for (auto& item : main_content_items) item.focused = item.component->Focused();
         return;
@@ -776,7 +776,9 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const std::string count = loading ? "loading tracks..." : std::to_string(tracks.size()) + " tracks";
         const std::string thumb = playlist->ref.thumbnail_large.empty() ? playlist->ref.thumbnail_small : playlist->ref.thumbnail_large;
 
-        head.component = Renderer(actions, [actions, title, sub, count, thumb, loading] {
+        std::string kind = state->open_kind;
+        for (auto& ch : kind) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        head.component = Renderer(actions, [actions, title, sub, count, thumb, loading, kind] {
             Element cover = thumb.empty()
                 ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
                 : image_view(thumb) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
@@ -787,7 +789,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                     cover,
                     text("   "),
                     vbox({
-                        text("PLAYLIST") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                        text(kind) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                         text(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                         hbox({
                             text(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
@@ -863,4 +865,66 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     }
 
     for (auto& item : main_content_items) item.focused = item.component->Focused();
+}
+
+void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content,
+                     std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry) {
+    if (buildError(state, "open_artist", main_content_items, main_content, on_retry)) {
+        return;
+    }
+
+    auto page = state->open_artist;
+    if (!page) return;
+
+    const bool loading = state->flags["open_artist"] == services::Player::Flags::Ongoing;
+    const std::string signature = "__artist__:" + page->ref.id + ":" + std::to_string(page->order.size()) + ":" + (loading ? "1" : "0");
+
+    if (main_content_items.empty() || main_content_items.front().category != signature) {
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+
+        // Header: picture and name.
+        main_content_items.push_back(ContentEntry{});
+        ContentEntry& head = main_content_items.back();
+        head.category = signature;
+
+        const std::string name = page->ref.name;
+        const std::string thumb = page->ref.thumbnail_large.empty() ? page->ref.thumbnail_small : page->ref.thumbnail_large;
+        head.component = Renderer([name, thumb, loading] {
+            Element picture = thumb.empty()
+                ? filler() | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7)
+                : image_view(thumb) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
+            return vbox({
+                text(" "),
+                hbox({
+                    text(" "), picture, text("   "),
+                    vbox({
+                        text("ARTIST") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                        text(name) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                        loading ? spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : emptyElement(),
+                    }),
+                }),
+            });
+        });
+        main_content->Add(head.component);
+
+        // One carousel per section, in YouTube Music's order.
+        for (const std::string& category : page->order) {
+            main_content_items.push_back(ContentEntry{});
+            ContentEntry& item = main_content_items.back();
+            item.category = category;
+            item.selected = 0;
+            item.component = Carousel(&item.carousel_data, &item.selected, &item.focused, on_press);
+            main_content->Add(item.component);
+        }
+
+        // Land on the first section (Top songs), not the header.
+        if (main_content_items.size() > 1) main_content_items[1].component->TakeFocus();
+    }
+
+    for (auto& item : main_content_items) {
+        if (item.category.rfind("__artist__", 0) == 0) continue;
+        ui::getCarouselDataFrom(page->shelves, item.category, &item.carousel_data);
+        item.focused = item.component->Focused();
+    }
 }

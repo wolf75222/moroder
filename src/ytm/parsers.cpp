@@ -1220,6 +1220,9 @@ json topResult(const json& data) {
 
         const json* titleRuns = nav(data, {"title", "runs"});
         if (titleRuns) out.update(songRuns(*titleRuns));
+
+        // The card's title links to the artist page: keep its id to open it.
+        out["browseId"] = navJson(data, TITLE + NAVIGATION_BROWSE_ID);
     }
 
     if (rt == "song" || rt == "video") {
