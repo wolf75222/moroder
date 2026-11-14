@@ -45,7 +45,7 @@ moroder
 
 <div align="center">
 
-| | |
+| Key | Does |
 |:--|:--|
 | <kbd>Enter</kbd> / double-click | play |
 | <kbd>Space</kbd> | play / pause |
