@@ -7,6 +7,8 @@
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <unistd.h>
@@ -34,13 +36,53 @@ const std::map<std::string, BrowserInfo>& browsers() {
     return table;
 }
 
-// The AES key, derived once per run from the Keychain secret.
-bool storeKey(const BrowserInfo& info, std::vector<uint8_t>& key, std::string& error) {
+/* Key file
+- The Keychain only lets a program in silently if that exact build was
+  "always allowed"; every rebuild or update asks again, and the app reads the
+  store at launch and every 10 minutes. So the derived AES key is asked for
+  once and kept in ~/.config/moroder/<browser>.key (0600), next to
+  browser.json, which already holds the session it unlocks
+- If the key stops working (the browser reset its store), it is asked again
+*/
+fs::path keyFile(const BrowserInfo& info) {
+    const char* home = getenv("HOME");
+    if (!home) return {};
+    std::string name = info.account;
+    for (auto& ch : name) ch = (ch == ' ') ? '-' : static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+    return fs::path(home) / ".config" / "moroder" / (name + ".key");
+}
+
+bool readKeyFile(const BrowserInfo& info, std::vector<uint8_t>& key) {
+    std::ifstream in(keyFile(info), std::ios::binary);
+    if (!in.is_open()) return false;
+    std::vector<uint8_t> k((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (k.size() != kCCKeySizeAES128) return false;
+    key = k;
+    return true;
+}
+
+void writeKeyFile(const BrowserInfo& info, const std::vector<uint8_t>& key) {
+    const fs::path file = keyFile(info);
+    if (file.empty()) return;
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(key.data()), static_cast<std::streamsize>(key.size()));
+    }
+    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
+}
+
+// The AES key: from memory, else the key file, else the Keychain (once).
+bool storeKey(const BrowserInfo& info, std::vector<uint8_t>& key, std::string& error, bool from_keychain = false) {
     static std::mutex m;
     static std::map<std::string, std::vector<uint8_t>> cache;
 
     std::lock_guard lock(m);
-    if (auto it = cache.find(info.service); it != cache.end()) { key = it->second; return true; }
+    if (!from_keychain) {
+        if (auto it = cache.find(info.service); it != cache.end()) { key = it->second; return true; }
+        if (readKeyFile(info, key)) { cache[info.service] = key; return true; }
+    }
 
     NSDictionary* query = @{
         (__bridge id)kSecClass:       (__bridge id)kSecClassGenericPassword,
@@ -66,6 +108,7 @@ bool storeKey(const BrowserInfo& info, std::vector<uint8_t>& key, std::string& e
                          derived.data(), derived.size());
 
     cache[info.service] = derived;
+    writeKeyFile(info, derived);
     key = derived;
     return true;
 }
@@ -157,22 +200,36 @@ std::string services::readYouTubeCookies(const std::string& browser, std::string
     std::map<std::string, std::string> jar;
     std::vector<std::string> order;
 
-    if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK) {
-        while (sqlite3_step(st) == SQLITE_ROW) {
-            std::string name = (const char*)sqlite3_column_text(st, 0);
-            std::string value = (const char*)sqlite3_column_text(st, 1);
+    for (int attempt = 0; attempt < 2 && jar.empty(); attempt++) {
+        int encrypted = 0, failed = 0;
 
-            if (value.empty()) {
-                const void* blob = sqlite3_column_blob(st, 2);
-                const int n = sqlite3_column_bytes(st, 2);
-                if (!blob || !decrypt(key, blob, (size_t)n, version >= 24, value)) continue;
+        if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(st) == SQLITE_ROW) {
+                std::string name = (const char*)sqlite3_column_text(st, 0);
+                std::string value = (const char*)sqlite3_column_text(st, 1);
+
+                if (value.empty()) {
+                    const void* blob = sqlite3_column_blob(st, 2);
+                    const int n = sqlite3_column_bytes(st, 2);
+                    encrypted++;
+                    if (!blob || !decrypt(key, blob, (size_t)n, version >= 24, value)) { failed++; continue; }
+                }
+
+                if (!jar.count(name)) order.push_back(name);
+                jar[name] = value;
             }
+        }
+        sqlite3_finalize(st);
 
-            if (!jar.count(name)) order.push_back(name);
-            jar[name] = value;
+        // The saved key no longer opens the store: ask the Keychain again.
+        if (attempt == 0 && encrypted > 0 && failed == encrypted) {
+            jar.clear();
+            order.clear();
+            if (!storeKey(info, key, error, true)) break;
+        } else {
+            break;
         }
     }
-    sqlite3_finalize(st);
     sqlite3_close(db);
 
     if (jar.empty()) { error = "no YouTube cookies in " + browser + "; sign in to music.youtube.com there"; return ""; }
