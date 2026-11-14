@@ -510,6 +510,8 @@ unbind it.
 
 <kbd>Esc</kbd> leaves the search bar. The playback bar shows elapsed / total time and the volume.
 
+The volume is remembered between launches. Each new track raises a desktop notification (macOS Notification Center, `notify-send` on Linux); set `ENABLE_NOTIFICATIONS = false` to turn it off.
+
 These act on whatever the cursor is over:
 
 | Key | Default | Action |

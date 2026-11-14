@@ -116,6 +116,7 @@ set(SOURCES
     src/services/mpv.cpp
     src/services/music.cpp
     src/services/player.cpp
+    src/services/notify.cpp
 
     src/setup/setup.cpp
 

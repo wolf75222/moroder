@@ -1,6 +1,9 @@
 #include "../../include/services/player.hpp"
 
 #include "../../include/config/config.hpp"
+#include "../../include/services/notify.hpp"
+#include "../../include/utils/utils.hpp"
+#include <fstream>
 
 #include <spdlog/spdlog.h>
 #include <unordered_map>
@@ -85,11 +88,30 @@ void refreshLibraryError(services::Player::PlayerState& state) {
 
 }
 
+namespace {
+
+// Next to the logs, e.g. ~/.local/state/moroder/volume
+std::filesystem::path volumeFile() {
+    return utils::resolve_path(MORODER_LOG_PATH).parent_path() / "volume";
+}
+
+}
+
 services::Player::Player(const std::string_view& app_name, const std::string_view& app_name_human, const uint64_t app_id) {
     this->app_name = app_name;
 
     mpris_service = Mpris::make(this->app_name);
     mpv_service = std::make_unique<MPV>();
+
+    // Restore the volume from the last session.
+    {
+        std::ifstream in(volumeFile());
+        int saved = -1;
+        if (in >> saved && saved >= 0 && saved <= 100) {
+            state.volume = saved;
+            mpv_service->setVolume(saved);
+        }
+    }
     music_service = std::make_unique<Music>(this->app_name);
     social_service = std::make_unique<Social>(app_id, Config::get().ENABLE_DISCORD_RICH_PRESENCE);
 
@@ -1212,8 +1234,16 @@ void services::Player::updateSocialData() {
 
     if (auto song = std::dynamic_pointer_cast<music::Song>(current)) {
 
+        const std::string artist = song->ref.artists.empty() ? "" : song->ref.artists[0].name;
+
+        // Once per track: this runs on stream start and on skips alike.
+        if (cfg.ENABLE_NOTIFICATIONS && song->ref.id != last_notified_id) {
+            last_notified_id = song->ref.id;
+            notifyTrack(song->ref.title, song->album.title.empty() ? artist : artist + " — " + song->album.title);
+        }
+
         std::string status_label =
-              cfg.RICH_PRESENCE_STATUS_LABEL == "artist" ? song->ref.artists[0].name
+              cfg.RICH_PRESENCE_STATUS_LABEL == "artist" ? artist
             : cfg.RICH_PRESENCE_STATUS_LABEL == "album"  ? song->album.title
             :                                              song->ref.title;
 
@@ -1575,6 +1605,9 @@ void services::Player::changeVolume(int delta) {
     }
 
     mpv_service->setVolume(volume);
+
+    // Remembered for the next launch.
+    std::ofstream(volumeFile(), std::ios::trunc) << volume << "\n";
 }
 
 void services::Player::togglePause() {

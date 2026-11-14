@@ -478,9 +478,18 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
 
         const json* shelfContents = nullptr;
         json cardContents;
+        json cardArtists;   // the top result's artist, when the card is an artist
 
         if (res.contains("musicCardShelfRenderer")) {
             results.push_back(parse::topResult(res["musicCardShelfRenderer"]));
+
+            /* Songs listed under an artist card come without an artist (YouTube
+            implies it from the card), which showed as "Title - " everywhere.
+            */
+            const json& top = results.back();
+            if (top.value("resultType", json()).is_string() && top["resultType"] == "artist" && top.contains("artists")) {
+                cardArtists = top["artists"];
+            }
 
             const json* raw = nav(res, {"musicCardShelfRenderer", "contents"});
             if (!raw) continue;
@@ -525,7 +534,13 @@ json YTMusic::search(const std::string& query, int limit, const std::string& fil
         }
 
         json parsed = parse::searchResults(*shelfContents, resultType, category);
-        for (json& item : parsed) results.push_back(std::move(item));
+        for (json& item : parsed) {
+            if (cardArtists.is_array() && !cardArtists.empty()
+                && (!item.contains("artists") || !item["artists"].is_array() || item["artists"].empty())) {
+                item["artists"] = cardArtists;
+            }
+            results.push_back(std::move(item));
+        }
 
         if (!internalFilter.empty() && res.contains("musicShelfRenderer")) {
             int remaining = limit - static_cast<int>(results.size());

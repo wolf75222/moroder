@@ -93,7 +93,7 @@ Component ui::PlaybackBar(PlaybackData* data) {
                 text("  "),
 
                 text(utils::trimSuffix(data->title, 50, "..."))  | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-                text(" - ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                data->artist.empty() ? emptyElement() : text(" - ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text(data->artist) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
             });
         }

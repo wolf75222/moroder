@@ -99,6 +99,7 @@ public:
     std::string KEY_VOLUME_UP         = "=";
     std::string KEY_HELP              = "?";
     int SEEK_SECONDS                  = 10;
+    bool ENABLE_NOTIFICATIONS         = true;
     int VOLUME_STEP                   = 5;
 
     /* Lazy initialization using a lambda:
@@ -646,6 +647,7 @@ private:
             {"KEY_VOLUME_UP",        makeSetter(&Config::KEY_VOLUME_UP),         true},
             {"KEY_HELP",             makeSetter(&Config::KEY_HELP),              true},
             {"SEEK_SECONDS",         makeSetter(&Config::SEEK_SECONDS),          true},
+            {"ENABLE_NOTIFICATIONS", makeSetter(&Config::ENABLE_NOTIFICATIONS),  true},
             {"VOLUME_STEP",          makeSetter(&Config::VOLUME_STEP),           true},
         };
 

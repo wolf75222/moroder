@@ -239,6 +239,8 @@ private:
 
     void worker_loop();
 
+    std::string last_notified_id;   // track already announced by notifyTrack
+
     /* updateMprisControls
     - Updates the mpris buttons (activated / deactivated) based on queue position.
     */
