@@ -8,6 +8,7 @@
 #pragma once
 
 #include <chrono>
+#include <map>
 #include <atomic>
 #include <array>
 #include <nlohmann/json.hpp>
@@ -256,6 +257,14 @@ public:
     */
     void retryLibrary();
     void search(const std::string& query);
+
+    /* Recent search results, by query: going back to a search shows them at
+    once instead of an empty page while YouTube answers again. 10 minutes,
+    the last 20 queries.
+    */
+    struct CachedSearch { std::chrono::steady_clock::time_point at; std::vector<music::ApiResult> results; };
+    std::map<std::string, CachedSearch> search_cache;
+    std::mutex search_cache_mutex;
 
     void queue(std::shared_ptr<music::IStreamable> streamable, const bool fresh = true, const bool radio = true);
     void queue(std::shared_ptr<music::IStreamableContainer> container, const bool fresh = true, const bool radio = true, size_t skip = 0);

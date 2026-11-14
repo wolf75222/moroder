@@ -791,6 +791,17 @@ void services::Player::worker_loop() {
                         state.search_results = res;
                     }
                 }
+
+                if (!err.failed && !res.empty()) {
+                    std::lock_guard lock(search_cache_mutex);
+                    if (search_cache.size() >= 20) {
+                        auto oldest = search_cache.begin();
+                        for (auto it = search_cache.begin(); it != search_cache.end(); ++it)
+                            if (it->second.at < oldest->second.at) oldest = it;
+                        search_cache.erase(oldest);
+                    }
+                    search_cache[c.query] = { std::chrono::steady_clock::now(), res };
+                }
             }
 
             else if constexpr (std::is_same_v<T, QueueStreamableCommand>) {
@@ -1837,6 +1848,19 @@ void services::Player::getLibraryPlaylists() {
 
 
 void services::Player::search(const std::string& query) {
+    // Asked again within 10 minutes (going back to it): what it said then, now.
+    {
+        std::lock_guard cache_lock(search_cache_mutex);
+        auto it = search_cache.find(query);
+        if (it != search_cache.end() && std::chrono::steady_clock::now() - it->second.at < std::chrono::minutes(10)) {
+            std::lock_guard lock(state_mutex);
+            state.flags["search"] = Flags::Done;
+            state.errors.erase("search");
+            state.search_results = it->second.results;
+            return;
+        }
+    }
+
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(SearchCommand{query});
