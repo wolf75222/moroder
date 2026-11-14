@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #include <cstdint>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -3168,8 +3169,14 @@ std::string ytdlpPython() {
             std::ifstream in(f);
             std::string line;
             if (in && std::getline(in, line)) {
-                if (line.rfind("#!", 0) == 0 && line.find("python") != std::string::npos && line.find(' ') == std::string::npos) return line.substr(2);
-                return std::string();
+                // "#!/usr/bin/python3", "#!/usr/bin/python3 -sP" (Fedora),
+                // "#!/usr/bin/env python3": the interpreter, flags dropped.
+                if (line.rfind("#!", 0) != 0) return std::string();
+                std::istringstream words(line.substr(2));
+                std::string interp, arg;
+                words >> interp >> arg;
+                if (interp.size() >= 4 && interp.compare(interp.size() - 4, 4, "/env") == 0) interp = arg;
+                return interp.find("python") != std::string::npos ? interp : std::string();
             }
             start = end + 1;
         }
@@ -3218,7 +3225,7 @@ bool startResolver(Resolver& r, const std::string& cookies) {
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
 #endif
     pid_t pid = 0;
-    const bool ok = posix_spawn(&pid, python.c_str(), &actions, &attr, argv.data(), environ) == 0;
+    const bool ok = posix_spawnp(&pid, python.c_str(), &actions, &attr, argv.data(), environ) == 0;   // p: "python3" from an env shebang
     posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&actions);
     close(in[0]);

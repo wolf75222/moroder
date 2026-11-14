@@ -11,12 +11,20 @@ curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh |
 - macOS (Apple silicon): installs `mpv`, `yt-dlp`, `jpeg-turbo` and `libpng`
   with Homebrew, then the latest release's build (its checksum is checked)
 - Other Macs and Linux: builds the latest release from source (Linux: into
-  `~/.local`, after you install the build dependencies listed below)
-- Puts `moroder` on your `PATH` (adds a line to your shell's rc file if needed)
+  `~/.local`)
+- Linux: finds what the build lacks and offers to install it with your
+  package manager (`pacman` on Arch, `dnf` on Fedora, `zypper` on openSUSE,
+  `apt` on Debian/Ubuntu/Mint), showing the exact command first. On
+  Debian/Ubuntu yt-dlp gets its own up-to-date Python environment, since the
+  distribution's package lags behind YouTube
+- Puts `moroder` on your `PATH` (zsh, bash, fish or `~/.profile`, if needed)
+- Shows what it installs and where, with the independent steps running side
+  by side (dependencies and download, or dependencies and source)
 
 Options: `MORODER_VERSION=1.2.0` installs a given version,
 `MORODER_FROM_SOURCE=1` always builds, `MORODER_PREFIX=~/opt` installs
-elsewhere, `MORODER_NO_PATH=1` leaves your shell files alone.
+elsewhere, `MORODER_NO_PATH=1` leaves your shell files alone,
+`MORODER_SOURCE=~/moroder` builds a local checkout.
 
 ## Updates
 
@@ -27,7 +35,7 @@ is remembered for that version. `moroder update` installs the latest anytime
 and also updates yt-dlp. `CHECK_FOR_UPDATES = false` in the config turns the
 check off.
 
-`moroder doctor` checks yt-dlp, mpv, sign-in, the terminal and updates;
+`moroder doctor` checks yt-dlp, mpv, sign-in, the network, the terminal and updates, all at once;
 `moroder uninstall` removes Moroder (and, if you say so, your settings).
 
 ## Requirements

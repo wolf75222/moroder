@@ -5,6 +5,7 @@
 #include "../include/services/suggest.hpp"
 #include "../include/services/scrobble.hpp"
 #include "../include/services/update.hpp"
+#include "../include/services/cli_ui.hpp"
 #include "../include/ui/components/playback_bar.hpp"
 #include "../include/ui/components/now_playing.hpp"
 #include "../include/ui/components/search_bar.hpp"
@@ -220,18 +221,26 @@ int main(int argc, char *argv[]) {
     Config::anonymous = anonymous;
 
     if (command == "--help" || command == "-h") {
-        std::cout << "usage: " << APP_NAME << " [command]\n\n"
-                  << "  setup         sign in to YouTube Music and fill in the config\n"
-                  << "  keys          show what your terminal sends for each key\n"
-                  << "  update        install the latest release (and update yt-dlp)\n"
-                  << "  doctor        check yt-dlp, mpv, sign-in, terminal, updates\n"
-                  << "  uninstall     remove moroder (asks before deleting your settings)\n"
-                  << "  --version     print the version\n"
-                  << "  search WORDS  open on the search results for WORDS\n"
-                  << "  lastfm        connect Last.fm scrobbling (needs LASTFM_API_KEY / _SECRET)\n"
-                  << "  --anonymous   run without an account, -a for short\n"
-                  << "  --help        this text\n\n"
-                  << "Run with no arguments to start the player.\n";
+        using namespace cli;
+        title("Moroder", std::string("YouTube Music in your terminal, ") + services::update::version());
+        std::cout << "  " << bold() << "moroder" << reset() << dim() << "  starts the player" << reset() << "\n\n";
+        auto cmd = [](const std::string& c, const std::string& what) {
+            std::string pad = c;
+            while (pad.size() < 18) pad += ' ';
+            std::cout << "    " << pad << dim() << what << reset() << "\n";
+        };
+        cmd("setup", "sign in with your browser, once");
+        cmd("-a, --anonymous", "play without an account");
+        cmd("search WORDS", "open on the results for WORDS");
+        std::cout << "\n";
+        cmd("update", "install the latest release (and update yt-dlp)");
+        cmd("doctor", "check yt-dlp, mpv, sign-in, network, terminal");
+        cmd("uninstall", "remove it (asks before deleting your data)");
+        std::cout << "\n";
+        cmd("keys", "show what your terminal sends for each key");
+        cmd("lastfm", "connect Last.fm scrobbling");
+        cmd("--version", "print the version");
+        std::cout << "\n  " << dim() << "Sign-in help: https://github.com/" MORODER_REPO "/blob/main/docs/sign-in.md" << reset() << "\n\n";
         return 0;
     }
 
