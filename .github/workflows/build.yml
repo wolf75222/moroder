@@ -15,6 +15,20 @@ on:
 permissions:
   contents: write
 
+# A newer push makes the run before it pointless (tags always finish).
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+# Compiles go through ccache, kept between runs (actions/cache): only what
+# changed is rebuilt, FTXUI and the other dependencies included.
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 400M
+  CCACHE_COMPRESS: "1"
+  CMAKE_C_COMPILER_LAUNCHER: ccache
+  CMAKE_CXX_COMPILER_LAUNCHER: ccache
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -32,7 +46,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          update: true
+          update: false        # the runner's MSYS2 is recent enough; updating it took over a minute
           install: >-
             git
             zip
@@ -46,6 +60,13 @@ jobs:
             mingw-w64-ucrt-x86_64-libjpeg-turbo
             mingw-w64-ucrt-x86_64-libpng
             mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-ccache
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
 
       - name: Version
         id: ver
@@ -57,7 +78,9 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_VERSION="${{ steps.ver.outputs.version }}" -DMORODER_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel -- -k 0      # every error at once
+        run: |
+          cmake --build build --parallel -- -k 0      # every error at once
+          ccache -s | head -n 6 || true
 
       - name: Smoke test
         run: |
@@ -135,12 +158,18 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential cmake ninja-build pkg-config libmpv-dev libcurl4-openssl-dev \
-            libjpeg-dev libpng-dev libsystemd-dev
+          sudo apt-get install -y -qq --no-install-recommends build-essential cmake ninja-build pkg-config libmpv-dev libcurl4-openssl-dev \
+            libjpeg-dev libpng-dev libsystemd-dev ccache
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
       - name: Build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_TESTS=ON
           cmake --build build --parallel
+          ccache -s | head -n 6 || true
       - name: Smoke test
         run: |
           ./build/moroder --version
@@ -153,11 +182,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
-        run: brew install mpv jpeg-turbo libpng pkg-config ninja
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
+        run: brew install mpv jpeg-turbo libpng pkg-config ninja ccache
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
       - name: Build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_TESTS=ON
           cmake --build build --parallel
+          ccache -s | head -n 6 || true
       - name: Smoke test
         run: |
           ./build/moroder --version
