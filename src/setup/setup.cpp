@@ -1370,8 +1370,12 @@ int setup::run(int argc, char* argv[]) {
     }
 
     // Stream cookies (age-restricted / Premium tracks): the browser's profile.
+    // A browser yt-dlp has no name for (Arc) isn't a problem: streams then
+    // take the cookies of the session saved here (MPV, writeSessionCookies),
+    // so the warning only said something false right after a sign-in.
     BrowserSpec spec = resolveBrowser(browser, profile_override);
-    if (!spec.resolved) warn(spec.problem + " (only age-restricted tracks are affected; --profile DIR sets it)");
+    if (!spec.resolved && !Config::ytdlBrowser(browser).empty())
+        warn(spec.problem + " (only age-restricted tracks are affected; --profile DIR sets it)");
 
     if (!got) {
         step("Paste the headers");
