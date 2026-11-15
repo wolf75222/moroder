@@ -273,6 +273,8 @@ playlist; right-click a track, *Add to playlist…*, to add it to one of yours
   fills word by word, sung lines fade to grey, instrumental breaks show three
   filling dots. Lyrics come from [LRCLIB](https://lrclib.net): the track's title,
   artist and duration are sent there; `ENABLE_LYRICS = false` turns it off.
+  `NOW_PLAYING_UP_NEXT = true` adds what plays next beside the lyrics.
+- **Queue** (<kbd>a</kbd>, or the queue icon in the playback bar; again to go back).
 - **Recently played** is the first home shelf.
 
 ### Trying things out

@@ -430,6 +430,7 @@ int main(int argc, char *argv[]) {
     ui::PlaybackData playback_bar_data = {};
     static std::chrono::steady_clock::time_point last_tick_at{};   // when the position last ticked
     ui::State before_now_playing = ui::State::HOME;
+    ui::State before_queue = ui::State::HOME;    // where the queue view was opened from
 
     /* Page history, like a browser's: Esc / Backspace / [ go back, ] forward,
     and a two-finger swipe sideways on the trackpad does the same. Pages are
@@ -801,16 +802,11 @@ int main(int argc, char *argv[]) {
     };
 
     // Home / Library again while on it: fetched afresh (the page stays up
-    // until the new one lands).
-    auto refreshing = [&player](const char* what) {
-        std::lock_guard lock(player.state_mutex);
-        player.state.notice = std::string("Refreshing ") + what;
-        player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    };
-    sidebar_data.onHome = [&current_state, &main_content_items, &main_content, &screen, &player, refreshing] {
+    // until the new one lands; a spinner beside it in the sidebar meanwhile).
+    sidebar_data.onHome = [&current_state, &main_content_items, &main_content, &screen, &player] {
         spdlog::info("SIDEBAR: Home pressed");
 
-        if (current_state == ui::State::HOME) { player.getHome(); refreshing("Home"); }
+        if (current_state == ui::State::HOME) player.getHome();     // its spinner in the sidebar says so
         current_state = ui::State::HOME;
 
         main_content_items.clear();
@@ -845,7 +841,7 @@ int main(int argc, char *argv[]) {
         prompt.done = [&player](const std::string& name) { player.createPlaylist(name); };
     };
 
-    sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen, &player, refreshing] {
+    sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen, &player] {
         spdlog::info("SIDEBAR: Library pressed");
         if (current_state == ui::State::LIBRARY) {
             bool loading;     // already reloading: not a second time
@@ -854,7 +850,7 @@ int main(int argc, char *argv[]) {
                 auto it = player.state.flags.find("library_playlists");
                 loading = it != player.state.flags.end() && it->second == services::Player::Flags::Ongoing;
             }
-            if (!loading) { player.retryLibrary(); refreshing("your library"); }
+            if (!loading) player.retryLibrary();
         }
         current_state = ui::State::LIBRARY;
 
@@ -1004,7 +1000,7 @@ int main(int argc, char *argv[]) {
                 static const music::IStreamable* last_current = nullptr;   // a new track: up next from the top
                 if (player.state.current.get() != last_current) { last_current = player.state.current.get(); ui::now_playing_upnext_scroll = 0; }
             }
-            if (current_state == ui::State::NOWPLAYING) {
+            if (current_state == ui::State::NOWPLAYING && cfg.NOW_PLAYING_UP_NEXT) {
                 auto row = [](const std::shared_ptr<music::IStreamable>& item, int index, bool autoplay) {
                     ui::UpNextRow r; r.index = index; r.autoplay = autoplay;
                     if (auto s = std::dynamic_pointer_cast<music::Song>(item)) {
@@ -1518,7 +1514,7 @@ int main(int argc, char *argv[]) {
             ctx.items.push_back({"\uf07c", "Go to album", "", [&, album] { open_album_page(album); }});
         }
         const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
-        ctx.items.push_back({"\uf002", "Search \u201c" + utils::trimSuffix(ref.title, 18, "...") + "\u201d", "", [&, t = ref.title] { search_for(t); }});
+        ctx.items.push_back({"\uf002", "Search \u201c" + utils::trimSuffix(ref.title, 12, "\u2026") + "\u201d", "", [&, t = ref.title] { search_for(t); }});
         ctx.items.push_back({"\uf0c5", "Copy\u2026", "", [&, ref, t = album.title] { open_copy_menu(ref, t); }});
         ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
         ctx.open = true;
@@ -1605,6 +1601,19 @@ int main(int argc, char *argv[]) {
         // Now Playing sits over the page it was opened from: back is that
         // page, as it was (not a rebuilt one, scrolled to the top).
         if (current_state == ui::State::NOWPLAYING) { current_state = before_now_playing; return true; }
+        // The queue opened from Now Playing: back to Now Playing (the page
+        // under it is rebuilt: the queue took its place).
+        if (current_state == ui::State::QUEUE && before_queue == ui::State::NOWPLAYING) {
+            before_queue = ui::State::HOME;
+            // The queue was recorded over the page under Now Playing: undo that,
+            // so leaving Now Playing later lands on that page, not the queue.
+            if (!nav_back.empty()) { nav_current = nav_back.back(); nav_back.pop_back(); }
+            main_content_items.clear();
+            main_content->DetachAllChildren();
+            main_content->Add(Renderer([] { return emptyElement(); }));
+            current_state = ui::State::NOWPLAYING;
+            return true;
+        }
         if (nav_back.empty()) return false;
         NavEntry target = nav_back.back();
         nav_back.pop_back();
@@ -2082,7 +2091,7 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                             const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
-                            ctx.items.push_back({"\uf002", "Search \u201c" + utils::trimSuffix(ref.title, 18, "...") + "\u201d", "", [&, t = ref.title] { search_for(t); }});
+                            ctx.items.push_back({"\uf002", "Search \u201c" + utils::trimSuffix(ref.title, 12, "\u2026") + "\u201d", "", [&, t = ref.title] { search_for(t); }});
                             ctx.items.push_back({"\uf0c5", "Copy\u2026", "", [&, ref] { open_copy_menu(ref, ""); }});
                             ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
                             if(state_logged_in()) {
@@ -2419,6 +2428,7 @@ int main(int argc, char *argv[]) {
 
         // The queue, while something is loaded (paused included).
         if(Config::isKey(event, cfg.KEY_QUEUE_VIEW) && (audio_playing || playback_bar_data.duration > 0 || has_track)) {
+            if (current_state != ui::State::QUEUE) before_queue = current_state;
             current_state = ui::State::QUEUE;
             return true;
         }
@@ -2668,14 +2678,18 @@ int main(int argc, char *argv[]) {
         }
 
         if (ctx.open) {
-            constexpr int W = 36;
+            // As wide as its longest line, not a fixed block: less of the page
+            // hidden behind it.
+            int W = 16;
+            for (const auto& it : ctx.items) W = std::max(W, static_cast<int>(ftxui::string_width(it.label) + ftxui::string_width(it.hint)) + 10);
+            // The title fits the items' width (trimmed), it doesn't widen the menu.
+            W = std::min(W, 40);
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
 
             Elements rows;
 
             if (!ctx.title.empty()) {
-                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 5, "\u2026")) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)), filler() }));
-                rows.push_back(hbox({ text(" "), separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | flex, text(" ") }));
+                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 5, "\u2026")) | dim | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), filler() }));
             }
 
             // The selected row: an accent bar and accent text, no solid block.
@@ -2701,7 +2715,7 @@ int main(int argc, char *argv[]) {
                 | clear_under;
 
             // Keep it on screen near the pointer.
-            const int h = static_cast<int>(ctx.items.size()) + (ctx.title.empty() ? 0 : 2) + 2;
+            const int h = static_cast<int>(ctx.items.size()) + (ctx.title.empty() ? 0 : 1) + 2;
             const int x = std::max(0, std::min(ctx.x, screen.dimx() - W - 3));
             const int y = std::max(0, std::min(ctx.y, screen.dimy() - h - 1));
             base = dbox({

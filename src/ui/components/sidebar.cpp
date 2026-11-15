@@ -2,6 +2,7 @@
 
 #include "../../../include/ui/constants/colors.hpp"
 #include "../../../include/ui/structs/entries.hpp"
+#include "../../../include/ui/components/content.hpp"
 #include "spdlog/spdlog.h"
 
 #include <ftxui/component/component_options.hpp>
@@ -18,9 +19,14 @@ void ui::getSidebarData(services::Player::PlayerState* state, ui::SidebarData* d
     data->entries_spoof.clear();
     data->results.clear();      // rebuilt each frame; it used to grow forever and go stale
 
+    // A spinner beside Home / Library while it (re)loads: clicking it again
+    // refreshes it, and this shows it is on its way.
+    static const char* frames[] = {"\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"};
+    const std::string spin = std::string("  ") + frames[(ui::anim_frame / 2) % 10];
+    auto busy = [&](const char* f) { auto it = state->flags.find(f); return it != state->flags.end() && it->second == services::Player::Flags::Ongoing; };
     data->entries = {
-        {"  Home", ""},
-        {"  Library", ""},
+        {std::string("\uf4e2  Home") + (busy("home") ? spin : ""), ""},
+        {std::string("\uf02e  Library") + (busy("library_playlists") || busy("library_albums") ? spin : ""), ""},
     };
 
     data->entries_spoof = {

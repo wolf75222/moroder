@@ -1830,6 +1830,10 @@ void services::Player::getHome() {
     // whatever came next (opening a playlist) waited behind all of them.
     if (home_queued.exchange(true)) return;
     {
+        std::lock_guard lock(state_mutex);
+        state.flags["home"] = Flags::Ongoing;     // the spinner shows at once, not when the worker gets to it
+    }
+    {
         std::lock_guard lock(command_mutex);
         command_queue.push(HomeCommand{});
     }
