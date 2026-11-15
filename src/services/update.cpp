@@ -202,8 +202,8 @@ bool services::update::offerAtLaunch() {
     const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::string latest = cache.value("latest", std::string());
 
-    // Ask GitHub at most every 10 minutes; otherwise what it said last time.
-    if (now - cache.value("checked_at", 0LL) > 600) {
+    // Ask GitHub at most once an hour; otherwise what it said last time.
+    if (now - cache.value("checked_at", 0LL) > 3600) {
         const std::string fresh = latestRelease(1500);
         if (!fresh.empty()) {
             latest = fresh;
