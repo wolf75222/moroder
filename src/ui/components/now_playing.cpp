@@ -83,7 +83,10 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     const bool ours = state->lyrics && state->lyrics_id == ref.id;
     // Only once the lookup has answered (it starts with the stream): before
     // that the layout would jump from centred to two columns.
-    const bool no_lyrics = !Config::get().ENABLE_LYRICS || (ours && !state->lyrics->found);
+    // Words without timings don't follow the song: shown as a wall of text,
+    // they were more in the way than useful. The cover takes the page instead.
+    const bool unsynced = ours && state->lyrics->found && state->lyrics->lines.empty();
+    const bool no_lyrics = !Config::get().ENABLE_LYRICS || (ours && !state->lyrics->found) || unsynced;
 
     // Cover: as large as the page allows, square in terminal cells (2:1).
     const int room_w = std::max(16, width - 33 - 8);     // the page minus sidebar and margins
@@ -197,7 +200,10 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     if (room_for_next) lyrics_w = std::max(20, lyrics_w - UP_W - 2);
 
     if (no_lyrics) {
-        Element centre_block = vbox({ cover, track_block(true) });
+        Element centre_block = vbox({
+            cover, track_block(true),
+            unsynced ? vbox({ text(""), line(text("No synced lyrics for this track") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)), true) }) : emptyElement(),
+        });
         if (page_w >= cover_w + 8 + UP_W + 6)
             centre_block = hbox({ std::move(centre_block), text("      "), up_next(height - 2) });
         return vbox({ filler(), line(std::move(centre_block), true), filler() }) | flex;
