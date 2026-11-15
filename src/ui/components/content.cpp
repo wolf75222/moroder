@@ -1266,7 +1266,9 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             } else if (!mood.empty()) {
                 extra = text(mood) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
             }
-            return hbox({ text("  "), chips_c->Render(), filler(), vbox({ text(""), extra }), text("   ") });
+            // A narrow window has tighter tabs (one column less on their left):
+            // one more here keeps them level with the covers.
+            return hbox({ text(ftxui::Terminal::Size().dimx < 120 ? "   " : "  "), chips_c->Render(), filler(), vbox({ text(""), extra }), text("   ") });
         });
         main_content->Add(tabs.component);
         main_content->Add(main_content_items.front().component);
