@@ -68,8 +68,9 @@ try {
     New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
     Get-ChildItem $Prefix -Directory -Filter ".old-*" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     $Keep = Join-Path $Prefix "yt-dlp.exe"
+    $KeepDeno = Join-Path $Prefix "deno.exe"
     $Old = Join-Path $Prefix (".old-" + [Guid]::NewGuid().ToString("N").Substring(0, 8))
-    $Current = Get-ChildItem $Prefix | Where-Object { $_.FullName -ne $Keep -and $_.Name -notlike ".old-*" }
+    $Current = Get-ChildItem $Prefix | Where-Object { $_.FullName -ne $Keep -and $_.FullName -ne $KeepDeno -and $_.Name -notlike ".old-*" }
     if ($Current) {
         New-Item -ItemType Directory -Path $Old | Out-Null
         $Current | Move-Item -Destination $Old -Force
@@ -90,6 +91,21 @@ try {
         Step "yt-dlp" "downloading"
         Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile $Keep -UseBasicParsing
         Ok "yt-dlp" (& $Keep --version)
+    }
+
+    # A JavaScript runtime: yt-dlp needs one to solve YouTube's challenges,
+    # without it streams don't resolve. Deno, unless one is installed already.
+    $Js = @("deno", "node", "bun") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+    if ($Js -and -not (Test-Path $KeepDeno)) {
+        Ok "JS runtime" "$Js (already installed)"
+    } elseif (Test-Path $KeepDeno) {
+        Ok "JS runtime" ("deno " + ((& $KeepDeno --version) -split "\s+")[1])
+    } else {
+        Step "JS runtime" "downloading Deno (yt-dlp needs it for YouTube)"
+        Invoke-WebRequest "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -OutFile "$Tmp\deno.zip" -UseBasicParsing
+        Expand-Archive "$Tmp\deno.zip" -DestinationPath "$Tmp\deno" -Force
+        Copy-Item "$Tmp\deno\deno.exe" $KeepDeno -Force
+        Ok "JS runtime" ("deno " + ((& $KeepDeno --version) -split "\s+")[1])
     }
 
     # On the user PATH (new terminals), and in this one.

@@ -1,5 +1,7 @@
 #include <cctype>
 #include "../include/ui/cover_cache.hpp"
+#include "../include/ui/icons.hpp"
+#include <ftxui/screen/terminal.hpp>
 #include "../include/ui/viewport.hpp"
 #include "../include/services/suggest.hpp"
 #include "../include/services/scrobble.hpp"
@@ -220,6 +222,21 @@ static void detectSyncOutput() {
 
 int main(int argc, char *argv[]) {
     platform::initConsole();
+#ifdef _WIN32
+    /* FTXUI's Windows defaults are the old console's: 16 colours when the
+    console refuses one of the modes it asks for (covers come out as grey
+    noise), ASCII widgets, no block characters. Windows 10 / 11 consoles and
+    Windows Terminal do true colour and Unicode.
+    */
+    if (platform::isTerminal(1)) {
+        auto quirks = ftxui::Terminal::GetQuirks();
+        quirks.SetColorSupport(ftxui::Terminal::Color::TrueColor);
+        quirks.SetBlockCharacters(true);
+        quirks.SetComponentAscii(false);
+        quirks.SetCursorHiding(true);
+        ftxui::Terminal::SetQuirks(quirks);
+    }
+#endif
     // Once, before any thread touches libcurl (doctor's checks run side by side).
     curl_global_init(CURL_GLOBAL_DEFAULT);
     Config::app_name = APP_NAME;
@@ -2443,6 +2460,9 @@ int main(int argc, char *argv[]) {
         spdlog::shutdown();
         std::_Exit(0);
     };
+
+    // Nerd Font glyphs swapped for plain symbols where the font lacks them (ICONS).
+    ui = Renderer(ui, [inner = ui] { return ui::withIcons(inner->Render()); });
 
     // moroder search <words>: start on those results.
     if (!start_query.empty()) {

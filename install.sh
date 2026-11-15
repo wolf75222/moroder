@@ -261,6 +261,21 @@ t_deps() {
     set_ deps run "${need:+installed$need, }yt-dlp $(yt-dlp --version 2>/dev/null)"
 }
 
+# yt-dlp needs a JavaScript runtime to solve YouTube's challenges: without
+# one, streams don't resolve. Deno into PREFIX/bin, unless one is there.
+t_js() {
+    for js in deno node bun; do
+        if have "$js"; then set_ js run "$js (already installed)"; return 0; fi
+    done
+    case "$ARCH" in x86_64|amd64) target=x86_64-unknown-linux-gnu ;; aarch64|arm64) target=aarch64-unknown-linux-gnu ;; *) set_ js skip "no Deno build for $ARCH"; return 0 ;; esac
+    have unzip || { set_ js fail "unzip is needed to install Deno"; return 1; }
+    set_ js run "downloading Deno"
+    curl -fsSL -o "$TMP/deno.zip" "https://github.com/denoland/deno/releases/latest/download/deno-$target.zip" || return 1
+    unzip -oq "$TMP/deno.zip" -d "$TMP/deno" || return 1
+    mkdir -p "$PREFIX/bin" && install -m 755 "$TMP/deno/deno" "$PREFIX/bin/deno" || return 1
+    set_ js run "deno $("$PREFIX/bin/deno" --version 2>/dev/null | head -n1 | cut -d' ' -f2)"
+}
+
 t_tools() {      # building on a Mac also needs these
     for f in cmake pkg-config; do
         brew list --versions "$f" >/dev/null 2>&1 && continue
@@ -372,11 +387,12 @@ if [ "$PREBUILT" = 1 ]; then
     run deps download             # side by side
 else
     [ "$OS" = "Darwin" ] && task tools "Build tools"
+    [ "$OS" = "Linux" ] && task js "JS runtime"
     task fetch   "Source"
     task build   "Compile"
     task install "Install"
     task path    "PATH"
-    if [ "$OS" = "Darwin" ]; then run deps tools fetch; else run deps fetch; fi
+    if [ "$OS" = "Darwin" ]; then run deps tools fetch; else run deps js fetch; fi
     run build
 fi
 run install

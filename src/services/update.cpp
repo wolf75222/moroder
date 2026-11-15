@@ -337,6 +337,40 @@ int services::update::doctor() {
         if (!from.empty()) live.set(id, State::Ok, who + ", from " + from + " (kept fresh)");
         else live.set(id, State::Ok, who);
     });
+    check("JS runtime", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
+        (void)ec;
+        // yt-dlp solves YouTube's challenges with one; without it streams don't resolve.
+        for (const char* js : {"deno", "node", "bun"}) {
+            if (!have(js)) continue;
+            // "deno 2.9.8 (stable, ...)", "v22.1.0" (node), "1.2.3" (bun): the version word.
+            std::istringstream words(firstLine(std::string(js) + " --version"));
+            std::string w, version;
+            while (words >> w) if (std::isdigit(static_cast<unsigned char>(w[w[0] == 'v' && w.size() > 1 ? 1 : 0]))) { version = w; break; }
+            live.set(id, State::Ok, std::string(js) + " " + version);
+            return;
+        }
+        live.set(id, State::Fail, "none: yt-dlp needs Deno for YouTube (moroder update installs it)");
+    });
+    check("Streams", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
+        (void)ec;
+        // A real track, resolved end to end the way playback does it.
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string out;
+        platform::shell("yt-dlp -f bestaudio/best -g --no-warnings --socket-timeout 15 "
+                        + platform::shellQuote("https://music.youtube.com/watch?v=5NV6Rdv1a3I"), &out, true);
+        const long ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+        std::istringstream lines(out);
+        std::string line, last_error;
+        bool resolved = false;
+        while (std::getline(lines, line)) {
+            if (line.rfind("http", 0) == 0) resolved = true;
+            if (line.find("ERROR") != std::string::npos) last_error = line;
+        }
+        if (resolved) live.set(id, ms > 8000 ? State::Warn : State::Ok, "a test track resolved in " + std::to_string(ms) + " ms");
+        else live.set(id, State::Fail, last_error.empty() ? "yt-dlp couldn't resolve a test track" : last_error);
+    });
     check("Network", [&](size_t id) {
         std::error_code ec;      // its own: the checks run side by side
         const long ms = pingMs("https://music.youtube.com/", 6000);
