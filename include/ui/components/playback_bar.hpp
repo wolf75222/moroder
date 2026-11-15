@@ -19,6 +19,7 @@ struct PlaybackData {
 
     // Seconds, from the position tick; duration 0 while a stream loads.
     uint64_t position = 0;
+    double position_exact = 0;   // seconds, not rounded (synced lyrics)
     uint64_t duration = 0;
 
     int volume = 100;

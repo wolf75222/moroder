@@ -501,6 +501,7 @@ int main(int argc, char *argv[]) {
         screen.Post([&playback_bar_data, position, duration, progress] {
             last_tick_at = std::chrono::steady_clock::now();
             playback_bar_data.position = position / 1000000ULL;
+            playback_bar_data.position_exact = static_cast<double>(position) / 1e6;
             playback_bar_data.duration = duration / 1000000ULL;
             if (progress >= 0) playback_bar_data.progress = progress;
         });
@@ -511,6 +512,7 @@ int main(int argc, char *argv[]) {
         screen.Post([&playback_bar_data] {
             playback_bar_data.progress = 0;
             playback_bar_data.position = 0;
+            playback_bar_data.position_exact = 0;
             playback_bar_data.duration = 0;
         });
         screen.PostEvent(Event::Custom);
@@ -1023,6 +1025,7 @@ int main(int argc, char *argv[]) {
             if (sidebar_focused && sidebar_selected > 2 && static_cast<size_t>(sidebar_selected - 3) < sidebar_data.results.size()) {
                 ref = &sidebar_data.results[sidebar_selected - 3].ref;
             } else if (ui::ContentEntry* e = [&]() -> ui::ContentEntry* {
+                           if (current_state == ui::State::NOWPLAYING) return nullptr;   // page hidden
                            for (auto& item : main_content_items) if (item.component && item.component->Focused()) return &item;
                            return nullptr; }()) {
                 const music::ApiResult* r = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
@@ -1036,7 +1039,7 @@ int main(int argc, char *argv[]) {
 
             // Same for a song: resolve its stream, so Enter starts it at once.
             static std::string last_warm;
-            if (!sidebar_focused) {
+            if (!sidebar_focused && current_state != ui::State::NOWPLAYING) {
                 for (auto& item : main_content_items) {
                     if (!item.component || !item.component->Focused()) continue;
                     const music::ApiResult* r = (!item.carousel_data.results.empty() && item.selected >= 0 && static_cast<size_t>(item.selected) < item.carousel_data.results.size())
@@ -1300,7 +1303,8 @@ int main(int argc, char *argv[]) {
 
                             if (current_state == ui::State::NOWPLAYING) {
                                 const bool playing = playback_bar_data.is_playing;
-                                double pos = static_cast<double>(playback_bar_data.position);
+                                // The exact position: whole seconds made the lyrics up to 1 s late.
+                                double pos = playback_bar_data.position_exact;
                                 if (playing && last_tick_at != std::chrono::steady_clock::time_point{}) {
                                     // Between the 1 s ticks, so synced lyrics move on time.
                                     pos += std::min(1.0, std::chrono::duration<double>(std::chrono::steady_clock::now() - last_tick_at).count());
@@ -1514,6 +1518,7 @@ int main(int argc, char *argv[]) {
     };
 
     auto focused_song = [&]() -> std::optional<music::SongRef> {
+        if (current_state == ui::State::NOWPLAYING) return std::nullopt;   // the page is hidden
         for (auto& item : main_content_items) {
             if (!item.component || !item.component->Focused()) continue;
             const music::ApiResult* r = (!item.carousel_data.results.empty() && item.selected >= 0 && static_cast<size_t>(item.selected) < item.carousel_data.results.size())
@@ -1534,6 +1539,7 @@ int main(int argc, char *argv[]) {
 
     // Content entry that has focus (a row, a carousel, the filters...), if any.
     auto focused_entry = [&]() -> ui::ContentEntry* {
+        if (current_state == ui::State::NOWPLAYING) return nullptr;    // the page is hidden
         for (auto& item : main_content_items)
             if (item.component && item.component->Focused()) return &item;
         return nullptr;
@@ -1708,8 +1714,9 @@ int main(int argc, char *argv[]) {
             }
 
             if(click) {
-                // A carousel / grid's ‹ ›.
+                // A carousel / grid's ‹ › (not those of the page under Now Playing).
                 for (auto& item : main_content_items) {
+                    if (current_state == ui::State::NOWPLAYING) break;
                     if (!*item.shown) continue;
                     if (ui::hscrollClick(&item.carousel_data.hscroll, m.x, m.y) || ui::hscrollClick(&item.grid_data.hscroll, m.x, m.y)) return true;
                 }
@@ -1916,7 +1923,8 @@ int main(int argc, char *argv[]) {
                     return true;
                 }
 
-                if(main_content->Focusable()) {
+                // Not the page hidden under Now Playing.
+                if(current_state != ui::State::NOWPLAYING && main_content->Focusable()) {
                     if(!main_content->Focused()) main_content->TakeFocus();
                     main_content->OnEvent(step);
                 }

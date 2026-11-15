@@ -90,7 +90,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     const bool room_for_next = !no_lyrics && !ui::now_playing_upnext.empty() && page_w - fixed >= 24;
     int cover_h = no_lyrics ? std::clamp(std::min(height - 9, room_w / 2), 8, 40)
                             : std::clamp(height - 12, 8, 26);
-    if (room_for_next) cover_h = std::max(12, std::min(cover_h, (page_w - fixed) / 2));
+    if (room_for_next) cover_h = std::min(cover_h, std::max(8, (page_w - fixed) / 2));
     const int cover_w = cover_h * 2;
 
     // Room for the lyrics: the page minus sidebar, cover and margins.
@@ -155,6 +155,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         int used = 0;
         for (const auto& r : ui::now_playing_upnext) {
             if (first || r.autoplay != in_auto) {
+                if (used + 6 > rows_room) break;      // a heading needs a row under it
                 if (!first) { col.push_back(text("")); used++; }
                 col.push_back(text(r.autoplay ? "Autoplay" : "Next in queue") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
                 col.push_back(separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)));
