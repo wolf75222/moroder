@@ -30,6 +30,7 @@
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
+#include <curl/curl.h>
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
@@ -219,6 +220,8 @@ static void detectSyncOutput() {
 
 int main(int argc, char *argv[]) {
     platform::initConsole();
+    // Once, before any thread touches libcurl (doctor's checks run side by side).
+    curl_global_init(CURL_GLOBAL_DEFAULT);
     Config::app_name = APP_NAME;
 
     utils::ensure_dir(utils::resolve_path(MORODER_LOG_PATH));

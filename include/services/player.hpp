@@ -264,6 +264,9 @@ public:
     */
     struct CachedSearch { std::chrono::steady_clock::time_point at; std::vector<music::ApiResult> results; };
     std::map<std::string, CachedSearch> search_cache;
+    // The search the screen is showing (under state_mutex): a slower, older
+    // one finishing late must not replace its results.
+    std::string search_current;
     std::mutex search_cache_mutex;
 
     void queue(std::shared_ptr<music::IStreamable> streamable, const bool fresh = true, const bool radio = true);

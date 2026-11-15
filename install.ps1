@@ -61,13 +61,21 @@ try {
     $Size = "{0:N1} MB" -f ((Get-Item "$Tmp\$Asset.zip").Length / 1MB)
     Ok "Download" "$Size, checksum ok"
 
-    # Install: a running moroder.exe can't be overwritten, so it goes first.
-    Get-Process moroder -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Prefix*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Install. A running moroder.exe (the one asking for this update, say) and
+    # its DLLs can't be overwritten or deleted, but they can be moved: the old
+    # files go to a side folder, removed on the next install once they're free.
     Expand-Archive "$Tmp\$Asset.zip" -DestinationPath $Tmp -Force
     New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
+    Get-ChildItem $Prefix -Directory -Filter ".old-*" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     $Keep = Join-Path $Prefix "yt-dlp.exe"
-    Get-ChildItem $Prefix | Where-Object { $_.FullName -ne $Keep } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    $Old = Join-Path $Prefix (".old-" + [Guid]::NewGuid().ToString("N").Substring(0, 8))
+    $Current = Get-ChildItem $Prefix | Where-Object { $_.FullName -ne $Keep -and $_.Name -notlike ".old-*" }
+    if ($Current) {
+        New-Item -ItemType Directory -Path $Old | Out-Null
+        $Current | Move-Item -Destination $Old -Force
+    }
     Copy-Item "$Tmp\$Asset\*" $Prefix -Recurse -Force
+    if (Test-Path $Old) { Remove-Item $Old -Recurse -Force -ErrorAction SilentlyContinue }   # free already, unless in use
     Ok "Install" "$Prefix\moroder.exe"
 
     # yt-dlp: the one already installed, else its standalone .exe next to moroder.

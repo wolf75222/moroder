@@ -137,6 +137,7 @@ struct Process::Impl {
     HANDLE process = nullptr;
     HANDLE to = nullptr;      // our end of the child's stdin
     HANDLE from = nullptr;    // our end of the child's stdout
+    int status = -1;          // exit code once it ended; -1 when killed or unknown
 };
 
 Process::Process() : impl_(std::make_unique<Impl>()) {}
@@ -190,7 +191,16 @@ bool Process::start(const std::vector<std::string>& args) {
     return true;
 }
 
-bool Process::running() const { return impl_->process != nullptr; }
+bool Process::running() const {
+    if (!impl_->process) return false;
+    if (WaitForSingleObject(impl_->process, 0) == WAIT_TIMEOUT) return true;
+    DWORD code = static_cast<DWORD>(-1);
+    GetExitCodeProcess(impl_->process, &code);
+    impl_->status = static_cast<int>(code);
+    CloseHandle(impl_->process);
+    impl_->process = nullptr;
+    return false;
+}
 
 bool Process::write(const std::string& data) {
     if (!impl_->to) return false;
@@ -231,6 +241,7 @@ void Process::kill() {
         TerminateProcess(impl_->process, 1);
         WaitForSingleObject(impl_->process, 2000);
         CloseHandle(impl_->process);
+        impl_->status = -1;
     }
     closeStdin();
     if (impl_->from) CloseHandle(impl_->from);
@@ -239,15 +250,16 @@ void Process::kill() {
 
 int Process::wait() {
     closeStdin();
-    DWORD code = static_cast<DWORD>(-1);
     if (impl_->process) {
+        DWORD code = static_cast<DWORD>(-1);
         WaitForSingleObject(impl_->process, INFINITE);
         GetExitCodeProcess(impl_->process, &code);
         CloseHandle(impl_->process);
+        impl_->status = static_cast<int>(code);
     }
     if (impl_->from) CloseHandle(impl_->from);
     impl_->process = nullptr; impl_->from = nullptr;
-    return static_cast<int>(code);
+    return impl_->status;
 }
 
 void spawnDetached(std::vector<std::string> args, std::string stdin_data) {
@@ -268,9 +280,22 @@ void openUrl(const std::string& url) {
 }
 
 void restart(char** argv) {
-    // No exec on Windows: run the new one in this console, then leave with its code.
-    const intptr_t code = _spawnvp(_P_WAIT, "moroder", argv);
-    std::exit(code < 0 ? 0 : static_cast<int>(code));
+    // No exec on Windows: the new one runs in this console (same path: the
+    // installer replaced the file), and this one leaves with its exit code.
+    wchar_t self[MAX_PATH * 4];
+    const DWORD n = GetModuleFileNameW(nullptr, self, static_cast<DWORD>(sizeof self / sizeof self[0]));
+    std::wstring cmdline = quoteArg(n ? std::wstring(self, n) : std::wstring(L"moroder.exe"));
+    for (int i = 1; argv[i]; i++) cmdline += L" " + quoteArg(wide(argv[i]));
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(n ? self : nullptr, cmdline.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) std::exit(0);
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    std::exit(static_cast<int>(code));
 }
 
 // ---------------------------------------------------------------------------

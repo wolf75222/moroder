@@ -765,6 +765,7 @@ void services::Player::worker_loop() {
 
                 {
                     std::lock_guard lock(state_mutex);
+                    if (c.query != search_current) return;      // superseded before it started
                     state.flags["search"] = Flags::Ongoing;
                     state.errors.erase("search");
                     state.search_results.clear();
@@ -776,7 +777,9 @@ void services::Player::worker_loop() {
                 {
                     std::lock_guard lock(state_mutex);
 
-                    if (err.failed && !err.cancelled) {
+                    if (c.query != search_current) {
+                        // Another search took the screen meanwhile: keep these for the cache only.
+                    } else if (err.failed && !err.cancelled) {
                         state.flags["search"] = Flags::Error;
                         state.errors["search"] = { err.message, err.retryable };
 
@@ -1848,6 +1851,7 @@ void services::Player::search(const std::string& query) {
         auto it = search_cache.find(query);
         if (it != search_cache.end() && std::chrono::steady_clock::now() - it->second.at < std::chrono::minutes(10)) {
             std::lock_guard lock(state_mutex);
+            search_current = query;
             state.flags["search"] = Flags::Done;
             state.errors.erase("search");
             state.search_results = it->second.results;
@@ -1855,6 +1859,10 @@ void services::Player::search(const std::string& query) {
         }
     }
 
+    {
+        std::lock_guard lock(state_mutex);
+        search_current = query;
+    }
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(SearchCommand{query});

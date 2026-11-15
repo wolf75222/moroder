@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <csignal>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -51,6 +52,25 @@ inline std::string clip(std::string s, size_t n) {
         i++;
     }
     return s;
+}
+
+/* hideCursor
+- Hidden while a spinner or the picker draws; shown again on the way out,
+  whatever the way out is: normally, Ctrl-C, or the program ending
+*/
+inline void showCursorNow(int sig) {
+    platform::writeTerminal("\033[?25h");
+    if (sig) { std::signal(sig, SIG_DFL); std::raise(sig); }
+}
+
+inline void hideCursor() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::signal(SIGINT, showCursorNow);
+        std::signal(SIGTERM, showCursorNow);
+        std::atexit([] { if (fancy()) showCursorNow(0); });
+    });
+    platform::writeTerminal("\033[?25l");
 }
 
 inline void title(const std::string& what, const std::string& detail = "") {
@@ -101,22 +121,25 @@ inline int select(const std::string& question, const std::vector<Option>& option
 
     int at = initial;
     const int n = static_cast<int>(options.size());
+    // Each line within the width: a wrapped one would throw the redraw off.
+    const size_t cols = static_cast<size_t>(std::max(20, columns() - 1));
     auto draw = [&](bool first) {
         std::string out;
         if (!first) out += "\033[" + std::to_string(n + 1) + "A";
-        out += "\r\033[2K  " + bold() + "?" + reset() + "  " + question + "  " + dim() + "↑↓ Enter" + reset() + "\r\n";
+        out += "\r\033[2K  " + bold() + "?" + reset() + "  " + clip(question, cols > 16 ? cols - 16 : cols) + "  " + dim() + "↑↓ Enter" + reset() + "\r\n";
         for (int i = 0; i < n; i++) {
             std::string label = options[i].label;
             label.resize(width + 2, ' ');
-            out += "\r\033[2K  " + (i == at ? red() + "❯" + reset() + "  " + bold() + label + reset()
-                                            : std::string("   ") + label)
-                 + dim() + options[i].detail + reset() + "\r\n";
+            const size_t room = cols > 5 + label.size() ? cols - 5 - label.size() : 0;
+            out += "\r\033[2K  " + (i == at ? red() + "❯" + reset() + "  " + bold() + clip(label, cols - 5) + reset()
+                                            : std::string("   ") + clip(label, cols - 5))
+                 + dim() + clip(options[i].detail, room) + reset() + "\r\n";
         }
         platform::writeTerminal(out);
     };
 
     std::cout << std::flush;
-    platform::writeTerminal("\033[?25l");
+    hideCursor();
     draw(true);
     int chosen = -2;
     std::string pending;
@@ -129,7 +152,13 @@ inline int select(const std::string& question, const std::vector<Option>& option
             if (pending.rfind("\033[A", 0) == 0 || pending.rfind("\033OA", 0) == 0) { at = (at + n - 1) % n; pending.erase(0, 3); }
             else if (pending.rfind("\033[B", 0) == 0 || pending.rfind("\033OB", 0) == 0) { at = (at + 1) % n; pending.erase(0, 3); }
             else if (pending[0] == '\033' && pending.size() >= 3 && pending[1] == '[') pending.erase(0, 3);   // other keys
-            else if (pending[0] == '\033' && pending.size() == 1) { chosen = -1; }                             // Esc alone
+            else if (pending[0] == '\033' && pending.size() == 1) {
+                // Esc alone, or the start of an arrow key whose rest is late (SSH)?
+                char more[16];
+                const int m = raw.read(more, sizeof more, 60);
+                if (m > 0) pending.append(more, static_cast<size_t>(m));
+                else chosen = -1;
+            }
             else {
                 const char c = pending[0];
                 pending.erase(0, 1);
@@ -145,7 +174,7 @@ inline int select(const std::string& question, const std::vector<Option>& option
 
     // Collapse to the answer: clear the list, one line in its place.
     std::string out = "\033[" + std::to_string(n + 1) + "A\033[J\r";
-    out += "  " + (chosen >= 0 ? green() + "✓" : dim() + "–") + reset() + "  " + question + "  "
+    out += "  " + (chosen >= 0 ? green() + "✓" : dim() + "–") + reset() + "  " + clip(question, cols > 30 ? cols - 30 : cols) + "  "
          + (chosen >= 0 ? bold() + options[chosen].label + reset() : dim() + "cancelled" + reset()) + "\r\n";
     out += "\033[?25h";
     platform::writeTerminal(out);
@@ -175,7 +204,8 @@ public:
 
     void start() {
         if (!fancy() || thread_.joinable()) return;
-        std::cout << "\033[?25l" << std::flush;
+        std::cout << std::flush;
+        hideCursor();
         stop_ = false;
         thread_ = std::thread([this] {
             while (!stop_) {

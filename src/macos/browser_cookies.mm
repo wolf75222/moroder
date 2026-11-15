@@ -179,9 +179,25 @@ std::vector<fs::path> profileDirs(const fs::path& root) {
     return out;
 }
 
+// Only cookies set by the site itself, not partitioned ones set inside other
+// sites (a YouTube video embedded on some page): those aren't a sign-in, and
+// their values must not overwrite the real ones.
+std::string unpartitioned(sqlite3* db) {
+    sqlite3_stmt* st = nullptr;
+    bool has = false;
+    if (sqlite3_prepare_v2(db, "SELECT 1 FROM pragma_table_info('cookies') WHERE name = 'top_frame_site_key'", -1, &st, nullptr) == SQLITE_OK &&
+        sqlite3_step(st) == SQLITE_ROW) has = true;
+    sqlite3_finalize(st);
+    return has ? " AND (top_frame_site_key IS NULL OR top_frame_site_key = '')" : "";
+}
+
 // Whether the store has a YouTube login cookie (read from a private copy: the
 // browser keeps it locked). Names only, nothing decrypted.
-bool hasYouTubeLogin(const fs::path& store) {
+bool hasLogin(const fs::path& store, const char* hosts);
+
+bool hasYouTubeLogin(const fs::path& store) { return hasLogin(store, "'.youtube.com', 'youtube.com'"); }
+
+bool hasLogin(const fs::path& store, const char* hosts) {
     std::string tmpl = (fs::temp_directory_path() / "moroder-probe-XXXXXX.db").string();
     const int fd = mkstemps(tmpl.data(), 3);
     if (fd < 0) return false;
@@ -192,9 +208,11 @@ bool hasYouTubeLogin(const fs::path& store) {
     sqlite3* db = nullptr;
     if (!ec && sqlite3_open_v2(tmpl.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
         sqlite3_stmt* st = nullptr;
-        const char* sql = "SELECT 1 FROM cookies WHERE host_key IN ('.youtube.com', 'youtube.com') "
-                          "AND name IN ('SAPISID', '__Secure-3PAPISID', '__Secure-1PAPISID') LIMIT 1";
-        if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) found = true;
+        // A first-party sign-in on youtube.com: the __Secure-3P ones alone also
+        // come from YouTube embedded on other sites, without being signed in.
+        const std::string sql = std::string("SELECT 1 FROM cookies WHERE host_key IN (") + hosts + ") "
+                                "AND name IN ('SAPISID', '__Secure-1PAPISID')" + unpartitioned(db) + " LIMIT 1";
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) found = true;
         sqlite3_finalize(st);
     }
     sqlite3_close(db);
@@ -229,6 +247,18 @@ std::vector<std::pair<std::string, std::string>> services::signedInProfiles(cons
             out.push_back({dir.filename().string(), profileName(root, dir.filename().string())});
     }
     return out;
+}
+
+bool services::signedInToGoogle(const std::string& browser) {
+    auto it = browsers().find(utils::lower(browser));
+    const fs::path home = utils::home();
+    if (it == browsers().end() || home.empty()) return false;
+    const fs::path root = home / "Library" / "Application Support" / it->second.dir;
+    for (const fs::path& dir : profileDirs(root)) {
+        const fs::path store = cookieStore(dir);
+        if (!store.empty() && hasLogin(store, "'.google.com'")) return true;
+    }
+    return false;
 }
 
 std::string services::readYouTubeCookies(const std::string& spec, std::string& error) {
@@ -290,10 +320,11 @@ std::string services::readYouTubeCookies(const std::string& spec, std::string& e
     sqlite3_finalize(st);
 
     // Domain cookies first, then host cookies for music.youtube.com override.
-    const char* sql =
+    const std::string sql_text =
         "SELECT name, value, encrypted_value FROM cookies "
-        "WHERE host_key IN ('.youtube.com', 'youtube.com', '.music.youtube.com', 'music.youtube.com') "
-        "ORDER BY length(host_key)";
+        "WHERE host_key IN ('.youtube.com', 'youtube.com', '.music.youtube.com', 'music.youtube.com')" + unpartitioned(db) +
+        " ORDER BY length(host_key)";
+    const char* sql = sql_text.c_str();
 
     std::map<std::string, std::string> jar;
     std::vector<std::string> order;

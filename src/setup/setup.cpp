@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <random>
 #include <mutex>
 #include <thread>
 #include <iostream>
@@ -110,24 +111,17 @@ Command run(const std::string& command_line) {
     return result;
 }
 
-std::string shellQuote(const std::string& value) {
-    std::string out = "'";
-
-    for (char c : value) {
-        if (c == '\'') out += "'\\''";
-        else           out += c;
-    }
-
-    return out + "'";
-}
+std::string shellQuote(const std::string& value) { return platform::shellQuote(value); }
 
 bool haveCommand(const std::string& name) {
     return !platform::which(name).empty();
 }
 
 std::string commandVersion(const std::string& name, const std::string& flag = "--version") {
-    Command r = run(shellQuote(name) + " " + flag + " | head -1");
-    return r.ok() ? utils::trim(r.output) : "";
+    Command r = run(shellQuote(name) + " " + flag);
+    if (!r.ok()) return "";
+    const size_t nl = r.output.find('\n');
+    return utils::trim(nl == std::string::npos ? r.output : r.output.substr(0, nl));
 }
 
 void openInBrowser(const std::string& url) {
@@ -704,7 +698,18 @@ std::string ytdlpPython() {
   after an empty search that never touches the network
 */
 std::string cookiesViaYtdlpCli(const FoundBrowser& b, std::string& error) {
-    const fs::path file = fs::temp_directory_path() / ("moroder-cookies-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
+    /* The jar is a Google session: never in the shared temp folder. A 0600
+    file with an unpredictable name in Moroder's own config folder, made
+    before yt-dlp writes into it (it keeps the mode).
+    */
+    const fs::path dir = fs::path(Config::path()).parent_path();
+    std::error_code mk;
+    fs::create_directories(dir, mk);
+    std::random_device rd;
+    char name[40];
+    std::snprintf(name, sizeof name, ".cookies-%08x%08x.txt", rd(), rd());
+    const fs::path file = dir / name;
+    if (!platform::writePrivateFile(file, "")) { error = "couldn't create a private file in " + dir.string(); return ""; }
     platform::Process p;
     if (!p.start({ "yt-dlp", "--cookies-from-browser", b.ytdlp_spec, "--cookies", file.string(),
                    "--skip-download", "--no-warnings", "--quiet", "ytsearch0:moroder" })) { error = "couldn't start yt-dlp"; return ""; }
@@ -852,9 +857,14 @@ std::vector<Account> accountsIn(const std::string& browser, bool native, const s
     return out;
 }
 
-// A YouTube login: SAPISID, or the __Secure- ones recent Chromium keeps instead.
+/* hasLogin
+- A first-party YouTube sign-in: SAPISID or __Secure-1PAPISID. The
+  __Secure-3P ones alone also come from YouTube embedded on other sites
+  (a browser signed in to Google but never to youtube.com), and YouTube
+  Music doesn't accept them as a session
+*/
 bool hasLogin(const std::string& cookie) {
-    return contains(cookie, "SAPISID=") || contains(cookie, "3PAPISID=") || contains(cookie, "1PAPISID=");
+    return !cookieValue(cookie, "SAPISID").empty() || !cookieValue(cookie, "__Secure-1PAPISID").empty();
 }
 
 std::string prettyBrowser(const std::string& name) {
@@ -1210,6 +1220,16 @@ int setup::run(int argc, char* argv[]) {
             live.finish();
         }
 
+        // Signed in to Google but never to youtube.com there: say so, it looks
+        // like a sign-in from the browser's side.
+        for (const auto& b : found) {
+            if (!services::isCookieStoreBrowser(b.name)) continue;
+            const bool has_youtube = std::any_of(sources.begin(), sources.end(), [&](const Source& src) { return src.fb.name == b.name; });
+            if (!has_youtube && services::signedInToGoogle(b.name))
+                note(prettyBrowser(b.name) + ": signed in to Google, not to YouTube yet. Open music.youtube.com there once"
+                     + (browserWindowName().empty() ? std::string(", then Sign in first.") : std::string(", or use New window.")));
+        }
+
         std::vector<cli::Option> options;
         for (const auto& s : sources) {
             const bool several = std::count_if(sources.begin(), sources.end(), [&](const Source& o) { return o.fb.name == s.fb.name; }) > 1;
@@ -1243,9 +1263,16 @@ int setup::run(int argc, char* argv[]) {
             {
                 cli::Live live;
                 const size_t id = live.add(window_browser);
-                live.set(id, cli::State::Run, "sign in to YouTube Music in the window that opened");
+                live.set(id, cli::State::Run, "sign in to YouTube Music in the window that opened  (Esc cancels)");
                 live.start();
-                cookie = signInWithBrowserWindow(cookies_dir / "browser-profile", [] { return false; }, error);
+                platform::RawInput keys;      // Esc / q / Ctrl-C while waiting
+                auto cancelled = [&keys] {
+                    char b[16];
+                    const int n = keys.ok() ? keys.read(b, sizeof b, 0) : 0;
+                    for (int i = 0; i < n; i++) if (b[i] == 27 || b[i] == 'q' || b[i] == 3) return true;
+                    return false;
+                };
+                cookie = signInWithBrowserWindow(cookies_dir / "browser-profile", cancelled, error);
                 live.set(id, cookie.empty() ? cli::State::Warn : cli::State::Ok, cookie.empty() ? error : "signed in");
                 live.finish();
             }

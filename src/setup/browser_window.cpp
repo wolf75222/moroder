@@ -198,13 +198,42 @@ std::string youtubeCookies(int port, const std::string& path) {
     }
 }
 
+size_t collect(char* d, size_t s, size_t n, void* out) {
+    static_cast<std::string*>(out)->append(d, s * n);
+    return s * n;
+}
+
+// Open tabs (pages); -1 when the browser doesn't answer.
+int pageCount(int port) {
+    CURL* c = curl_easy_init();
+    if (!c) return -1;
+    std::string body;
+    curl_easy_setopt(c, CURLOPT_URL, ("http://127.0.0.1:" + std::to_string(port) + "/json/list").c_str());
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 2000L);
+    const bool ok = curl_easy_perform(c) == CURLE_OK;
+    curl_easy_cleanup(c);
+    if (!ok) return -1;
+    const json j = json::parse(body, nullptr, false);
+    if (!j.is_array()) return -1;
+    int pages = 0;
+    for (const auto& t : j) pages += t.value("type", std::string()) == "page";
+    return pages;
+}
+
 void closeBrowser(int port, const std::string& path) {
     WebSocket ws;
     if (ws.open(port, path)) ws.send(R"({"id":2,"method":"Browser.close"})");
 }
 
 bool signedIn(const std::string& cookie) {
-    return cookie.find("SAPISID=") != std::string::npos || cookie.find("3PAPISID=") != std::string::npos;
+    // First-party sign-in cookies (see hasLogin in setup.cpp).
+    for (const char* name : {"SAPISID=", "__Secure-1PAPISID="}) {
+        for (size_t at = cookie.find(name); at != std::string::npos; at = cookie.find(name, at + 1))
+            if (at == 0 || cookie[at - 1] == ' ' || cookie[at - 1] == ';') return true;
+    }
+    return false;
 }
 
 }
@@ -251,20 +280,32 @@ std::string setup::signInWithBrowserWindow(const fs::path& profile_dir, const st
     }
     if (port == 0) { browser.kill(); error = "the browser didn't open its DevTools port"; return ""; }
 
-    // Until you're signed in (already, if this profile was used before).
+    /* Until you're signed in (already, if this profile was used before): a
+    look every second; stops when you close the window (no page left: on
+    macOS the browser itself stays open), quit the browser, cancel, or after
+    ten minutes.
+    */
     std::string cookie;
-    std::string drained;
-    while (!cancelled()) {
+    bool closed = false, was_cancelled = false;
+    const auto give_up = std::chrono::steady_clock::now() + std::chrono::minutes(10);
+    while (true) {
         cookie = youtubeCookies(port, path);
         if (done(cookie)) break;
-        if (browser.read(drained, 1500) < 0 && !browser.running()) break;      // window closed
-        drained.clear();
-        std::ifstream alive(port_file);
-        if (!alive) break;                                                    // browser quit
+        if (!browser.running() || pageCount(port) == 0) { closed = true; break; }
+        if (std::chrono::steady_clock::now() > give_up) break;
+        bool stop = false;
+        for (int i = 0; i < 10 && !stop; i++) {
+            if (cancelled()) { was_cancelled = stop = true; break; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (stop) break;
     }
     closeBrowser(port, path);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (int i = 0; i < 20 && browser.running(); i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     browser.kill();
-    if (!done(cookie)) { error = cancelled() ? "cancelled" : "the window closed before you signed in"; return ""; }
+    if (!done(cookie)) {
+        error = was_cancelled ? "cancelled" : closed ? "the window closed before you signed in" : "no sign-in after 10 minutes";
+        return "";
+    }
     return cookie;
 }

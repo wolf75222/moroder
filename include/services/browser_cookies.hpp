@@ -31,4 +31,8 @@ std::string readYouTubeCookies(const std::string& browser, std::string& error);
 */
 std::vector<std::pair<std::string, std::string>> signedInProfiles(const std::string& browser);
 
+// Signed in to Google (google.com) in one of its profiles: told apart from a
+// YouTube sign-in to explain why it isn't one. No Keychain prompt either.
+bool signedInToGoogle(const std::string& browser);
+
 }

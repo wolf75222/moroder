@@ -287,6 +287,7 @@ int services::update::doctor() {
     };
 
     check("Moroder", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         const std::string latest = latestRelease(6000);
         if (devBuild())                            live.set(id, State::Ok, std::string("development build") + (latest.empty() ? "" : ", latest release is " + latest));
         else if (latest.empty())                   live.set(id, State::Warn, std::string(MORODER_VERSION) + ", couldn't reach GitHub");
@@ -294,6 +295,7 @@ int services::update::doctor() {
         else                                       live.set(id, State::Ok, latest + ", the latest");
     });
     check("yt-dlp", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         const std::string mine = firstLine("yt-dlp --version");
         if (mine.empty()) { live.set(id, State::Fail, "missing: " + INSTALL_YTDLP); return; }
         live.set(id, State::Run, mine + ", comparing with the latest");
@@ -302,6 +304,7 @@ int services::update::doctor() {
         else live.set(id, State::Ok, mine + (latest.empty() ? "" : ", the latest"));
     });
     check("mpv", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         for (const char* lib : {"/opt/homebrew/lib/libmpv.dylib", "/usr/local/lib/libmpv.dylib",
                                 "/usr/lib/x86_64-linux-gnu/libmpv.so.2", "/usr/lib/aarch64-linux-gnu/libmpv.so.2",
                                 "/usr/lib64/libmpv.so.2", "/usr/lib/libmpv.so.2"})
@@ -320,6 +323,7 @@ int services::update::doctor() {
         else live.set(id, State::Fail, "libmpv not found: " + INSTALL_MPV);
     });
     check("Sign-in", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         const fs::path session = cfg / "browser.json";
         if (!fs::exists(session, ec)) { live.set(id, State::Warn, "not signed in: moroder setup (or moroder -a)"); return; }
         std::string from;
@@ -334,18 +338,21 @@ int services::update::doctor() {
         else live.set(id, State::Ok, who);
     });
     check("Network", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         const long ms = pingMs("https://music.youtube.com/", 6000);
         if (ms < 0) live.set(id, State::Fail, "music.youtube.com unreachable");
         else live.set(id, ms > 1500 ? State::Warn : State::Ok, "music.youtube.com in " + std::to_string(ms) + " ms");
     });
 #ifdef __APPLE__
     check("Notifications", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         for (const char* app : {"/opt/homebrew/share/moroder/Moroder.app", "/usr/local/share/moroder/Moroder.app"})
             if (fs::exists(app, ec)) { live.set(id, State::Ok, "Moroder.app, cover art shown"); return; }
         live.set(id, State::Warn, "helper app missing: notifications without cover art");
     });
 #endif
     check("Terminal", [&](size_t id) {
+        std::error_code ec;      // its own: the checks run side by side
         const char* term = std::getenv("TERM_PROGRAM");
         const char* ct = std::getenv("COLORTERM");
         const std::string name = term ? term : (std::getenv("TERM") ? std::getenv("TERM") : "unknown");

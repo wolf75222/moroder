@@ -20,7 +20,10 @@ extern char** environ;
 
 namespace platform {
 
-void initConsole() {}
+void initConsole() {
+    // A child that died (the resolver's Python) must not kill us on the next write.
+    std::signal(SIGPIPE, SIG_IGN);
+}
 
 bool isTerminal(int fd) { return ::isatty(fd) != 0; }
 
@@ -65,7 +68,28 @@ const char* quietStderr() { return " 2>/dev/null"; }
 struct Process::Impl {
     pid_t pid = 0;
     int to = -1, from = -1;
+    int status = -1;          // exit code once reaped; -1 when killed or unknown
 };
+
+namespace {
+
+// A pipe whose ends are close-on-exec from the start: another thread's spawn
+// can't inherit them (Linux has no POSIX_SPAWN_CLOEXEC_DEFAULT). The child's
+// own ends are dup2'd onto 0 / 1, which clears the flag there.
+bool cloexecPipe(int fds[2]) {
+#ifdef __linux__
+    return pipe2(fds, O_CLOEXEC) == 0;
+#else
+    if (pipe(fds) != 0) return false;
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    return true;
+#endif
+}
+
+int exitCode(int status) { return WIFEXITED(status) ? WEXITSTATUS(status) : -1; }
+
+}
 
 Process::Process() : impl_(std::make_unique<Impl>()) {}
 Process::~Process() { kill(); }
@@ -74,10 +98,8 @@ bool Process::start(const std::vector<std::string>& args) {
     kill();
     if (args.empty()) return false;
     int in[2], out[2];
-    if (pipe(in) != 0) return false;
-    if (pipe(out) != 0) { close(in[0]); close(in[1]); return false; }
-    fcntl(in[1], F_SETFD, FD_CLOEXEC);
-    fcntl(out[0], F_SETFD, FD_CLOEXEC);
+    if (!cloexecPipe(in)) return false;
+    if (!cloexecPipe(out)) { close(in[0]); close(in[1]); return false; }
 #ifdef F_SETNOSIGPIPE
     fcntl(in[1], F_SETNOSIGPIPE, 1);
 #endif
@@ -108,11 +130,19 @@ bool Process::start(const std::vector<std::string>& args) {
     close(out[1]);
     if (!ok) { close(in[1]); close(out[0]); return false; }
 
-    impl_->pid = pid; impl_->to = in[1]; impl_->from = out[0];
+    impl_->pid = pid; impl_->to = in[1]; impl_->from = out[0]; impl_->status = -1;
     return true;
 }
 
-bool Process::running() const { return impl_->pid > 0; }
+bool Process::running() const {
+    if (impl_->pid <= 0) return false;
+    int status = 0;
+    const pid_t r = waitpid(impl_->pid, &status, WNOHANG);
+    if (r == 0) return true;                       // still running
+    impl_->status = r == impl_->pid ? exitCode(status) : -1;
+    impl_->pid = 0;                                // reaped
+    return false;
+}
 
 bool Process::write(const std::string& data) {
     if (impl_->to < 0) return false;
@@ -143,7 +173,11 @@ void Process::closeStdin() {
 }
 
 void Process::kill() {
-    if (impl_->pid > 0) { ::kill(impl_->pid, SIGKILL); waitpid(impl_->pid, nullptr, 0); }
+    if (impl_->pid > 0) {
+        ::kill(impl_->pid, SIGKILL);
+        waitpid(impl_->pid, nullptr, 0);
+        impl_->status = -1;                        // killed: not a success
+    }
     closeStdin();
     if (impl_->from >= 0) close(impl_->from);
     impl_->pid = 0; impl_->from = -1;
@@ -151,11 +185,13 @@ void Process::kill() {
 
 int Process::wait() {
     closeStdin();
-    int status = 0;
-    if (impl_->pid > 0) waitpid(impl_->pid, &status, 0);
+    if (impl_->pid > 0) {
+        int status = 0;
+        impl_->status = waitpid(impl_->pid, &status, 0) == impl_->pid ? exitCode(status) : -1;
+    }
     if (impl_->from >= 0) close(impl_->from);
     impl_->pid = 0; impl_->from = -1;
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return impl_->status;
 }
 
 void spawnDetached(std::vector<std::string> args, std::string stdin_data) {
