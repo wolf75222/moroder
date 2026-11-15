@@ -63,9 +63,9 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
 
     options.entries_option.transform = [data, focused](const EntryState& entry_state) {
         const auto& item = data->entries[entry_state.index];
-        // Where you are: an accent mark and the brighter colour, whatever has the focus.
+        // Where you are: the brighter colour, whatever has the focus.
         const bool here = entry_state.index == data->current;
-        auto mark = [here] { return here ? text(" \u258e") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : text("  "); };
+        auto mark = [] { return text("  "); };     // where you are: brighter text, no mark
         auto tone = [&](bool top) {
             return (entry_state.active && *focused) || here
                 ? color(ui::GetColor(top ? ui::MColor::TEXT_TOP_PRIMARY : ui::MColor::TEXT_BOTTOM_PRIMARY)) | (entry_state.active && *focused ? bold : nothing)
@@ -88,7 +88,7 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
 
         if(entry_state.index >= ui::SIDEBAR_FIXED) {
             return hbox({
-                vbox({ text(""), mark(), text(here ? " \u258e" : "  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }),
+                text("  "),
                 vbox({
                     text(""),
                     text(item.top) | tone(true),

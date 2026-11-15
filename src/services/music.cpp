@@ -401,10 +401,12 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     captureError("explore");
 
     ipc::HomeResponse response;
+    explore_more.clear();
     if (sections.is_array()) {
         for (const nlohmann::json& section : sections) {
             const std::string category = utils::jstr(section, "title");
             if (!section.contains("contents") || !section["contents"].is_array()) continue;
+            if (!utils::jstr(section, "more").empty()) explore_more[category] = utils::jstr(section, "more");
             for (const nlohmann::json& item : section["contents"]) {
                 tryAdd(item, "explore", [&] { response.addItem(category, item); });
             }

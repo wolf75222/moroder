@@ -158,12 +158,11 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
         return vbox({
             text(""),
             text(""),
-            hbox({
-                text(" "),
-                text(data->category_name),
-            }),
+            ui::sectionTitle(data->category_name, data->more),
             text(""),
-            ui::hscrolled(menu->Render(), &data->hscroll),
+            // The arrows level with the covers' middle, not the whole row's
+            // (covers + two lines of captions sat them low).
+            ui::hscrolled(menu->Render(), &data->hscroll, 4),
         });
     });
 }

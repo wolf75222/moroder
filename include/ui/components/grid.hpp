@@ -30,6 +30,7 @@ struct GridData {
     bool is_loading = true;
 
     HScroll hscroll;     // sideways, for the mouse
+    bool more = false;   // its title opens a "More" page (Explore)
 };
 
 void getGridData(services::Player::PlayerState* state, std::string category, GridData* data);

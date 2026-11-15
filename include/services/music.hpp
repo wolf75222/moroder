@@ -81,6 +81,8 @@ public:
     // YouTube Music's Explore page (new albums & singles, trending, videos...).
     std::unordered_map<std::string, std::vector<music::ApiResult>> getExplore(const std::string& browseId = "FEmusic_explore", const std::string& params = "");
     const std::vector<std::string>& exploreOrder() const { return explore_order; }
+    // Each section's "More" page (browse id), by title.
+    const std::unordered_map<std::string, std::string>& exploreMore() const { return explore_more; }
 
     music::Song     getSong(const music::SongRef& song);
     music::Episode  getEpisode(const music::EpisodeRef& episode);
@@ -108,6 +110,7 @@ public:
 private:
     std::vector<std::string> home_order;
     std::vector<std::string> explore_order;
+    std::unordered_map<std::string, std::string> explore_more;
     /* ytm
     - The InnerTube client: transport, auth, endpoints, continuations
     - Reads the same browser.json ytmusicapi's setup writes

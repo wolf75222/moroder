@@ -185,6 +185,7 @@ public:
         std::string explore_tab = "FEmusic_explore";   // which page of Explore is shown
         std::string explore_title;                      // a mood / genre's name, else ""
         std::string explore_params;                     // a mood's params (its page), else ""
+        std::unordered_map<std::string, std::string> explore_more;   // section title -> its "More" page
 
         /* library
         - Filled by the Library*Commands, all require the user to be logged in

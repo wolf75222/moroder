@@ -55,6 +55,10 @@ extern bool search_has_focus;
 // Where covers / thumbnails were drawn this frame (double-click on one plays
 // the track in full screen). coverHit() records one.
 extern std::deque<ftxui::Box> cover_hit_boxes;
+// Section titles with a "More" page, drawn this frame: click to open it.
+extern std::deque<std::pair<ftxui::Box, std::string>> more_boxes;
+// A section title; with " ›" and clickable when it has a "More" page.
+ftxui::Element sectionTitle(const std::string& title, bool more);
 ftxui::Element coverHit(ftxui::Element cover);     // pages must not take the focus from the search bar
 
 /* buildPlaylist

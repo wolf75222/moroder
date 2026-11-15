@@ -1026,6 +1026,7 @@ int main(int argc, char *argv[]) {
 
         services::Player::PlayerState state_copy;
         ui::cover_hit_boxes.clear();      // refilled as this frame draws the covers
+        ui::more_boxes.clear();           // and the section titles with a "More" page
         {
             std::lock_guard lock(player.state_mutex);
             state_copy = player.state;
@@ -1682,14 +1683,16 @@ int main(int argc, char *argv[]) {
         player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
     };
     auto go_back = [&]() -> bool {
-        // A mood's page: back to the list of moods & genres.
+        // A mood's page: back to the moods; a section's "More" page: back to Explore.
         if (current_state == ui::State::EXPLORE) {
-            bool in_mood;
+            std::string tab, title;
             {
                 std::lock_guard lock(player.state_mutex);
-                in_mood = player.state.explore_tab == "FEmusic_moods_and_genres_category";
+                tab = player.state.explore_tab;
+                title = player.state.explore_title;
             }
-            if (in_mood) { player.getExplore("FEmusic_moods_and_genres"); return true; }
+            if (tab == "FEmusic_moods_and_genres_category") { player.getExplore("FEmusic_moods_and_genres"); return true; }
+            if (!title.empty()) { player.getExplore("FEmusic_explore"); return true; }
         }
         // Now Playing sits over the page it was opened from: back is that
         // page, as it was (not a rebuilt one, scrolled to the top).
@@ -1843,6 +1846,32 @@ int main(int argc, char *argv[]) {
                     if (current_state == ui::State::NOWPLAYING) break;
                     if (!*item.shown) continue;
                     if (ui::hscrollClick(&item.carousel_data.hscroll, m.x, m.y) || ui::hscrollClick(&item.grid_data.hscroll, m.x, m.y)) return true;
+                }
+                // Explore: a section title with a "More" page opens it (the full chart
+                // is a playlist; the rest, a page of Explore under that title).
+                if (current_state == ui::State::EXPLORE) {
+                    for (const auto& [b, title] : ui::more_boxes) {
+                        if (!in(b)) continue;
+                        std::string id;
+                        {
+                            std::lock_guard lock(player.state_mutex);
+                            auto it = player.state.explore_more.find(title);
+                            if (it != player.state.explore_more.end()) id = it->second;
+                        }
+                        if (id.rfind("VL", 0) == 0) {
+                            music::PlaylistRef ref;
+                            ref.id = id.substr(2);
+                            ref.title = title;
+                            player.openPlaylist(ref);
+                            current_state = ui::State::PLAYLIST;
+                            main_content_items.clear();
+                            main_content->DetachAllChildren();
+                            main_content->Add(Renderer([] { return emptyElement(); }));
+                        } else if (!id.empty()) {
+                            player.getExplore(id, "", title);
+                        }
+                        return true;
+                    }
                 }
                 if(in(nav_back_box))    { go_back();    return true; }
                 if(in(nav_forward_box)) { go_forward(); return true; }
@@ -2770,7 +2799,7 @@ int main(int argc, char *argv[]) {
                 text("  "),
                 text(std::to_string(v)) | align_right | size(WIDTH, EQUAL, 3) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 text(" "),
-            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | clear_under;
+            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | bgcolor(Color::RGB(20, 20, 24)) | clear_under;
 
             constexpr int W = BAR + 12;
             const Box& vb = playback_bar_data.box_volume;
@@ -2824,7 +2853,7 @@ int main(int argc, char *argv[]) {
             Element menu = vbox(std::move(rows))
                 | size(WIDTH, EQUAL, W)
                 | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-                | clear_under;
+                | bgcolor(Color::RGB(20, 20, 24)) | clear_under;
 
             // Keep it on screen near the pointer.
             const int h = static_cast<int>(ctx.items.size()) + (ctx.title.empty() ? 0 : 1) + 2;
@@ -2854,12 +2883,12 @@ int main(int argc, char *argv[]) {
                        text("esc") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text(" cancel  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }),
             }) | size(WIDTH, EQUAL, 56)
                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-               | clear_under | center;
+               | bgcolor(Color::RGB(20, 20, 24)) | clear_under | center;
             base = dbox({ base, box });
         }
 
         if (!show_help) return base;
-        return dbox({ base, help_sheet() | clear_under | center });
+        return dbox({ base, help_sheet() | bgcolor(Color::RGB(20, 20, 24)) | clear_under | center });
     });
 
     /* Quitting must be instant and clean

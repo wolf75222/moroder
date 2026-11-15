@@ -1231,6 +1231,7 @@ void services::Player::worker_loop() {
                     state.flags["explore"] = Flags::Done;
                     state.explore = std::move(shelves);
                     state.explore_order = music_service->exploreOrder();
+                    state.explore_more = music_service->exploreMore();
                 }
 
             } else if constexpr (std::is_same_v<T, LibraryPlaylistsCommand>) {

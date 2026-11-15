@@ -20,6 +20,7 @@ struct CarouselData {
     bool is_loading = true;
 
     HScroll hscroll;     // sideways, for the mouse
+    bool more = false;   // its title opens a "More" page (Explore)
 
 };
 

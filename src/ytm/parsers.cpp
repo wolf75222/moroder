@@ -783,6 +783,13 @@ json mixedContent(const json& rows) {
         json entry = json::object();
         entry["title"] = title.is_string() ? title : json("");   // a null title crashed callers
         entry["contents"] = contents;
+        // Its "More" (the whole list: all moods, the full chart, every new album).
+        if (row.is_object() && !row.empty()) {
+            const json& shelf = row.begin().value();
+            const std::string more = str(nav(&shelf, {"header", "musicCarouselShelfBasicHeaderRenderer", "moreContentButton",
+                                                      "buttonRenderer", "navigationEndpoint", "browseEndpoint", "browseId"}));
+            if (!more.empty()) entry["more"] = more;
+        }
 
         items.push_back(entry);
     }

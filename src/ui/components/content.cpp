@@ -110,6 +110,13 @@ ftxui::Component ui::MouseGate(ftxui::Component child, std::shared_ptr<bool> sho
 static std::string playing_id;
 
 std::deque<ftxui::Box> ui::cover_hit_boxes;
+std::deque<std::pair<ftxui::Box, std::string>> ui::more_boxes;
+ftxui::Element ui::sectionTitle(const std::string& title, bool more) {
+    using namespace ftxui;
+    if (!more) return hbox({ text(" "), text(title) });
+    auto& slot = ui::more_boxes.emplace_back(Box{}, title);
+    return hbox({ text(" "), hbox({ text(title), text("  \uf054") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) }) | reflect(slot.first) });
+}
 ftxui::Element ui::coverHit(ftxui::Element cover) {
     return std::move(cover) | ftxui::reflect(ui::cover_hit_boxes.emplace_back());
 }
@@ -1020,12 +1027,12 @@ ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::fun
             stripe = Color::RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
         }
         ButtonOption opt;
-        // One line, no box: the coloured stripe, the name; the selected one bold.
-        opt.transform = [name, stripe](const EntryState& s) {
+        // One line, one colour: the name, the selected one bright and bold.
+        (void)stripe;
+        opt.transform = [name](const EntryState& s) {
             return hbox({
-                text(s.focused ? "\u2588" : "\u258c") | color(stripe),
-                text("  " + utils::trimSuffix(name, 22, "\u2026")) | (s.focused ? bold : nothing)
-                    | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                text("  " + utils::trimSuffix(name, 24, "\u2026")) | (s.focused ? bold : nothing)
+                    | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 filler(),
             }) | size(WIDTH, EQUAL, 26);
         };
@@ -1094,12 +1101,12 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         head.category = signature;
         // Minimal: the tabs say where you are; a mood's page adds only its name.
         const std::string mood = state->explore_title;
-        head.component = Renderer([loading, mood] {
-            Element spin = loading ? spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : text(" ");
-            if (mood.empty()) return hbox({ text(" "), spin });
-            return vbox({ text(" "), hbox({ text(" "), text(mood) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text("  "), spin }) });
+        // Loading shows beside Explore in the sidebar: no row of its own here.
+        head.component = Renderer([mood] {
+            if (mood.empty()) return emptyElement();
+            return vbox({ text(" "), hbox({ text(" "), text(mood) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) }) });
         });
-        main_content->Add(head.component);
+        // Drawn under the tabs (added after them below).
 
         // Tabs: YouTube Music's Explore buttons (a mood belongs to Moods & genres).
         main_content_items.push_back(ContentEntry{});
@@ -1118,6 +1125,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         ui::setChipsData(&tabs.chips_data, chips);
         tabs.component = Chips(&tabs.chips_data, &tabs.selected, &tabs.focused, on_tab);
         main_content->Add(tabs.component);
+        main_content->Add(main_content_items.front().component);     // the page's title, under the tabs
 
         for (const std::string& category : state->explore_order) {
             main_content_items.push_back(ContentEntry{});
@@ -1134,10 +1142,12 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 const size_t per_row = static_cast<size_t>(moods_per_row);
                 auto grid = MoodGrid(shelf, on_press, state->explore_tab == "FEmusic_explore" ? 4 * per_row : 0);
                 const std::string heading = category;
-                item.component = MouseGate(Renderer(grid, [grid, heading] {
-                    return vbox({ text(""), text(""), hbox({ text(" "), text(heading) }), text(""), grid->Render() });
+                const bool more = state->explore_tab == "FEmusic_explore" && state->explore_more.count(category);
+                item.component = MouseGate(Renderer(grid, [grid, heading, more] {
+                    return vbox({ text(""), text(""), ui::sectionTitle(heading, more), text(""), grid->Render() });
                 }), item.shown);
-            } else if (state->explore_tab == "FEmusic_new_releases" && category == state->explore_order.front()) {
+            } else if ((state->explore_tab == "FEmusic_new_releases" || state->explore_tab == "FEmusic_new_releases_albums"
+                        || state->explore_tab == "FEmusic_new_releases_videos") && category == state->explore_order.front()) {
                 item.category = "__explore_wall__" + category;
                 item.grid_data.category_name = category;
                 item.grid_data.results = shelf;
@@ -1177,6 +1187,12 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         // Every shelf knows whether it has the focus (a chart's selected row
         // is drawn from it); only plain carousels refill from the shelves.
         if (item.category.rfind("__explore", 0) != 0) ui::getCarouselDataFrom(state->explore, item.category, &item.carousel_data);
+        // A "More" page only where it adds something: not inside one already.
+        const bool top = state->explore_title.empty();
+        item.carousel_data.more = top && state->explore_more.count(item.category);
+        const std::string plain = item.category.rfind("__explore_ranked__", 0) == 0 ? item.category.substr(18)
+                                : item.category.rfind("__explore_wall__", 0) == 0 ? item.category.substr(16) : item.category;
+        item.grid_data.more = top && state->explore_more.count(plain);
         item.focused = item.component->Focused();
     }
 }

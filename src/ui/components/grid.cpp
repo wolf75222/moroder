@@ -361,10 +361,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
         return vbox({
             text(""),
             text(""),
-            hbox({
-                text(" "),
-                text(data->category_name),
-            }),
+            ui::sectionTitle(data->category_name, data->more),
             text(""),
             text(""),
             ui::hscrolled(hbox({
