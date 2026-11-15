@@ -1268,7 +1268,9 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             }
             // A narrow window has tighter tabs (one column less on their left):
             // one more here keeps them level with the covers.
-            return hbox({ text(ftxui::Terminal::Size().dimx < 120 ? "   " : "  "), chips_c->Render(), filler(), vbox({ text(""), extra }), text("   ") });
+            // And less on their right, or the last tab lost a letter at 80 columns.
+            const bool narrow = ftxui::Terminal::Size().dimx < 120;
+            return hbox({ text(narrow ? "   " : "  "), chips_c->Render(), filler(), vbox({ text(""), extra }), text(narrow ? " " : "   ") });
         });
         main_content->Add(tabs.component);
         main_content->Add(main_content_items.front().component);
