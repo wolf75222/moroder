@@ -105,11 +105,47 @@ bool devBuild() { return std::string(MORODER_VERSION).find("dev") != std::string
 int runInstaller() {
     platform::setEnv("MORODER_UPDATING", "1");         // the installer then also updates yt-dlp
 #ifdef _WIN32
-    const std::string cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm " + INSTALLER + " | iex\"";
+    /* The folder this copy runs from: install.ps1 otherwise installs into
+    %LOCALAPPDATA%\Programs\moroder, and a copy installed elsewhere
+    (MORODER_PREFIX) got a second one there and stayed as it was. Not for
+    a development build, which doesn't live in an install folder.
+    */
+    if (!devBuild() && !std::getenv("MORODER_PREFIX")) {
+        const std::string self = platform::selfPath();
+        if (!self.empty()) platform::setEnv("MORODER_PREFIX", fs::u8path(self).parent_path().u8string());
+    }
+    /* Microsoft Defender stops `powershell -Command "irm <url> | iex"` started
+    from a program as a trojan (Trojan:Win32/Commando: a command line that
+    downloads a script and runs it), so the update failed without a word.
+    The installer is downloaded here and run as a file instead.
+    */
+    std::string script;
+    long status = 0;
+    if (CURL* c = utils::newCurl()) {
+        curl_easy_setopt(c, CURLOPT_URL, INSTALLER.c_str());
+        curl_easy_setopt(c, CURLOPT_USERAGENT, "moroder");
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &script);
+        curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 30000L);
+        curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+        if (curl_easy_perform(c) == CURLE_OK) curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
+        curl_easy_cleanup(c);
+    }
+    if (status != 200 || script.empty()) {
+        std::cout << "\n  " << cli::red() << "✗" << cli::reset() << "  couldn't download the installer (" << INSTALLER << ")\n\n";
+        return 1;
+    }
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path file = fs::temp_directory_path() / ("moroder-install-" + std::to_string(stamp) + ".ps1");
+    { std::ofstream(file, std::ios::binary | std::ios::trunc) << script; }
+    const int code = platform::run("powershell -NoProfile -ExecutionPolicy Bypass -File " + platform::shellQuote(file.u8string()));
+    std::error_code ec;
+    fs::remove(file, ec);
+    return code;
 #else
-    const std::string cmd = "curl -fsSL '" + INSTALLER + "' | sh";
+    return platform::run("curl -fsSL '" + INSTALLER + "' | sh");
 #endif
-    return std::system(cmd.c_str());
 }
 
 bool have(const char* tool) { return !platform::which(tool).empty(); }
@@ -554,9 +590,7 @@ int services::update::uninstall() {
             if (fs::exists(fragment, e)) { fs::remove_all(fragment, e); live.set(live.add("WT profile"), e ? State::Fail : State::Ok, e ? e.message() : "removed"); }
         }
         // The console window settings install.ps1 gave moroder.exe (its Nerd Font).
-        std::string console_key = fs::path(bin).string();
-        for (auto& c : console_key) if (c == '\\' || c == '/') c = '_';
-        quietly("reg delete \"HKCU\\Console\\" + console_key + "\" /f");
+        const int font = platform::removeConsoleSettings(fs::path(bin).string());        if (font != 0) live.set(live.add("console font"), font > 0 ? State::Ok : State::Fail, font > 0 ? "removed" : "couldn't remove");
     }
 #else
     remove("program", bin);

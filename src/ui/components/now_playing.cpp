@@ -87,7 +87,12 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // Words without timings don't follow the song: shown as a wall of text,
     // they were more in the way than useful. The cover takes the page instead.
     const bool unsynced = ours && state->lyrics->found && state->lyrics->lines.empty();
-    const bool no_lyrics = !Config::get().ENABLE_LYRICS || (ours && !state->lyrics->found) || unsynced;
+    // A narrow window (about 90 columns or less) has no room for a cover beside
+    // a readable column of lyrics: squeezed in, each line kept a letter per word.
+    // The cover and the track on their own then, as without lyrics.
+    constexpr int LYRICS_MIN = 22;
+    const bool narrow = (width - 37) - 11 - LYRICS_MIN < 16;
+    const bool no_lyrics = !Config::get().ENABLE_LYRICS || (ours && !state->lyrics->found) || unsynced || narrow;
 
     // Cover: as large as the page allows, square in terminal cells (2:1).
     const int room_w = std::max(16, width - 37 - 8);     // the page minus sidebar and margins
@@ -100,6 +105,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     int cover_h = no_lyrics ? std::clamp(std::min(height - 9, room_w / 2), 8, 40)
                             : std::clamp(height - 12, 8, 26);
     if (room_for_next) cover_h = std::min(cover_h, std::max(8, (page_w - fixed) / 2));
+    // Beside the lyrics, never so wide that they get less than LYRICS_MIN.
+    if (!no_lyrics) cover_h = std::min(cover_h, std::max(8, (page_w - 11 - LYRICS_MIN) / 2));
     const int cover_w = cover_h * 2;
 
     // Room for the lyrics: the page minus sidebar, cover and margins.

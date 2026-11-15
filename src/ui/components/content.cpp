@@ -1016,7 +1016,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                             : "  \u2022  " + std::to_string(total / 60) + " min";
         const std::string count = loading ? "loading tracks..."
                                 : more ? std::to_string(tracks.size()) + "+ tracks, loading the rest"
-                                : std::to_string(tracks.size()) + " tracks" + length;
+                                : std::to_string(tracks.size()) + (tracks.size() == 1 ? " track" : " tracks") + length;
         const std::string thumb = playlist->ref.thumbnail_large.empty() ? playlist->ref.thumbnail_small : playlist->ref.thumbnail_large;
 
         std::string kind = state->open_kind;
@@ -1252,7 +1252,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             {"FEmusic_explore", "Explore"},
             {"FEmusic_new_releases", "New releases"},
             {"FEmusic_charts", "Charts"},
-            {"FEmusic_moods_and_genres", "Moods & genres"},
+            {"FEmusic_moods_and_genres", "Moods & genres", false, "Genres"},
         };
         for (auto& c : chips) c.enabled = c.id == on;
         ui::setChipsData(&tabs.chips_data, chips);

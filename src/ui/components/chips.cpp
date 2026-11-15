@@ -48,7 +48,8 @@ ftxui::Component ui::Chips(ChipsData* data, int* selected, bool* focused, std::f
         /* Tabs, not boxed pills: the chosen one is white with an accent
         underline, the one under the keyboard is white, the others grey.
         */
-        const std::string name = utils::trimSuffix(chip.label, 24, "\u2026");
+        const bool narrow = ftxui::Terminal::Size().dimx < 100;
+        const std::string name = utils::trimSuffix(narrow && !chip.short_label.empty() ? chip.short_label : chip.label, 24, "\u2026");
         Element label = text(name) | (chip.enabled || active ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                                                             : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
         if (chip.enabled || active) label = label | bold;

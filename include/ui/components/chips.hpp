@@ -14,6 +14,9 @@ struct ChipEntry {
     std::string label;
 
     bool enabled = false;
+
+    // Shown instead of label in a narrow window, when set ("Genres").
+    std::string short_label = "";
 };
 
 struct ChipsData {

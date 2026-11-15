@@ -545,18 +545,32 @@ private:
 
     static std::string unquote(const std::string& value) {
         if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
-            return value.substr(1, value.size() - 2);
+            /* The inverse of quote(): \\ and \" back to \ and ". A Windows path
+            written back read as "~\\.config\\moroder", doubled backslashes and
+            all. Any other backslash stays, so C:\Users typed by hand still works.
+            */
+            const std::string inner = value.substr(1, value.size() - 2);
+            std::string out;
+            for (size_t i = 0; i < inner.size(); i++) {
+                if (inner[i] == '\\' && i + 1 < inner.size() && (inner[i + 1] == '\\' || inner[i + 1] == '"')) i++;
+                out += inner[i];
+            }
+            return out;
         }
         return value;
     }
 
-    // handles ~ in paths
+    // handles ~ in paths: "~/x", and "~\x" as setup writes them on Windows
+    // (only "~/" was understood there, so a fresh sign-in read as none).
     static fs::path expand_user(const std::string& path) {
-        if (path == "~" || path.rfind("~/", 0) == 0) {
+        if (path == "~" || path.rfind("~/", 0) == 0 || path.rfind("~\\", 0) == 0) {
             const fs::path home = utils::home();
 
             if (!home.empty()) {
-                return path.size() > 2 ? home / path.substr(2) : home;
+                // Past every separator after "~": "\x" joined to a Windows path
+                // would start again at the root of the drive.
+                const size_t rest = path.find_first_not_of("/\\", 1);
+                return rest == std::string::npos ? home : home / path.substr(rest);
             }
         }
 

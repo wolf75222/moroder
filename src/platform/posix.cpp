@@ -46,6 +46,15 @@ int terminalColumns() {
 
 std::string consoleFontName() { return {}; }
 
+int run(const std::string& command_line) {
+    const int status = std::system(command_line.c_str());
+    return status == -1 ? -1 : WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+bool legacyConsoleWindow() { return false; }
+
+int removeConsoleSettings(const std::string&) { return 0; }
+
 int shell(const std::string& command_line, std::string* out, bool merge_stderr) {
     FILE* p = popen((command_line + (merge_stderr ? " 2>&1" : "")).c_str(), "r");
     if (!p) return -1;

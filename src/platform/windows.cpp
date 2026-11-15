@@ -117,6 +117,28 @@ std::string consoleFontName() {
     return narrow(info.FaceName);
 }
 
+bool legacyConsoleWindow() {
+    // conhost's window is a ConsoleWindowClass; a pseudo console's is a hidden
+    // PseudoConsoleWindow. ConEmu keeps a real one, but hidden.
+    const HWND w = GetConsoleWindow();
+    if (!w || !IsWindowVisible(w)) return false;
+    wchar_t cls[64] = L"";
+    GetClassNameW(w, cls, 64);
+    return std::wstring(cls) == L"ConsoleWindowClass";
+}
+
+int run(const std::string& command_line) {
+    // cmd.exe needs the whole line quoted once more when it starts with a quote.
+    return _wsystem((L"\"" + wide(command_line) + L"\"").c_str());
+}
+
+int removeConsoleSettings(const std::string& exe_path) {
+    std::wstring key = L"Console\\" + wide(exe_path);
+    for (size_t i = 8; i < key.size(); i++) if (key[i] == L'\\' || key[i] == L'/') key[i] = L'_';
+    const LSTATUS r = RegDeleteTreeW(HKEY_CURRENT_USER, key.c_str());
+    return r == ERROR_SUCCESS ? 1 : r == ERROR_FILE_NOT_FOUND ? 0 : -1;
+}
+
 int shell(const std::string& command_line, std::string* out, bool merge_stderr) {
     // cmd.exe needs the whole line quoted once more when it starts with a quote.
     const std::wstring cmd = L"\"" + wide(command_line + (merge_stderr ? " 2>&1" : "")) + L"\"";

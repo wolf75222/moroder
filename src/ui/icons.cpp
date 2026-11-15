@@ -48,24 +48,14 @@ const std::unordered_map<std::string, std::string>& table() {
     return t;
 }
 
-/* Windows' own console window, not a terminal app inside it: those say so,
-Windows Terminal (WT_SESSION), Warp, VS Code, WezTerm, Hyper... (TERM_PROGRAM),
-Alacritty, mintty, MSYS2 (TERM), ConEmu (ConEmuPID). Nothing set: conhost.
+/* Windows' own console window, not a terminal app: asked of the window itself
+(see platform::legacyConsoleWindow). Environment variables weren't enough: a
+moroder.exe Windows hands over to Windows Terminal (double-click, Win+R) has
+no WT_SESSION.
 */
 bool consoleWindow() {
-#ifdef _WIN32
-    static const bool console = [] {
-        if (!platform::isTerminal(1)) return false;
-        for (const char* var : { "WT_SESSION", "TERM_PROGRAM", "TERM", "ConEmuPID" }) {
-            const char* v = std::getenv(var);
-            if (v && *v) return false;
-        }
-        return true;
-    }();
+    static const bool console = platform::isTerminal(1) && platform::legacyConsoleWindow();
     return console;
-#else
-    return false;
-#endif
 }
 
 // A private-use glyph: U+E000..U+F8FF (three UTF-8 bytes EE/EF ..) or, for
@@ -85,7 +75,8 @@ characters both fonts have (the old PC set: ─│┌ ═║╔ ▀▄█▌ ♪
 const std::unordered_map<std::string, std::string>& consoleTable() {
     static const std::unordered_map<std::string, std::string> t = {
         // symbols and icons
-        {"♡", "♥"}, {"↻", "∞"}, {"↺", "←"}, {"⇄", "↔"}, {"⌕", "○"}, {"▤", "≡"}, {"◎", "◙"},
+        // Unliked ♡ / liked ♥ stay apart without colour; search shows its key.
+        {"♡", "○"}, {"↻", "∞"}, {"↺", "←"}, {"⇄", "↔"}, {"⌕", "/"}, {"▤", "≡"}, {"◎", "◙"},
         {"◉", "•"}, {"●", "•"}, {"▶", "►"}, {"▸", "►"}, {"▾", "▼"}, {"▪", "■"}, {"□", "■"},
         {"✓", "√"}, {"✗", "x"}, {"✎", "*"}, {"⧉", "="}, {"↗", "→"}, {"↯", "♦"}, {"◷", "z"},
         {"⇧", "^"}, {"⌥", "+"}, {"⌫", "←"}, {"‖", "║"}, {"−", "-"}, {"\xEF\xBF\xBD", "?"},

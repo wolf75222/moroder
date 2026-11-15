@@ -1,6 +1,7 @@
 #include <cctype>
 #include "../include/ui/cover_cache.hpp"
 #include "../include/ui/icons.hpp"
+#include "../include/ui/fit_text.hpp"
 #include <ftxui/screen/terminal.hpp>
 #include "../include/ui/viewport.hpp"
 #include "../include/ui/see_through.hpp"
@@ -360,6 +361,19 @@ int main(int argc, char *argv[]) {
 #ifdef _WIN32
     spdlog::info("TERMINAL: console font \"{}\", icons {}, {}", platform::consoleFontName(),
                  ui::plainIcons() ? "plain" : "nerd", ui::consoleGlyphs() ? "console glyphs" : "full glyphs");
+    /* The old console window can't be given another font from in here: once,
+    the first time Moroder runs in one, say where it looks as meant.
+    */
+    if (ui::consoleGlyphs()) {
+        const fs::path shown = utils::resolve_path(MORODER_LOG_PATH) / "console-tip-shown";
+        std::error_code ec;
+        if (!fs::exists(shown, ec)) {
+            std::ofstream(shown) << "1\n";
+            std::lock_guard lock(player.state_mutex);
+            player.state.notice = "Tip: looks best in Windows Terminal";
+            player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        }
+    }
 #endif
     auto screen = ScreenInteractive::Fullscreen();
 
@@ -2154,7 +2168,14 @@ int main(int argc, char *argv[]) {
                 if(!horizontal && !(!sidebar_hidden && in(sidebar_box)) && current_state != ui::State::QUEUE && current_state != ui::State::NOWPLAYING) {
                     if(back && page_view.at_top && page_view.pending <= 0) return true;
                     if(!back && page_view.at_bottom && page_view.pending >= 0) return true;
-                    page_view.pending += back ? -2 : 2;
+#ifdef _WIN32
+                    // Windows sends one event per wheel notch (a trackpad, a
+                    // stream of small ones): 2 lines a notch crawled.
+                    constexpr int lines = 5;
+#else
+                    constexpr int lines = 2;
+#endif
+                    page_view.pending += back ? -lines : lines;
                     page_view.follow = false;
                     return true;
                 }
@@ -2777,7 +2798,7 @@ int main(int argc, char *argv[]) {
             return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | size(WIDTH, EQUAL, 14);
         };
         auto row = [&](const std::string& k, const std::string& what) {
-            return hbox({ text("  "), key(k), text(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text("  ") });
+            return hbox({ text("  "), key(k), ui::fitText(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text("  ") });
         };
         auto heading = [](const std::string& t) {
             return vbox({
@@ -2849,9 +2870,11 @@ int main(int argc, char *argv[]) {
             text(""),
             hbox({ filler(), text("Keys") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), filler() }),
             text(""),
-            hbox({ left, text("   "), right }),
+            // Narrower than the sheet: the descriptions end in "..." rather than
+            // the sheet running off both sides of the window.
+            hbox({ left | flex_shrink, text("   "), right | flex_shrink }),
             text(""),
-        }) | borderRounded | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
+        }) | flex_shrink | borderRounded | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
     };
 
     ui = Renderer(ui, [ui, &show_help, help_sheet, &ctx, &screen, &volume_pop, &playback_bar_data, &prompt, &search_bar_data, search_bar] {

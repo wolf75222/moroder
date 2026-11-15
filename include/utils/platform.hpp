@@ -35,12 +35,33 @@ int terminalColumns();
 // elsewhere or when unknown. Under Windows Terminal it says nothing useful.
 std::string consoleFontName();
 
+/* legacyConsoleWindow
+- True in Windows' own console window (conhost) on screen; false in Windows
+  Terminal, Warp, VS Code... (a pseudo console, whose window is hidden),
+  including a program Windows handed over to Windows Terminal, which gets no
+  WT_SESSION. Always false outside Windows
+*/
+bool legacyConsoleWindow();
+
+/* removeConsoleSettings
+- Deletes the console window settings Windows keeps for a program started
+  in a console of its own (HKCU\Console\<its path, "\" as "_">), as
+  install.ps1 sets them for moroder.exe. 1 removed, 0 none there, -1 failed;
+  0 outside Windows
+*/
+int removeConsoleSettings(const std::string& exe_path);
+
 /* shell
 - Runs a command line through the system shell (sh, cmd.exe), its stdout
   (and stderr when merge_stderr) into *out; returns the exit code, -1 when it
   could not start
 */
 int shell(const std::string& command_line, std::string* out, bool merge_stderr = false);
+
+// Runs a command line through the system shell, its output straight to this
+// terminal; the exit code, -1 when it could not start. UTF-8 (std::system
+// would read it in the ANSI code page on Windows).
+int run(const std::string& command_line);
 
 // Full path of a program on the PATH, "" when absent.
 std::string which(const std::string& program);
