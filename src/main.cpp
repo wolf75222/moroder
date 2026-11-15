@@ -568,6 +568,7 @@ int main(int argc, char *argv[]) {
         bool queued = false;
         bool opened_playlist = false;
         bool opened_artist = false;
+        bool opened_mood = false;
 
         std::visit([&](auto&& data) {
             using T = std::decay_t<decltype(data)>;
@@ -607,8 +608,10 @@ int main(int argc, char *argv[]) {
             } else if constexpr (std::is_same_v<T, music::PlaylistRef>) {
                 // A mood / genre (Explore): its page of playlists, in Explore.
                 if (data.id.rfind("mood:", 0) == 0) {
-                    if (!should_queue) player.getExplore("FEmusic_moods_and_genres_category", data.id.substr(5), data.title);
-                    opened_playlist = false;
+                    if (!should_queue) {
+                        player.getExplore("FEmusic_moods_and_genres_category", data.id.substr(5), data.title);
+                        opened_mood = current_state != ui::State::EXPLORE;     // from Home, say: go there
+                    }
                     return;
                 }
                 if (should_queue) {
@@ -624,6 +627,14 @@ int main(int argc, char *argv[]) {
 
         }, result.data);
 
+        if (opened_mood) {
+            current_state = ui::State::EXPLORE;
+            main_content_items.clear();
+            main_content->DetachAllChildren();
+            main_content->Add(Renderer([] { return emptyElement(); }));
+            screen.PostEvent(Event::Custom);
+            return true;
+        }
         if (opened_playlist || opened_artist) {
             current_state = opened_artist ? ui::State::ARTIST : ui::State::PLAYLIST;
             main_content_items.clear();
@@ -1063,6 +1074,7 @@ int main(int argc, char *argv[]) {
                     ? &e->carousel_data.results[e->selected] : &e->result;
                 ref = std::get_if<music::PlaylistRef>(&r->data);
             }
+            if (ref && ref->id.rfind("mood:", 0) == 0) ref = nullptr;     // a mood (Explore), not a playlist
             if (ref && ref->id != last_prefetch) {
                 last_prefetch = ref->id;
                 player.prefetchPlaylist(*ref);
@@ -1134,6 +1146,8 @@ int main(int argc, char *argv[]) {
             if (current_state == ui::State::PLAYLIST && state_copy.open_playlist) { now.playlist = state_copy.open_playlist->ref; now.kind = state_copy.open_kind; }
             if (current_state == ui::State::ARTIST && state_copy.open_artist) now.artist = state_copy.open_artist->ref;
             if (current_state == ui::State::SEARCH) now.query = last_query;
+            // The queue's way back to Now Playing holds only while on the queue.
+            if (now.state != ui::State::QUEUE && now.state != ui::State::NOWPLAYING) before_queue = ui::State::HOME;
             if (now.state == ui::State::NOWPLAYING) {
                 // Over the page, not a page of its own: not in the history.
             } else if (now.key() != nav_current.key()) {
@@ -1655,7 +1669,7 @@ int main(int argc, char *argv[]) {
             before_queue = ui::State::HOME;
             // The queue was recorded over the page under Now Playing: undo that,
             // so leaving Now Playing later lands on that page, not the queue.
-            if (!nav_back.empty()) { nav_current = nav_back.back(); nav_back.pop_back(); }
+            if (nav_current.state == ui::State::QUEUE && !nav_back.empty()) { nav_current = nav_back.back(); nav_back.pop_back(); }
             main_content_items.clear();
             main_content->DetachAllChildren();
             main_content->Add(Renderer([] { return emptyElement(); }));
@@ -2180,7 +2194,10 @@ int main(int argc, char *argv[]) {
                                 }});
                             }
                         } else {
-                            ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, act(cfg.KEY_ADD_TO_QUEUE)});
+                            // A mood (Explore) is a page, not something to queue.
+                            const auto* mpl = std::get_if<music::PlaylistRef>(&clicked.data);
+                            if (!(mpl && mpl->id.rfind("mood:", 0) == 0))
+                                ctx.items.push_back({"\uf067", "Add to queue", cfg.KEY_ADD_TO_QUEUE, act(cfg.KEY_ADD_TO_QUEUE)});
                         }
                     }
                 }
@@ -2729,7 +2746,7 @@ int main(int argc, char *argv[]) {
             // As wide as its longest line, not a fixed block: less of the page
             // hidden behind it.
             int W = 16;
-            for (const auto& it : ctx.items) W = std::max(W, static_cast<int>(ftxui::string_width(it.label) + ftxui::string_width(it.hint)) + 10);
+            for (const auto& it : ctx.items) W = std::max(W, static_cast<int>(ftxui::string_width(it.label) + ftxui::string_width(it.hint)) + 11);
             // The title fits the items' width (trimmed), it doesn't widen the menu.
             W = std::min(W, 40);
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
@@ -2749,7 +2766,7 @@ int main(int argc, char *argv[]) {
                     text(on ? "\u258e" : " ") | color(accent),
                     text(" "),
                     text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? accent : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-                    text(utils::trimSuffix(it.label, W - 13, "\u2026")) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(utils::trimSuffix(it.label, std::max(4, W - 8 - static_cast<int>(ftxui::string_width(it.hint))), "\u2026")) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
                     text(it.hint) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
                     text("  "),
