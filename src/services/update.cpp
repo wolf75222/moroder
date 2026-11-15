@@ -123,7 +123,16 @@ std::string firstLine(const std::string& cmd) {
 }
 
 // Where moroder itself is: the one on the PATH.
+#ifdef _WIN32
+// This copy (install.ps1's folder): `where moroder` could name the launcher
+// install.ps1 leaves for terminals that were already open.
+std::string installedBinary() {
+    const std::string self = platform::selfPath();
+    return !self.empty() ? self : platform::which("moroder.exe");
+}
+#else
 std::string installedBinary() { return platform::which("moroder"); }
+#endif
 
 // Runs a command, output dropped.
 void quietly(const std::string& cmd) {
@@ -416,6 +425,40 @@ int services::update::doctor() {
     return problems ? 1 : 0;
 }
 
+#ifdef _WIN32
+// The launcher install.ps1 puts in WindowsApps (moroder.cmd + moroder) for
+// terminals that were open during the install: gone once this terminal's
+// PATH lists moroder's own folder (new terminals have it), or on uninstall.
+static void removeLaunchers(bool always) {
+    const char* local = std::getenv("LOCALAPPDATA");
+    if (!local) return;
+    const fs::path dir = fs::path(local) / "Microsoft" / "WindowsApps";
+    std::error_code ec;
+    if (!fs::exists(dir / "moroder.cmd", ec) && !fs::exists(dir / "moroder", ec)) return;
+    if (!always) {
+        const std::string self = platform::selfPath();
+        const char* path = std::getenv("PATH");
+        if (self.empty() || !path) return;
+        const std::string mine = utils::lower(fs::path(self).parent_path().string());
+        bool listed = false;
+        std::string all = path, entry;
+        for (size_t at = 0; at <= all.size(); at++) {
+            if (at == all.size() || all[at] == ';') {
+                while (!entry.empty() && (entry.back() == '\\' || entry.back() == '/')) entry.pop_back();
+                listed = listed || utils::lower(entry) == mine;
+                entry.clear();
+            } else entry += all[at];
+        }
+        if (!listed) return;
+    }
+    fs::remove(dir / "moroder.cmd", ec);
+    fs::remove(dir / "moroder", ec);
+}
+void services::update::tidyLaunchers() { removeLaunchers(false); }
+#else
+void services::update::tidyLaunchers() {}
+#endif
+
 int services::update::uninstall() {
     using namespace cli;
     std::string bin = installedBinary();
@@ -484,6 +527,7 @@ int services::update::uninstall() {
                 "[Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')\"");
         std::system(("start \"\" /min cmd /c \"timeout /t 2 >NUL & rmdir /s /q " + platform::shellQuote(dir) + "\"").c_str());
         live.set(id, State::Ok, dir + "  (removed in a moment)");
+        removeLaunchers(true);
         // The Windows Terminal profile install.ps1 added (the font stays: other apps may use it).
         if (const char* local = std::getenv("LOCALAPPDATA")) {
             const fs::path fragment = fs::path(local) / "Microsoft" / "Windows Terminal" / "Fragments" / "Moroder";

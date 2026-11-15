@@ -326,6 +326,7 @@ int main(int argc, char *argv[]) {
     }
 
     // A newer release: offer it before the interface starts, then restart into it.
+    services::update::tidyLaunchers();
     if (services::update::offerAtLaunch()) {
         std::cout << "\n  " << cli::bold() << cli::red() << "▶" << cli::reset() << " Starting the new version\n\n";
         platform::setEnv("MORODER_JUST_UPDATED", "1");     // no second offer in the restarted one
@@ -1417,7 +1418,9 @@ int main(int argc, char *argv[]) {
                     separator() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
 
                     hbox({
-                        text(" "),
+                        // Room between the sidebar's line and the page (it sat
+                        // right against it), and a little on the right too.
+                        text("   "),
                         [&] {
                             const std::string error_key =
                                   current_state == ui::State::HOME    ? "home"
@@ -1455,6 +1458,7 @@ int main(int argc, char *argv[]) {
                                     ? render_page() | yflex
                                     : main_content->Render() | xflex;
                         }(),
+                        text("  "),
                     }) | yflex,
 
                     ((main_content_items.empty() || sidebar_data.is_loading) && state_copy.is_logged_in && current_state != ui::State::NOWPLAYING) ?

@@ -90,11 +90,11 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     const bool no_lyrics = !Config::get().ENABLE_LYRICS || (ours && !state->lyrics->found) || unsynced;
 
     // Cover: as large as the page allows, square in terminal cells (2:1).
-    const int room_w = std::max(16, width - 33 - 8);     // the page minus sidebar and margins
+    const int room_w = std::max(16, width - 37 - 8);     // the page minus sidebar and margins
     // With lyrics, "up next" gets a column when the page is wide enough,
     // the cover giving up a little room for it (down to 12 rows).
     constexpr int UP_W = 34;
-    const int page_w = width - 33;                       // the page: the screen minus the sidebar
+    const int page_w = width - 37;                       // the page: the screen minus the sidebar
     const int fixed = 3 + 6 + 30 + 4 + UP_W + 2;         // margins, lyrics' minimum, the column
     const bool room_for_next = !no_lyrics && !ui::now_playing_upnext.empty() && page_w - fixed >= 24;
     int cover_h = no_lyrics ? std::clamp(std::min(height - 9, room_w / 2), 8, 40)
@@ -103,7 +103,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     const int cover_w = cover_h * 2;
 
     // Room for the lyrics: the page minus sidebar, cover and margins.
-    int lyrics_w = std::max(20, width - 33 - cover_w - 13);
+    int lyrics_w = std::max(20, width - 37 - cover_w - 13);
 
     Element cover = art.empty()
         ? filler() | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h) | border

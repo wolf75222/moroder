@@ -16,6 +16,7 @@ bool offerAtLaunch();
 int runUpdate();        // moroder update
 int doctor();           // moroder doctor
 int uninstall();        // moroder uninstall
+void tidyLaunchers();   // Windows: drops install.ps1's launcher once the PATH is in place
 const char* version();
 
 }

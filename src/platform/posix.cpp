@@ -1,4 +1,9 @@
 // macOS and Linux side of include/utils/platform.hpp.
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+#include <cstdint>
+#include <filesystem>
 #include "../../include/utils/platform.hpp"
 
 #include <cerrno>
@@ -46,6 +51,18 @@ int shell(const std::string& command_line, std::string* out, bool merge_stderr) 
     while (std::fgets(buf, sizeof buf, p)) if (out) out->append(buf);
     const int status = pclose(p);
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+std::string selfPath() {
+    std::error_code ec;
+#ifdef __APPLE__
+    char buf[4096]; uint32_t size = sizeof buf;
+    if (_NSGetExecutablePath(buf, &size) == 0) return std::filesystem::weakly_canonical(buf, ec).string();
+    return "";
+#else
+    const auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? std::string() : p.string();
+#endif
 }
 
 std::string which(const std::string& program) {

@@ -67,7 +67,7 @@ std::string librarySignature(services::Player::PlayerState* state, const std::st
     for (const auto& a : state->library_artists) ids += a.id;
     const std::string digest = std::to_string(std::hash<std::string>{}(ids));
     // Songs are laid out in columns: the width counts.
-    const int song_cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 42);
+    const int song_cols = std::max(1, (ftxui::Terminal::Size().dimx - 42) / 42);
     return "__library_grid__:" + digest + ":" + std::to_string(song_cols) + ":" + filter
         + ":" + query
         + ":" + std::to_string(state->library_playlists.size())
@@ -137,10 +137,11 @@ std::string ui::more_focus;
 std::function<void(const std::string&)> ui::open_more;
 ftxui::Element ui::sectionTitle(const std::string& title, bool more) {
     using namespace ftxui;
-    if (!more) return hbox({ text(" "), text(title) });
+    // Level with the covers below (after the 3 columns of the ‹ arrow).
+    if (!more) return hbox({ text("    "), text(title) });
     auto& slot = ui::more_boxes.emplace_back(Box{}, title);
     const bool lit = ui::more_focus == title;
-    return hbox({ text(" "), hbox({
+    return hbox({ text("    "), hbox({
         text(title) | (lit ? bold : nothing) | (lit ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : nothing),
         text("  \uf054") | color(lit ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
     }) | reflect(slot.first) });
@@ -897,7 +898,7 @@ void ui::buildLibrary(services::Player::PlayerState* state, std::deque<ContentEn
             // Songs read better as a list (thumbnail, title, artist) in columns
             // across the width; albums, playlists, artists as cover tiles.
             if (filter == "songs") {
-                const int cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 42);
+                const int cols = std::max(1, (ftxui::Terminal::Size().dimx - 42) / 42);
                 grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, -cols, on_item_press, ui::GridStyle::List);
             } else {
                 grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, rows, on_item_press, ui::GridStyle::Tile);
@@ -1188,8 +1189,8 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
     const bool loading = ef == state->flags.end() || ef->second == services::Player::Flags::Ongoing;
     // New releases' first section is a grid of covers filling the width, as on
     // YouTube Music: laid out again when the window's width changes.
-    const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / ui::GRID_TILE_WIDTH);
-    const int moods_per_row = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 28);
+    const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - 42) / ui::GRID_TILE_WIDTH);
+    const int moods_per_row = std::max(1, (ftxui::Terminal::Size().dimx - 42) / 28);
     const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + state->charts_country + ":" + std::to_string(wrap_cols) + "x" + std::to_string(moods_per_row) + ":"
                                 + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
 
@@ -1247,7 +1248,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             } else if (!mood.empty()) {
                 extra = text(mood) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
             }
-            return hbox({ chips_c->Render(), filler(), vbox({ text(""), extra }), text("   ") });
+            return hbox({ text("  "), chips_c->Render(), filler(), vbox({ text(""), extra }), text("   ") });
         });
         main_content->Add(tabs.component);
         main_content->Add(main_content_items.front().component);
@@ -1269,7 +1270,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 const std::string heading = category;
                 const bool* more = &item.carousel_data.more;
                 item.component = MouseGate(MoreLink(Renderer(grid, [grid, heading, more] {
-                    return vbox({ text(""), text(""), ui::sectionTitle(heading, *more), text(""), grid->Render() });
+                    return vbox({ text(""), text(""), ui::sectionTitle(heading, *more), text(""), hbox({ text("  "), grid->Render() }) });
                 }), category, more), item.shown);
             } else if ((state->explore_tab == "FEmusic_new_releases" || state->explore_tab == "FEmusic_new_releases_albums"
                         || state->explore_tab == "FEmusic_new_releases_videos") && category == state->explore_order.front()) {

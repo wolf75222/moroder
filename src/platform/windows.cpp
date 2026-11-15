@@ -114,6 +114,12 @@ int shell(const std::string& command_line, std::string* out, bool merge_stderr) 
     return status;
 }
 
+std::string selfPath() {
+    wchar_t self[MAX_PATH * 4];
+    const DWORD n = GetModuleFileNameW(nullptr, self, static_cast<DWORD>(sizeof self / sizeof self[0]));
+    return n ? narrow(std::wstring(self, n)) : std::string();
+}
+
 std::string which(const std::string& program) {
     std::string out;
     if (shell("where " + shellQuote(program) + " 2>NUL", &out) != 0) return "";

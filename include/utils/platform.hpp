@@ -41,6 +41,10 @@ int shell(const std::string& command_line, std::string* out, bool merge_stderr =
 // Full path of a program on the PATH, "" when absent.
 std::string which(const std::string& program);
 
+// This program's own path ("" if unknown). On Windows, where the installed
+// copy lives even when this terminal's PATH doesn't list its folder yet.
+std::string selfPath();
+
 // Quotes one argument for a shell() command line.
 std::string shellQuote(const std::string& value);
 

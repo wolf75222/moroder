@@ -55,7 +55,9 @@ inline ftxui::Element hscrolled(ftxui::Element row, HScroll* h, int arrow_area =
     // The arrows, from the last frame's layout (where the row is now).
     h->prev = h->next = Box{-1, -1, -1, -1};      // none: never under a click
     const int width = h->inner.x_max - h->inner.x_min, visible = h->frame.x_max - h->frame.x_min;
-    if (width <= visible) return framed;
+    // Room for the arrows even when the row fits: rows that slide and rows
+    // that don't start in the same column (and the frame keeps its width).
+    if (width <= visible) return hbox({ text("   "), std::move(framed) | flex, text("   ") });
     // Where it is this frame: the offset asked for, else where xframe put it.
     const int max_offset = std::max(0, width - visible - 1);
     const int at = h->offset >= 0 ? std::min(h->offset, max_offset) : h->frame.x_min - h->inner.x_min;

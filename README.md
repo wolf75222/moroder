@@ -69,10 +69,10 @@ New releases are offered at launch (`moroder update` anytime, `moroder doctor` i
 
 <br>
 
-[Install](docs/install.md) · [Sign in](docs/sign-in.md) · [Usage](docs/usage.md) · [Configuration](docs/configuration.md) · [Integrations](docs/integrations.md) · [Internals](docs/internals.md) · [Troubleshooting](docs/troubleshooting.md)
+[Install](docs/install.md) · [Sign in](docs/sign-in.md) · [Usage](docs/usage.md) · [Configuration](docs/configuration.md) · [Integrations](docs/integrations.md) · [Internals](docs/internals.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](.github/CONTRIBUTING.md)
 
 <br>
 
-<sub>Fork of <a href="https://github.com/orrnithogalum/moroder">orrnithogalum/moroder</a>, ported to macOS and enhanced</sub>
+<sub>Fork of <a href="https://github.com/orrnithogalum/moroder">orrnithogalum/moroder</a>, ported to macOS and Windows, and enhanced · <a href="docs/credits.md">Credits</a></sub>
 
 </div>

@@ -144,10 +144,32 @@ try {
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not (($UserPath -split ";") -contains $Prefix)) {
         [Environment]::SetEnvironmentVariable("Path", (($UserPath.TrimEnd(";") + ";" + $Prefix).TrimStart(";")), "User")
-        Ok "PATH" "added (open a new terminal)"
+        Ok "PATH" "added"
     } else {
         Ok "PATH" "already on it"
     }
+    # Terminals already open (bash, zsh, cmd, another PowerShell) keep their
+    # old PATH. A tiny launcher in a folder they already have on it
+    # (WindowsApps, on every user's PATH) makes moroder work there right now.
+    # Moroder deletes it once new terminals see the real PATH.
+    $script:Launcher = $false
+    $ShimDir = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps"
+    $Seen = $env:Path -split ";" | ForEach-Object { $_.TrimEnd("\") }
+    if ((Test-Path $ShimDir) -and ($Seen -contains $ShimDir.TrimEnd("\")) -and -not ($Seen -contains $Prefix.TrimEnd("\"))) {
+        try {
+            $Exe = Join-Path $Prefix "moroder.exe"
+            $NoBom = New-Object System.Text.UTF8Encoding $false
+            # cmd and PowerShell
+            [IO.File]::WriteAllText((Join-Path $ShimDir "moroder.cmd"), "@`"$Exe`" %*`r`n", $NoBom)
+            # bash / zsh (Git Bash, MSYS2, Cygwin): no extension, a shebang
+            $ExeSh = $Exe -replace "'", "'\''"
+            $Sh = "#!/bin/sh`n# moroder launcher (install.ps1); removed once the PATH is in place`nexe='$ExeSh'`ncommand -v cygpath >/dev/null 2>&1 && exe=`$(cygpath -u `"`$exe`")`nexec `"`$exe`" `"`$@`"`n"
+            [IO.File]::WriteAllText((Join-Path $ShimDir "moroder"), $Sh, $NoBom)
+            $script:Launcher = $true
+        } catch { }
+    }
+    # No launcher, and the shell that ran this didn't have moroder: say what to do.
+    $script:NeedNew = -not $script:Launcher -and -not ($Seen -contains $Prefix.TrimEnd("\"))
     if (-not (($env:Path -split ";") -contains $Prefix)) { $env:Path = "$env:Path;$Prefix" }
 }
 finally {
@@ -165,5 +187,14 @@ if (Test-Path (Join-Path $HOME ".config\moroder\browser.json")) {
     Write-Host "    Next: moroder setup to sign in once, then moroder"
     Write-Host "    In Windows Terminal, the Moroder profile (tab menu) shows the icons" -ForegroundColor DarkGray
     Write-Host "    No account? moroder -a" -ForegroundColor DarkGray
+}
+if ($script:NeedNew) {
+    Write-Host "    moroder not found? Open a new terminal" -ForegroundColor DarkGray
+}
+# A suggestion, not a requirement.
+if ($env:TERM_PROGRAM -ne "WarpTerminal") {
+    Write-Host ""
+    Write-Host "    Moroder looks its best in Warp: " -ForegroundColor DarkGray -NoNewline
+    Write-Host "https://www.warp.dev" -ForegroundColor DarkGray
 }
 Write-Host ""
