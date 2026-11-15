@@ -21,6 +21,7 @@ struct CarouselData {
 
     HScroll hscroll;     // sideways, for the mouse
     bool more = false;   // its title opens a "More" page (Explore)
+    std::vector<ftxui::Box> item_boxes;   // each item, as drawn last frame (hover)
 
 };
 

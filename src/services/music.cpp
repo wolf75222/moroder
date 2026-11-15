@@ -145,10 +145,10 @@ void services::Music::captureError(const char* what) {
     spdlog::warn("MUSIC: {} failed, {}", what, err.detail);
 }
 
-std::vector<music::ApiResult> services::Music::getSearch(const std::string& query) {
+std::vector<music::ApiResult> services::Music::getSearch(const std::string& query, const std::string& filter) {
     ipc::SearchResponse response;
 
-    nlohmann::json results = ytm->search(query, SEARCH_LIMIT);
+    nlohmann::json results = ytm->search(query, SEARCH_LIMIT, filter);
     captureError("search");
 
     for (const nlohmann::json& item : results) {
@@ -394,10 +394,9 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     return response.results;
 }
 
-std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getExplore(const std::string& browseId, const std::string& params) {
-    // Charts: global unless a country is set (YouTube picks yours otherwise).
-    const std::string country = browseId == "FEmusic_charts" ? Config::get().CHARTS_COUNTRY : "";
-    nlohmann::json sections = ytm->getBrowse(browseId, 6, params, country);
+std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getExplore(const std::string& browseId, const std::string& params, const std::string& country) {
+    // Charts: the country picked (global by default; YouTube picks yours otherwise).
+    nlohmann::json sections = ytm->getBrowse(browseId, 6, params, browseId == "FEmusic_charts" ? country : "");
     captureError("explore");
 
     ipc::HomeResponse response;
@@ -568,7 +567,7 @@ std::vector<music::Playlist> services::Music::getLibraryPlaylists(bool cached_on
     return response.results;
 }
 
-std::vector<music::Album> services::Music::getLibraryAlbums() {
+std::vector<music::Album> services::Music::getLibraryAlbums(bool cached_only) {
     if (!ytm->isAuthenticated()) {
         spdlog::info("MUSIC: not logged in, no library albums");
 
@@ -576,8 +575,16 @@ std::vector<music::Album> services::Music::getLibraryAlbums() {
         return {};
     }
 
-    nlohmann::json albums = ytm->getLibraryAlbums(LIBRARY_ALL);
-    captureError("library albums");
+    nlohmann::json albums;
+    if (cached_only) {
+        albums = readCache("library_albums");
+        last_error = RequestError{};
+        if (!albums.is_array()) return {};
+    } else {
+        albums = ytm->getLibraryAlbums(LIBRARY_ALL);
+        captureError("library albums");
+        if (!last_error.failed && albums.is_array()) writeCache("library_albums", albums);
+    }
 
     ipc::LibraryAlbumsResponse response;
 
@@ -612,7 +619,7 @@ std::vector<std::shared_ptr<music::IStreamable>> services::Music::getLibrarySong
     return response.results;
 }
 
-std::vector<music::ArtistRef> services::Music::getLibraryArtists() {
+std::vector<music::ArtistRef> services::Music::getLibraryArtists(bool cached_only) {
     if (!ytm->isAuthenticated()) {
         spdlog::info("MUSIC: not logged in, no library artists");
 
@@ -620,8 +627,16 @@ std::vector<music::ArtistRef> services::Music::getLibraryArtists() {
         return {};
     }
 
-    nlohmann::json artists = ytm->getLibraryArtists(LIBRARY_ALL);
-    captureError("library artists");
+    nlohmann::json artists;
+    if (cached_only) {
+        artists = readCache("library_artists");
+        last_error = RequestError{};
+        if (!artists.is_array()) return {};
+    } else {
+        artists = ytm->getLibraryArtists(LIBRARY_ALL);
+        captureError("library artists");
+        if (!last_error.failed && artists.is_array()) writeCache("library_artists", artists);
+    }
 
     ipc::LibraryArtistsResponse response;
 

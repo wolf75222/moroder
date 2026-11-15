@@ -70,7 +70,7 @@ private:
 
     struct HomeCommand {};
     struct ExploreCommand {
-        std::string browse_id, params;
+        std::string browse_id, params, country;
     };
     struct LibraryPlaylistsCommand {};
     struct LibraryAlbumsCommand {};
@@ -129,6 +129,10 @@ private:
         music::AlbumRef ref;
     };
 
+    struct ArtistRadioCommand {
+        music::ArtistRef ref;
+    };
+
     struct OpenArtistCommand {
         music::ArtistRef ref;
     };
@@ -182,10 +186,12 @@ public:
         std::vector<std::string> home_order;    // shelf titles, YouTube Music's order
         std::unordered_map<std::string, std::vector<music::ApiResult>> explore;
         std::vector<std::string> explore_order;
+        std::string search_filter;                      // Search's tab: "" (all), "songs"...
         std::string explore_tab = "FEmusic_explore";   // which page of Explore is shown
         std::string explore_title;                      // a mood / genre's name, else ""
         std::string explore_params;                     // a mood's params (its page), else ""
         std::unordered_map<std::string, std::string> explore_more;   // section title -> its "More" page
+        std::string charts_country;                     // Explore > Charts: "ZZ" global, "FR"...
 
         /* library
         - Filled by the Library*Commands, all require the user to be logged in
@@ -269,7 +275,8 @@ public:
       the error box until the slowest request lands
     */
     void retryLibrary();
-    void search(const std::string& query);
+    // filter: "" or one of YouTube Music's ("songs", "albums"...): Search's tabs.
+    void search(const std::string& query, const std::string& filter = "");
 
     /* Recent search results, by query: going back to a search shows them at
     once instead of an empty page while YouTube answers again. 10 minutes,
@@ -434,6 +441,7 @@ private:
 
         HomeCommand,
         ExploreCommand,
+        ArtistRadioCommand,
         LibraryPlaylistsCommand,
         LibraryAlbumsCommand,
         LibrarySongsCommand,
@@ -466,9 +474,22 @@ public:
     // A page of Explore (state.explore): FEmusic_explore, FEmusic_new_releases,
     // FEmusic_charts, FEmusic_moods_and_genres, or a mood (its params, title).
     void getExplore(const std::string& browse_id = "", const std::string& params = "", const std::string& title = "");
+    // Explore > Charts for a country ("ZZ": global), reloaded.
+    void setChartsCountry(const std::string& code);
+    // An artist's radio: from their top song, as YouTube Music does.
+    void startArtistRadio(const music::ArtistRef& ref);
 private:
     std::atomic<bool> home_queued{false};    // a HomeCommand waits: no second one
     std::atomic<bool> explore_queued{false}; // same for Explore
+    // Explore's pages as fetched (by browse id + params), kept 10 minutes: going
+    // back to a tab or a mood shows it at once. Under state_mutex.
+    struct ExploreCached {
+        std::unordered_map<std::string, std::vector<music::ApiResult>> shelves;
+        std::vector<std::string> order;
+        std::unordered_map<std::string, std::string> more;
+        std::chrono::steady_clock::time_point at;
+    };
+    std::unordered_map<std::string, ExploreCached> explore_cache;
 
     std::unique_ptr<MPV> mpv_service;
     std::unique_ptr<Mpris> mpris_service;

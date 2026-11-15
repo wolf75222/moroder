@@ -43,6 +43,7 @@ void ui::getCarouselDataFrom(const std::unordered_map<std::string, std::vector<m
         std::string url;
         std::string top;
         std::string bottom;
+        bool wide = false;
 
         std::visit([&](auto&& item) {
             using T = std::decay_t<decltype(item)>;
@@ -51,6 +52,7 @@ void ui::getCarouselDataFrom(const std::unordered_map<std::string, std::vector<m
                 top    = item.title;
                 bottom = item.artists.empty() ? "" : item.artists[0].name;
                 url    = item.thumbnail_small;
+                wide   = item.wide;
 
             } else if constexpr (std::is_same_v<T, music::AlbumRef>) {
                 top    = item.title;
@@ -81,11 +83,7 @@ void ui::getCarouselDataFrom(const std::unordered_map<std::string, std::vector<m
 
         data->results.push_back(r);
         data->entries_spoof.push_back(url);
-        data->entries.push_back({
-            url,
-            top,
-            bottom
-        });
+        data->entries.push_back({ url, top, bottom, wide });
     }
 
     data->category_name = category;
@@ -112,11 +110,12 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
             // Its name is on the tile: no title / "Playlist" under it.
             return hbox({ vbox({ thumb, text(""), text("") }), text(" ") });
         } else if (item.image_url.empty()) {
-            thumb = ui::noCover(20, 10);
+            thumb = ui::noCover(item.wide ? 32 : 20, 10);
         } else {
             try {
+                // A music video keeps its 16:9 picture (a wider tile), not a square.
                 thumb = image_view(ui::cover(item.image_url))
-                    | size(WIDTH, EQUAL, 20)
+                    | size(WIDTH, EQUAL, item.wide ? 32 : 20)
                     | size(HEIGHT, EQUAL, 10)
                     | borderStyled(BorderStyle::EMPTY);
                 // thumb = ui::noCover(20, 10);
@@ -126,19 +125,22 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
             }
         }
 
+        if (data->item_boxes.size() < data->entries.size()) data->item_boxes.resize(data->entries.size());
+        ftxui::Box& hb = data->item_boxes[state.index];
+        const bool hover = ui::hovered(hb) && !(state.active && *focused);
         return hbox({
             vbox({
                 ui::coverHit(thumb),
                 hbox({
                     text(" "),
                     vbox({
-                        text(utils::trimSuffix(item.top, 20, "...")) | (state.active && *focused ?  color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
-                        text(utils::trimSuffix(item.bottom, 20, "...")) | (state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
+                        text(utils::trimSuffix(item.top, item.wide ? 31 : 20, "...")) | (state.active && *focused ?  color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                        text(utils::trimSuffix(item.bottom, item.wide ? 31 : 20, "...")) | (state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                     }),
                 }),
             }),
             text(" "),
-        });
+        }) | reflect(hb);
     };
 
     options.on_enter = [data, selected] () {

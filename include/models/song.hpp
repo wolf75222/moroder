@@ -36,6 +36,8 @@ struct SongRef {
     std::string rank;
     int trend = 0;
 
+    bool wide = false;      // a music video: a 16:9 thumbnail
+
     // Inverse of from_json (search-result shape), for history / session files.
     nlohmann::json to_json() const {
         nlohmann::json j;
@@ -93,6 +95,9 @@ struct SongRef {
         - Don't ask me why that is
         */
         if ((j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty())) {
+            const auto& t = j["thumbnails"].back();
+            if (t.contains("width") && t.contains("height") && t["width"].is_number() && t["height"].is_number())
+                s.wide = t["width"].get<double>() > t["height"].get<double>() * 1.3;
             s.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");
             s.thumbnail_small = utils::jstr(j["thumbnails"].front(), "url");
 

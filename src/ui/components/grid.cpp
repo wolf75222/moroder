@@ -235,9 +235,11 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
         if (style == GridStyle::Tile) {
             auto self = std::make_shared<std::weak_ptr<ftxui::ComponentBase>>();
 
-            option.transform = [item, self, selected, index](const EntryState&) {
+            auto hover_box = std::make_shared<Box>();
+            option.transform = [item, self, selected, index, hover_box](const EntryState&) {
                 auto cell = self->lock();
                 bool active = cell && cell->Focused();
+                const bool hover = !active && ui::hovered(*hover_box);
                 // Report the focused tile, for the context menu and prefetch.
                 if (active && selected) *selected = index;
 
@@ -253,6 +255,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
                             vbox({
                                 text(utils::trimSuffix(item.top, ui::GRID_TILE_COVER_WIDTH, "...")) | (active
                                     ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                                    : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                                     : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
 
                                 text(utils::trimSuffix(item.bottom, ui::GRID_TILE_COVER_WIDTH, "...")) | (active
@@ -262,7 +265,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
                         }),
                     }) | size(WIDTH, EQUAL, ui::GRID_TILE_WIDTH - 1) | size(HEIGHT, EQUAL, ui::GRID_TILE_HEIGHT),
                     text(" "),
-                });
+                }) | reflect(*hover_box);
             };
 
             option.on_click = [item, result]() {
@@ -286,7 +289,9 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
         const auto* ranked_song = std::get_if<music::SongRef>(&result.data);
         const std::string rank = ranked ? ranked->rank : ranked_song ? ranked_song->rank : "";
         const int trend = ranked ? ranked->trend : ranked_song ? ranked_song->trend : 0;
-        option.transform = [item, focused, selected, index, rank, trend](const EntryState& state) {
+        auto list_hover = std::make_shared<Box>();
+        option.transform = [item, focused, selected, index, rank, trend, list_hover](const EntryState& state) {
+            const bool hover = !(state.focused && *focused) && ui::hovered(*list_hover);
             // Report the focused tile, for the context menu and prefetch.
             if (state.focused && *focused && selected) *selected = index;
             Element thumb;
@@ -310,13 +315,14 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
                 vbox({
                     text(utils::trimSuffix(item.top, 20, "...")) | ((state.focused && *focused)
                         ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                        : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                         : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
 
                     text(utils::trimSuffix(item.bottom, 20, "...")) | ((state.focused && *focused)
                         ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY))
                         : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                 })
-            }) | size(WIDTH, EQUAL, 40) | size(HEIGHT, EQUAL, 3);
+            }) | size(WIDTH, EQUAL, 40) | size(HEIGHT, EQUAL, 3) | reflect(*list_hover);
         };
 
         option.on_click = [item, result]() {

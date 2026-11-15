@@ -242,7 +242,11 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
     if (music_service) {
         auto cached_home = music_service->getHome(true);
         auto cached_lists = music_service->getLibraryPlaylists(true);
+        auto cached_albums = music_service->getLibraryAlbums(true);
+        auto cached_artists = music_service->getLibraryArtists(true);
         std::lock_guard lock(state_mutex);
+        if (!cached_albums.empty()) state.library_albums = std::move(cached_albums);
+        if (!cached_artists.empty()) state.library_artists = std::move(cached_artists);
         if (!cached_home.empty()) {
             state.home = std::move(cached_home);
             state.home_order = music_service->homeOrder();
@@ -771,7 +775,10 @@ void services::Player::worker_loop() {
                     state.search_results.clear();
                 }
 
-                std::vector<music::ApiResult> res = music_service->getSearch(c.query);
+                const size_t sep = c.query.find('\x1f');
+                std::vector<music::ApiResult> res = sep == std::string::npos
+                    ? music_service->getSearch(c.query)
+                    : music_service->getSearch(c.query.substr(0, sep), c.query.substr(sep + 1));
                 const services::RequestError& err = music_service->lastError();
 
                 {
@@ -1217,13 +1224,37 @@ void services::Player::worker_loop() {
                     }
                 }
 
+            } else if constexpr (std::is_same_v<T, ArtistRadioCommand>) {
+                auto page = music_service->getArtist(c.ref);
+                std::shared_ptr<music::Song> seed;
+                for (const auto& shelf : page.order) {
+                    auto it = page.shelves.find(shelf);
+                    if (it == page.shelves.end()) continue;
+                    for (const auto& r : it->second) {
+                        if (const auto* s = std::get_if<music::SongRef>(&r.data)) {
+                            seed = std::make_shared<music::Song>();
+                            seed->setRef(*s);
+                            break;
+                        }
+                    }
+                    if (seed) break;
+                }
+                if (seed) {
+                    this->queue(std::static_pointer_cast<music::IStreamable>(seed), true, true);
+                } else {
+                    std::lock_guard lock(state_mutex);
+                    state.notice = "No radio for " + c.ref.name;
+                    state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                }
+
             } else if constexpr (std::is_same_v<T, ExploreCommand>) {
                 spdlog::info("PLAYER: ExploreCommand");
                 explore_queued = false;
-                auto shelves = music_service->getExplore(c.browse_id, c.params);
+                auto shelves = music_service->getExplore(c.browse_id, c.params, c.country);
                 const services::RequestError& err = music_service->lastError();
                 std::lock_guard lock(state_mutex);
-                if (state.explore_tab != c.browse_id || state.explore_params != c.params) return;   // another page was asked for meanwhile
+                if (state.explore_tab != c.browse_id || state.explore_params != c.params
+                    || (c.browse_id == "FEmusic_charts" && state.charts_country != c.country)) return;   // another page was asked for meanwhile
                 if (err.failed && !err.cancelled) {
                     state.flags["explore"] = Flags::Error;
                     state.errors["explore"] = { err.message, err.retryable };
@@ -1232,6 +1263,7 @@ void services::Player::worker_loop() {
                     state.explore = std::move(shelves);
                     state.explore_order = music_service->exploreOrder();
                     state.explore_more = music_service->exploreMore();
+                    explore_cache[c.browse_id + "|" + c.params + "|" + c.country] = { state.explore, state.explore_order, state.explore_more, std::chrono::steady_clock::now() };
                 }
 
             } else if constexpr (std::is_same_v<T, LibraryPlaylistsCommand>) {
@@ -1702,7 +1734,7 @@ void services::Player::worker_loop() {
                     state.flags["library_albums"] = Flags::Ongoing;
                     state.errors.erase("library_albums");
                     refreshLibraryError(state);
-                    state.library_albums.clear();
+                    // The shown (maybe cached) albums stay until the new ones land.
                 }
 
                 std::vector<music::Album> user_albums = music_service->getLibraryAlbums();
@@ -1760,7 +1792,7 @@ void services::Player::worker_loop() {
                     state.flags["library_artists"] = Flags::Ongoing;
                     state.errors.erase("library_artists");
                     refreshLibraryError(state);
-                    state.library_artists.clear();
+                    // The shown (maybe cached) artists stay until the new ones land.
                 }
 
                 std::vector<music::ArtistRef> user_artists = music_service->getLibraryArtists();
@@ -1858,8 +1890,24 @@ void services::Player::getHome() {
     command_cv.notify_one();
 }
 
+void services::Player::setChartsCountry(const std::string& code) {
+    {
+        std::lock_guard lock(state_mutex);
+        state.charts_country = code;
+    }
+    getExplore("FEmusic_charts");
+}
+
+void services::Player::startArtistRadio(const music::ArtistRef& ref) {
+    {
+        std::lock_guard lock(command_mutex);
+        pushUrgent(ArtistRadioCommand{ref});
+    }
+    command_cv.notify_one();
+}
+
 void services::Player::getExplore(const std::string& browse_id_in, const std::string& params_in, const std::string& title_in) {
-    std::string browse_id = browse_id_in, params = params_in, title = title_in;
+    std::string browse_id = browse_id_in, params = params_in, title = title_in, country;
     {
         std::lock_guard lock(state_mutex);
         if (browse_id.empty()) {
@@ -1876,6 +1924,21 @@ void services::Player::getExplore(const std::string& browse_id_in, const std::st
         state.explore_tab = browse_id;
         state.explore_title = title;
         state.explore_params = params;
+        if (state.charts_country.empty()) state.charts_country = Config::get().CHARTS_COUNTRY;
+        country = state.charts_country;
+        // Fetched a moment ago: shown at once. Asked again for the page shown
+        // (a click on its tab, on Explore) is a reload.
+        if (!browse_id_in.empty()) {
+            auto it = explore_cache.find(browse_id + "|" + params + "|" + country);
+            if (it != explore_cache.end() && std::chrono::steady_clock::now() - it->second.at < std::chrono::minutes(10)) {
+                state.explore = it->second.shelves;
+                state.explore_order = it->second.order;
+                state.explore_more = it->second.more;
+                state.flags["explore"] = Flags::Done;
+                state.errors.erase("explore");
+                return;
+            }
+        }
         // find, not []: an absent flag would read as Ongoing (the enum's first value).
         if (auto it = state.flags.find("explore"); it != state.flags.end() && it->second == Flags::Ongoing && explore_queued) return;
         explore_queued = true;
@@ -1884,7 +1947,7 @@ void services::Player::getExplore(const std::string& browse_id_in, const std::st
     }
     {
         std::lock_guard lock(command_mutex);
-        pushUrgent(ExploreCommand{browse_id, params});
+        pushUrgent(ExploreCommand{browse_id, params, country});
     }
     command_cv.notify_one();
 }
@@ -1917,7 +1980,13 @@ void services::Player::getLibraryPlaylists() {
 }
 
 
-void services::Player::search(const std::string& query) {
+void services::Player::search(const std::string& query_in, const std::string& filter) {
+    // One key for the query and its tab (cache, superseding): "query\x1ffilter".
+    const std::string query = filter.empty() ? query_in : query_in + "\x1f" + filter;
+    {
+        std::lock_guard lock(state_mutex);
+        state.search_filter = filter;
+    }
     // Asked again within 10 minutes (going back to it): what it said then, now.
     {
         std::lock_guard cache_lock(search_cache_mutex);

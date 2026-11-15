@@ -6,6 +6,7 @@
 
 #include "spdlog/spdlog.h"
 #include "image_view.hpp"
+#include "ftxui-grid-container/grid-container.hpp"
 #include "../../../include/ui/cover_cache.hpp"
 #include "../../../include/ui/viewport.hpp"
 
@@ -110,7 +111,18 @@ ftxui::Component ui::MouseGate(ftxui::Component child, std::shared_ptr<bool> sho
 static std::string playing_id;
 
 std::deque<ftxui::Box> ui::cover_hit_boxes;
+int ui::mouse_x = -1, ui::mouse_y = -1;
 std::deque<std::pair<ftxui::Box, std::string>> ui::more_boxes;
+ftxui::Box ui::charts_country_box{-1, -1, -1, -1};
+const std::vector<std::pair<std::string, std::string>>& ui::chartCountries() {
+    static const std::vector<std::pair<std::string, std::string>> list = {
+        {"ZZ", "Global"}, {"US", "United States"}, {"GB", "United Kingdom"}, {"FR", "France"}, {"DE", "Germany"},
+        {"ES", "Spain"}, {"IT", "Italy"}, {"NL", "Netherlands"}, {"BE", "Belgium"}, {"CH", "Switzerland"},
+        {"CA", "Canada"}, {"BR", "Brazil"}, {"MX", "Mexico"}, {"AR", "Argentina"}, {"JP", "Japan"},
+        {"KR", "South Korea"}, {"IN", "India"}, {"AU", "Australia"}, {"NG", "Nigeria"}, {"ZA", "South Africa"},
+    };
+    return list;
+}
 ftxui::Element ui::sectionTitle(const std::string& title, bool more) {
     using namespace ftxui;
     if (!more) return hbox({ text(" "), text(title) });
@@ -326,7 +338,8 @@ void ui::buildHome(services::Player::PlayerState* state, std::deque<ContentEntry
     }
 }
 
-void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry) {
+void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry,
+                     std::function<bool(const ftxui::Event&, const ui::ChipEntry&)> on_filter) {
     if (buildError(state, "search", main_content_items, main_content, on_retry)) {
         return;
     }
@@ -334,6 +347,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
     updatePlayingId(state);
 
     std::vector<std::string> incoming_categories;
+    incoming_categories.push_back("__search_filters__:" + state->search_filter);
 
     for (auto& search_result : state->search_results) {
         std::string category;
@@ -359,6 +373,23 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
 
     main_content_items.clear();
     main_content->DetachAllChildren();
+
+    // Tabs like YouTube Music's: everything, or one kind (a real filtered search).
+    {
+        main_content_items.push_back(ContentEntry{});
+        ContentEntry& tabs = main_content_items.back();
+        tabs.category = "__search_filters__:" + state->search_filter;
+        tabs.chips_data.exclusive = true;
+        std::vector<ui::ChipEntry> chips = {
+            {"", "All"}, {"songs", "Songs"}, {"videos", "Videos"}, {"albums", "Albums"}, {"artists", "Artists"}, {"playlists", "Playlists"},
+        };
+        int at = 0;
+        for (size_t i = 0; i < chips.size(); i++) if ((chips[i].enabled = chips[i].id == state->search_filter)) at = static_cast<int>(i);
+        ui::setChipsData(&tabs.chips_data, chips);
+        tabs.selected = at;
+        tabs.component = Chips(&tabs.chips_data, &tabs.selected, &tabs.focused, on_filter);
+        main_content->Add(tabs.component);
+    }
 
     for (auto& search_result : state->search_results) {
         std::string category, top, bottom, url, length;
@@ -417,7 +448,9 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
         item.result   = search_result;
 
         ButtonOption opt;
-        opt.transform = [top_cap = top, bottom_cap = bottom, url_cap = url, id_cap = category, length](const EntryState& s) {
+        auto hover_box = std::make_shared<Box>();
+        opt.transform = [top_cap = top, bottom_cap = bottom, url_cap = url, id_cap = category, length, hover_box](const EntryState& s) {
+            const bool hover = ui::hovered(*hover_box);
             const bool now = !id_cap.empty() && id_cap == playing_id;
             Element thumb = url_cap.empty()
                 ? ui::noCover(4, 2)
@@ -431,6 +464,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                         now ? text("\uf028  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : emptyElement(),
                         text(top_cap) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
                                        : s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                                       : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                                        : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
                     }),
                     text(bottom_cap) | (s.focused
@@ -448,7 +482,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                     vbox({ text(s.focused ? "\u258e" : " "), text(s.focused ? "\u258e" : " ") }) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                     row | flex
                 }) | flex
-            }) | flex;
+            }) | flex | reflect(*hover_box);
         };
 
         auto button = Button("", [] {}, opt);
@@ -804,7 +838,14 @@ void ui::buildLibrary(services::Player::PlayerState* state, std::deque<ContentEn
             });
 
         } else {
-            grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, rows, on_item_press, ui::GridStyle::Tile);
+            // Songs read better as a list (thumbnail, title, artist) in columns
+            // across the width; albums, playlists, artists as cover tiles.
+            if (filter == "songs") {
+                const int cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 42);
+                grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, -cols, on_item_press, ui::GridStyle::List);
+            } else {
+                grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, rows, on_item_press, ui::GridStyle::Tile);
+            }
         }
 
         main_content->DetachAllChildren();
@@ -955,7 +996,9 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         const std::string id = song->ref.id;
         const int secs = song->ref.duration_s;
         const std::string length = secs > 0 ? std::to_string(secs / 60) + ":" + (secs % 60 < 10 ? "0" : "") + std::to_string(secs % 60) : "";
-        opt.transform = [top, bottom, url, number, id, length](const EntryState& s) {
+        auto hover_box = std::make_shared<Box>();
+        opt.transform = [top, bottom, url, number, id, length, hover_box](const EntryState& s) {
+            const bool hover = ui::hovered(*hover_box);
             Element thumb = url.empty()
                 ? ui::noCover(4, 2)
                 : image_view(ui::cover(url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
@@ -974,6 +1017,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                 vbox({
                     text(top) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
                                : s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
+                               : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                                            : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
                     text(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
                                                    : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
@@ -981,7 +1025,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                 // Its length, right-aligned like a music app's track list.
                 text(length) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text("   "),
-            }) | size(HEIGHT, EQUAL, 2) });
+            }) | size(HEIGHT, EQUAL, 2) }) | reflect(*hover_box);
         };
 
         const int index = static_cast<int>(i);
@@ -1013,40 +1057,44 @@ namespace {
 /* Moods & genres as YouTube Music shows them: small buttons with a coloured
 stripe, in rows that fill the width (not a carousel of big empty tiles).
 One click opens the mood. */
-ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, size_t limit = 0) {
+ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press,
+                          size_t limit, int per_row) {
     using namespace ftxui;
-    auto row = Container::Horizontal({});
+    per_row = std::max(1, per_row);
+    // A grid for the keys too: up / down move between rows, left / right along one.
+    std::vector<std::vector<Component>> rows;
+    size_t n = 0;
     for (const auto& r : results) {
-        if (limit && row->ChildCount() >= limit) break;
+        if (limit && n >= limit) break;
         const auto* pl = std::get_if<music::PlaylistRef>(&r.data);
         if (!pl) continue;
         const std::string name = pl->title;
-        Color stripe = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
-        if (pl->author.size() == 7 && pl->author[0] == '#') {
-            const unsigned v = static_cast<unsigned>(std::strtoul(pl->author.c_str() + 1, nullptr, 16));
-            stripe = Color::RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
-        }
         ButtonOption opt;
         // One line, one colour: the name, the selected one bright and bold.
-        (void)stripe;
         opt.transform = [name](const EntryState& s) {
             return hbox({
-                text("  " + utils::trimSuffix(name, 24, "\u2026")) | (s.focused ? bold : nothing)
-                    | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text(s.focused ? "\u203a " : "  ") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                text(utils::trimSuffix(name, 24, "\u2026")) | (s.focused ? bold : nothing)
+                    | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 filler(),
             }) | size(WIDTH, EQUAL, 26);
         };
         const music::ApiResult result = r;
         opt.on_click = [on_press, result] { on_press(Config::keyEvent(Config::get().KEY_PLAY_NOW), result); };
-        row->Add(Button(opt));
+        if (n % static_cast<size_t>(per_row) == 0) rows.emplace_back();
+        rows.back().push_back(Button(opt));
+        n++;
     }
-    return Renderer(row, [row] {
-        Elements tiles;
-        for (size_t i = 0; i < row->ChildCount(); i++) tiles.push_back(row->ChildAt(i)->Render());
-        FlexboxConfig cfg;
-        cfg.gap_x = 2;
-        cfg.gap_y = 1;
-        return hbox({ text("  "), flexbox(std::move(tiles), cfg) | flex });
+    auto grid = GridContainer(rows);
+    return Renderer(grid, [rows] {
+        Elements lines;
+        for (size_t i = 0; i < rows.size(); i++) {
+            Elements cells;
+            for (auto& c : rows[i]) { cells.push_back(c->Render()); cells.push_back(text("  ")); }
+            if (i) lines.push_back(text(""));
+            lines.push_back(hbox({ text("  "), hbox(std::move(cells)) }));
+        }
+        return vbox(std::move(lines));
     });
 }
 
@@ -1085,7 +1133,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
     // YouTube Music: laid out again when the window's width changes.
     const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / ui::GRID_TILE_WIDTH);
     const int moods_per_row = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 28);
-    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + std::to_string(wrap_cols) + "x" + std::to_string(moods_per_row) + ":"
+    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + state->charts_country + ":" + std::to_string(wrap_cols) + "x" + std::to_string(moods_per_row) + ":"
                                 + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
 
     if (main_content_items.empty() || main_content_items.front().category != signature) {
@@ -1100,9 +1148,23 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         ContentEntry& head = main_content_items.back();
         head.category = signature;
         // Minimal: the tabs say where you are; a mood's page adds only its name.
-        const std::string mood = state->explore_title;
+        // A mood's name heads its page; a "More" page has its section's title already.
+        const std::string mood = state->explore_tab == "FEmusic_moods_and_genres_category" ? state->explore_title : "";
+        // Charts: which country's, a button like YouTube's ("Global ▾").
+        std::string country;
+        if (state->explore_tab == "FEmusic_charts") {
+            const std::string code = state->charts_country.empty() ? "ZZ" : state->charts_country;
+            country = code;
+            for (const auto& [c, name] : ui::chartCountries()) if (c == code) country = name;
+        }
         // Loading shows beside Explore in the sidebar: no row of its own here.
-        head.component = Renderer([mood] {
+        head.component = Renderer([mood, country] {
+            ui::charts_country_box = Box{-1, -1, -1, -1};
+            if (!country.empty()) {
+                return vbox({ text(" "), hbox({ text(" "),
+                    hbox({ text(" " + country + "  \uf078 ") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) })
+                        | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | reflect(ui::charts_country_box) }) });
+            }
             if (mood.empty()) return emptyElement();
             return vbox({ text(" "), hbox({ text(" "), text(mood) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) }) });
         });
@@ -1140,7 +1202,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 item.category = "__explore_moods__" + category;
                 // On Explore itself, four rows (the Moods & genres tab has them all).
                 const size_t per_row = static_cast<size_t>(moods_per_row);
-                auto grid = MoodGrid(shelf, on_press, state->explore_tab == "FEmusic_explore" ? 4 * per_row : 0);
+                auto grid = MoodGrid(shelf, on_press, state->explore_tab == "FEmusic_explore" ? 4 * per_row : 0, moods_per_row);
                 const std::string heading = category;
                 const bool more = state->explore_tab == "FEmusic_explore" && state->explore_more.count(category);
                 item.component = MouseGate(Renderer(grid, [grid, heading, more] {

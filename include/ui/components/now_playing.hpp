@@ -33,6 +33,7 @@ extern std::vector<UpNextRow> now_playing_upnext;
 // Its rows drawn last frame, with their queue index (click to play).
 extern std::vector<std::pair<ftxui::Box, int>> now_playing_upnext_boxes;
 extern ftxui::Box now_playing_upnext_area;
+extern std::string now_playing_next;         // "Title - Artist" of what plays next, "" if nothing
 extern ftxui::Box now_playing_progress_box;  // its progress line: click / drag to seek   // the column: the wheel scrolls it
 extern int now_playing_upnext_scroll;        // rows scrolled past
 

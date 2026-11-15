@@ -59,6 +59,7 @@ Box ui::now_playing_album_box{-1, -1, -1, -1};
 std::vector<ui::UpNextRow> ui::now_playing_upnext;
 std::vector<std::pair<Box, int>> ui::now_playing_upnext_boxes;
 Box ui::now_playing_upnext_area{-1, -1, -1, -1};
+std::string ui::now_playing_next;
 std::unordered_map<std::string, double> ui::lyrics_offset;
 Box ui::now_playing_progress_box{-1, -1, -1, -1};
 int ui::now_playing_upnext_scroll = 0;
@@ -150,6 +151,14 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                 text(playing ? "" : "paused") | dim,
                 filler(),
                 text(clock(duration)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+            }),
+            // What plays next, discreetly (unless the up next column says it).
+            ui::now_playing_next.empty() || !ui::now_playing_upnext.empty() ? emptyElement() : vbox({
+                text(""),
+                line(hbox({
+                    text("Next  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+                    text(utils::trimSuffix(ui::now_playing_next, cover_w - 6, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                }), centre),
             }),
         }) | size(WIDTH, EQUAL, cover_w);
     };

@@ -442,6 +442,10 @@ int main(int argc, char *argv[]) {
         std::string kind;                // "playlist" / "album"
         music::ArtistRef artist;         // ARTIST
         std::string query;               // SEARCH
+        // Where the page was when left (scroll, selected row): back / forward
+        // land there, not at the top.
+        ui::ViewportState view;
+        int active = -1;
         std::string key() const {
             return std::to_string(static_cast<int>(state)) + "|" + (state == ui::State::PLAYLIST ? kind + playlist.id : "")
                  + (state == ui::State::ARTIST ? artist.id : "") + (state == ui::State::SEARCH ? query : "");
@@ -963,6 +967,13 @@ int main(int argc, char *argv[]) {
     } volume_pop;
 
     ui::ViewportState page_view;
+    // Back / forward: where to put the page once it has its rows again.
+    struct Restore {
+        bool pending = false;
+        ui::ViewportState view;
+        int active = -1;
+        std::chrono::steady_clock::time_point since;
+    } restore;
     Component page_first;       // first child of the page drawn last: a new page resets the scroll
 
     auto render_page = [&]() -> Element {
@@ -974,9 +985,27 @@ int main(int argc, char *argv[]) {
             page_first = n ? main_content->ChildAt(0) : nullptr;
         }
 
+        // Back / forward: once the page has the row it was left on (it loads
+        // anew), the selection and the scroll go back where they were.
+        if (restore.pending) {
+            if (n > std::max(0, restore.active) && n > 1) {
+                if (restore.active >= 0 && main_content->ChildAt(restore.active)->Focusable())
+                    main_content->SetActiveChild(main_content->ChildAt(restore.active));
+                page_view.anchor = restore.view.anchor;
+                page_view.line = restore.view.line;
+                page_view.follow = false;
+                restore.pending = false;
+            } else if (std::chrono::steady_clock::now() - restore.since > std::chrono::seconds(5)) {
+                restore.pending = false;      // it never got that long: leave it at the top
+            }
+        }
+
         int active = 0;
         Component a = main_content->ActiveChild();
         for (int i = 0; i < n; i++) if (main_content->ChildAt(i) == a) { active = i; break; }
+        // Kept with the page in the history, for coming back to it.
+        nav_current.view = page_view;
+        nav_current.active = active;
 
         /* After a wheel scroll the selection may have left the view: it moves
         to the nearest row still in view (so keys and Enter act on what is
@@ -1052,6 +1081,19 @@ int main(int argc, char *argv[]) {
             // Now Playing's "up next": a few rows after the current one, then
             // autoplay, with their queue indexes (as the queue view counts them).
             ui::now_playing_upnext.clear();
+            ui::now_playing_next.clear();
+            if (current_state == ui::State::NOWPLAYING) {
+                // The next track, for the one line under the progress.
+                std::shared_ptr<music::IStreamable> nx;
+                const auto& uq0 = player.state.user_queue;
+                const int qp = player.state.queue_position;
+                if (qp + 1 >= 0 && static_cast<size_t>(qp + 1) < uq0.size()) nx = uq0[qp + 1];
+                else if (player.state.autoplay && !player.state.radio_queue.empty()) nx = player.state.radio_queue.front();
+                if (auto s = std::dynamic_pointer_cast<music::Song>(nx))
+                    ui::now_playing_next = s->ref.title + (s->ref.artists.empty() ? "" : " - " + s->ref.artists[0].name);
+                else if (auto e = std::dynamic_pointer_cast<music::Episode>(nx))
+                    ui::now_playing_next = e->ref.title;
+            }
             {
                 static const music::IStreamable* last_current = nullptr;   // a new track: up next from the top
                 if (player.state.current.get() != last_current) { last_current = player.state.current.get(); ui::now_playing_upnext_scroll = 0; }
@@ -1222,14 +1264,19 @@ int main(int argc, char *argv[]) {
             });
 
         } else if(current_state == ui::State::SEARCH && state_copy.flags["search"] == services::Player::Flags::Done) {
-            ui::buildSearch(&state_copy, main_content_items, main_content, on_item_press, [&player, &last_query, &main_content, &main_content_items, &screen] {
-                player.search(last_query);
+            ui::buildSearch(&state_copy, main_content_items, main_content, on_item_press, [&player, &last_query, &main_content, &main_content_items, &screen, filter = state_copy.search_filter] {
+                player.search(last_query, filter);
 
                 main_content_items.clear();
                 main_content->DetachAllChildren();
                 main_content->Add(Renderer([] { return emptyElement(); }));
 
                 screen.PostEvent(Event::Custom);
+            },
+            [&player, &last_query, &cfg](const Event& event, const ui::ChipEntry& chip) {
+                if (!Config::isKey(event, cfg.KEY_PLAY_NOW)) return false;
+                player.search(last_query, chip.id);
+                return true;
             });
 
         } else if(current_state == ui::State::QUEUE) {
@@ -1289,7 +1336,13 @@ int main(int argc, char *argv[]) {
                 },
                 [&player, &cfg](const Event& event, const ui::ChipEntry& chip) {
                     if (!Config::isKey(event, cfg.KEY_PLAY_NOW)) return false;
-                    player.getExplore(chip.id);
+                    // The tab shown, again: a reload; another: from the cache if fresh.
+                    bool same;
+                    {
+                        std::lock_guard lock(player.state_mutex);
+                        same = player.state.explore_tab == chip.id && player.state.explore_params.empty();
+                    }
+                    player.getExplore(same ? "" : chip.id);
                     return true;
                 });
 
@@ -1716,6 +1769,7 @@ int main(int argc, char *argv[]) {
         nav_forward.push_back(nav_current);
         nav_notice("\u2190 " + target.label());
         navigate_to(target);
+        restore = { true, target.view, target.active, std::chrono::steady_clock::now() };
         return true;
     };
     auto go_forward = [&]() -> bool {
@@ -1725,6 +1779,7 @@ int main(int argc, char *argv[]) {
         nav_back.push_back(nav_current);
         nav_notice(target.label() + " \u2192");
         navigate_to(target);
+        restore = { true, target.view, target.active, std::chrono::steady_clock::now() };
         return true;
     };
 
@@ -1768,6 +1823,8 @@ int main(int argc, char *argv[]) {
             }
 
             auto in = [&](const Box& b) { return b.Contain(m.x, m.y); };
+            ui::mouse_x = m.x;      // for hover: what's under the pointer is drawn brighter
+            ui::mouse_y = m.y;
 
             // Volume popover: click / drag on the bar sets the level, the icon mutes.
             if(volume_pop.open) {
@@ -1846,6 +1903,21 @@ int main(int argc, char *argv[]) {
                     if (current_state == ui::State::NOWPLAYING) break;
                     if (!*item.shown) continue;
                     if (ui::hscrollClick(&item.carousel_data.hscroll, m.x, m.y) || ui::hscrollClick(&item.grid_data.hscroll, m.x, m.y)) return true;
+                }
+                // Explore > Charts: its country button lists the countries.
+                if (current_state == ui::State::EXPLORE && in(ui::charts_country_box)) {
+                    ctx.items.clear();
+                    ctx.title = "Charts";
+                    for (const auto& [code, name] : ui::chartCountries()) {
+                        const std::string c = code;
+                        ctx.items.push_back({"", name, "", [&player, c] { player.setChartsCountry(c); }});
+                    }
+                    ctx.open = true;
+                    ctx.x = ui::charts_country_box.x_min;
+                    ctx.y = ui::charts_country_box.y_max + 1;
+                    ctx.hover = 0;
+                    ctx.boxes.assign(ctx.items.size(), Box{});
+                    return true;
                 }
                 // Explore: a section title with a "More" page opens it (the full chart
                 // is a playlist; the rest, a page of Explore under that title).
@@ -2165,7 +2237,7 @@ int main(int argc, char *argv[]) {
                     }
                 } else if(ui::ContentEntry* e = focused_entry()) {
                     const std::string& c = e->category;
-                    const bool special = c.rfind("__library_filters__", 0) == 0 || c == "__explore_tabs__" || c.rfind("__explore_moods__", 0) == 0 || c.rfind("__explore__", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
+                    const bool special = c.rfind("__library_filters__", 0) == 0 || c.rfind("__search_filters__", 0) == 0 || c == "__explore_tabs__" || c.rfind("__explore_moods__", 0) == 0 || c.rfind("__explore__", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
                     if(!special) {
                         const bool track = c.rfind("__track__", 0) == 0;
 
@@ -2186,7 +2258,28 @@ int main(int argc, char *argv[]) {
                             if (track || current_state == ui::State::QUEUE) return key(bind);
                             return [&, clicked, bind] { on_item_press(Config::keyEvent(bind), clicked); };
                         };
-                        ctx.items.push_back({"\uf04b", track ? "Play from here" : "Play", play_hint, act(cfg.KEY_PLAY_NOW)});
+                        // A page (artist, album, playlist, mood) opens; a song plays.
+                        const bool opens = !track && (std::holds_alternative<music::ArtistRef>(clicked.data) || std::holds_alternative<music::AlbumRef>(clicked.data)
+                                                      || std::holds_alternative<music::PlaylistRef>(clicked.data) || std::holds_alternative<music::PodcastRef>(clicked.data));
+                        ctx.items.push_back({opens ? "\uf07c" : "\uf04b", track ? "Play from here" : opens ? "Open" : "Play", play_hint, act(cfg.KEY_PLAY_NOW)});
+                        // A playlist, album or chart plays straight away, without opening it.
+                        if (const auto* pl = std::get_if<music::PlaylistRef>(&clicked.data); pl && pl->id.rfind("mood:", 0) != 0) {
+                            const music::PlaylistRef ref = *pl;
+                            ctx.items.push_back({"\uf04b", "Play", "", [&player, ref] {
+                                auto p = std::make_shared<music::Playlist>(); p->setRef(ref);
+                                player.queue(std::static_pointer_cast<music::IStreamableContainer>(p), true, true);
+                            }});
+                        } else if (const auto* al = std::get_if<music::AlbumRef>(&clicked.data)) {
+                            const music::AlbumRef ref = *al;
+                            ctx.items.push_back({"\uf04b", "Play", "", [&player, ref] {
+                                auto a = std::make_shared<music::Album>(); a->setRef(ref);
+                                player.queue(std::static_pointer_cast<music::IStreamableContainer>(a), true, true);
+                            }});
+                        }
+                        if (const auto* ar = std::get_if<music::ArtistRef>(&clicked.data); ar && !ar->id.empty()) {
+                            const music::ArtistRef artist = *ar;
+                            ctx.items.push_back({"\uf1be", "Start radio", "", [&player, artist] { player.startArtistRadio(artist); }});
+                        }
 
                         // Song under the pointer, for "radio" and "go to artist".
                         const music::ApiResult* r = nullptr;
@@ -2331,7 +2424,19 @@ int main(int argc, char *argv[]) {
             if(click && handled && !search_bar->Focused()) {
                 bool navigation = sidebar->Focused();
                 if(ui::ContentEntry* e = focused_entry()) {
-                    navigation = navigation || e->category.rfind("__library_filters__", 0) == 0 || e->category == "__explore_tabs__";
+                    navigation = navigation || e->category.rfind("__library_filters__", 0) == 0 || e->category == "__explore_tabs__"
+                              || e->category.rfind("__search_filters__", 0) == 0;
+                    // What opens a page (album, artist, playlist, podcast) opens on one
+                    // click, like a link; what plays (a song, a video) on a double-click.
+                    const music::ApiResult* r = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
+                        ? &e->carousel_data.results[e->selected]
+                        : (!e->grid_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->grid_data.results.size())
+                            ? &e->grid_data.results[e->selected] : &e->result;
+                    // (Not grids: their selection follows the focus only once drawn.)
+                    if (e->grid_data.results.empty() && e->category.rfind("__track__", 0) != 0 && current_state != ui::State::QUEUE
+                        && (std::holds_alternative<music::AlbumRef>(r->data) || std::holds_alternative<music::ArtistRef>(r->data)
+                            || std::holds_alternative<music::PlaylistRef>(r->data) || std::holds_alternative<music::PodcastRef>(r->data)))
+                        navigation = true;
                     const bool self_acting = e->category.rfind("__error__", 0) == 0 || e->category.rfind("__playlist__", 0) == 0;
                     if(self_acting) navigation = false, double_click = false;
                 }
@@ -2441,6 +2546,24 @@ int main(int argc, char *argv[]) {
             if (is({"\x1b[1;2C", "\x1b[1;3C", "\x1b[1;9C", "\x1b" "f", ">"}) || (np && event == Event::ArrowRight)) { player.skipForward();  return true; }
             if (is({"\x1b[1;2A", "\x1b[1;3A", "\x1b[1;9A"}) || (np && event == Event::ArrowUp))   { player.changeVolume(cfg.VOLUME_STEP);  return true; }
             if (is({"\x1b[1;2B", "\x1b[1;3B", "\x1b[1;9B"}) || (np && event == Event::ArrowDown)) { player.changeVolume(-cfg.VOLUME_STEP); return true; }
+        }
+
+        // Tab / Shift+Tab: the next / previous section of the page (a shelf, a
+        // grid, the tabs), rather than row after row.
+        if ((event == Event::Tab || event == Event::TabReverse) && !search_bar->Focused()
+            && current_state != ui::State::NOWPLAYING && current_state != ui::State::QUEUE) {
+            const int n = static_cast<int>(main_content->ChildCount());
+            int at = 0;
+            for (int i = 0; i < n; i++) if (main_content->ChildAt(i) == main_content->ActiveChild()) { at = i; break; }
+            const int step = event == Event::Tab ? 1 : -1;
+            for (int i = at + step; i >= 0 && i < n; i += step) {
+                if (!main_content->ChildAt(i)->Focusable()) continue;
+                main_content->SetActiveChild(main_content->ChildAt(i));
+                if (!main_content->Focused()) main_content->TakeFocus();
+                page_view.follow = true;
+                break;
+            }
+            return true;
         }
 
         // Now Playing: , and . shift the lyrics earlier / later by half a second
@@ -2627,14 +2750,18 @@ int main(int argc, char *argv[]) {
       right when the config remaps them
     */
     auto help_sheet = [&cfg] {
+        // Calm: keys in bold white, what they do in grey, headings over a thin rule.
         auto key = [](const std::string& k) {
-            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, 12);
+            return text(k.empty() ? "-" : k) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | size(WIDTH, EQUAL, 14);
         };
         auto row = [&](const std::string& k, const std::string& what) {
-            return hbox({ text("  "), key(k), text(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text("  ") });
+            return hbox({ text("  "), key(k), text(what) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text("  ") });
         };
         auto heading = [](const std::string& t) {
-            return hbox({ text("  "), text(t) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) });
+            return vbox({
+                hbox({ text("  "), text(t) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) }),
+                hbox({ text("  "), separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | flex, text("  ") }),
+            });
         };
 
         Element left = vbox({

@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <regex>
@@ -95,10 +96,14 @@ services::Lyrics services::fetchLyrics(const std::string& title, const std::stri
     std::string url = "https://lrclib.net/api/get?track_name=" + escape(t) + "&artist_name=" + escape(artist);
     if (duration > 0) url += "&duration=" + std::to_string((int)(duration + 0.5));
 
+    // An entry of a line or two is a stub someone uploaded (Nightcall's exact
+    // match is "There is a nightcall" alone): not lyrics, look further.
+    auto real = [](const Lyrics& l) { return l.lines.size() >= 6 || l.plain.size() >= 6; };
+
     nlohmann::json j = nlohmann::json::parse(get(url), nullptr, false);
     if (j.is_object()) {
         Lyrics l = parse(j);
-        if (l.found) return l;
+        if (l.found && real(l)) return l;
     }
 
     /* The search: the synced hit whose length is closest to this track's.
@@ -106,13 +111,21 @@ services::Lyrics services::fetchLyrics(const std::string& title, const std::stri
     timings drift from what plays. */
     j = nlohmann::json::parse(get("https://lrclib.net/api/search?q=" + escape(t + " " + artist)), nullptr, false);
     if (j.is_array()) {
+        // Among those of the right length (within 8 s), the fullest.
         const nlohmann::json* best = nullptr;
         double best_gap = 1e9;
+        size_t best_lines = 0;
         for (const auto& hit : j) {
-            if (!hit.value("syncedLyrics", nlohmann::json()).is_string()) continue;
+            if (!hit.is_object() || !hit.value("syncedLyrics", nlohmann::json()).is_string()) continue;
             const double d = hit.value("duration", nlohmann::json()).is_number() ? hit["duration"].get<double>() : 0;
             const double gap = duration > 0 && d > 0 ? std::abs(d - duration) : 1e6;
-            if (gap < best_gap) { best_gap = gap; best = &hit; }
+            const size_t n = static_cast<size_t>(std::count(hit["syncedLyrics"].get_ref<const std::string&>().begin(),
+                                                            hit["syncedLyrics"].get_ref<const std::string&>().end(), '\n')) + 1;
+            if (n < 6) continue;
+            const bool close = gap <= 8, best_close = best_gap <= 8;
+            if (!best || (close && !best_close) || (close == best_close && (close ? n > best_lines : gap < best_gap))) {
+                best = &hit; best_gap = gap; best_lines = n;
+            }
         }
         // Off by more than 8 s: another version; its timings would be wrong.
         if (best && (duration <= 0 || best_gap <= 8)) {

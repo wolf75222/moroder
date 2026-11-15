@@ -42,7 +42,8 @@ struct QueueEntry {
 };
 
 void buildHome(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
-void buildSearch(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
+void buildSearch(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry,
+                 std::function<bool(const ftxui::Event&, const ui::ChipEntry&)> on_filter);
 void buildQueue(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container, std::function<bool(const ftxui::Event&, const int)> on_queue_press);
 // Animation frame, advanced by the UI's animation clock while something loads.
 extern int anim_frame;
@@ -55,8 +56,15 @@ extern bool search_has_focus;
 // Where covers / thumbnails were drawn this frame (double-click on one plays
 // the track in full screen). coverHit() records one.
 extern std::deque<ftxui::Box> cover_hit_boxes;
+// Where the pointer is (for hover), -1 when not known.
+extern int mouse_x, mouse_y;
+inline bool hovered(const ftxui::Box& b) { return mouse_x >= 0 && b.Contain(mouse_x, mouse_y); }
 // Section titles with a "More" page, drawn this frame: click to open it.
 extern std::deque<std::pair<ftxui::Box, std::string>> more_boxes;
+// Explore > Charts: its country button (click: the list), drawn this frame.
+extern ftxui::Box charts_country_box;
+// The countries YouTube Music has charts for: code, name ("ZZ": Global).
+const std::vector<std::pair<std::string, std::string>>& chartCountries();
 // A section title; with " ›" and clickable when it has a "More" page.
 ftxui::Element sectionTitle(const std::string& title, bool more);
 ftxui::Element coverHit(ftxui::Element cover);     // pages must not take the focus from the search bar

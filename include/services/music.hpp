@@ -46,12 +46,14 @@ public:
     const RequestError& lastError() const { return last_error; }
 
     std::vector<music::Playlist>   getLibraryPlaylists(bool cached_only = false);
-    std::vector<music::Album>      getLibraryAlbums();
-    std::vector<music::ArtistRef>  getLibraryArtists();
+    // cached_only: the copy saved last time (shown at start, then replaced).
+    std::vector<music::Album>      getLibraryAlbums(bool cached_only = false);
+    std::vector<music::ArtistRef>  getLibraryArtists(bool cached_only = false);
     std::vector<music::PodcastRef> getLibraryPodcasts();
 
     std::vector<std::shared_ptr<music::IStreamable>> getLibrarySongs();
-    std::vector<music::ApiResult> getSearch(const std::string& query);
+    // filter: "" (everything), or "songs", "videos", "albums", "artists", "playlists".
+    std::vector<music::ApiResult> getSearch(const std::string& query, const std::string& filter = "");
 
     /* Cache
 - The last home page and library playlists are kept on disk (raw API JSON,
@@ -79,7 +81,7 @@ public:
     // Shelf titles from the last getHome(), in YouTube Music's order.
     const std::vector<std::string>& homeOrder() const { return home_order; }
     // YouTube Music's Explore page (new albums & singles, trending, videos...).
-    std::unordered_map<std::string, std::vector<music::ApiResult>> getExplore(const std::string& browseId = "FEmusic_explore", const std::string& params = "");
+    std::unordered_map<std::string, std::vector<music::ApiResult>> getExplore(const std::string& browseId = "FEmusic_explore", const std::string& params = "", const std::string& country = "");
     const std::vector<std::string>& exploreOrder() const { return explore_order; }
     // Each section's "More" page (browse id), by title.
     const std::unordered_map<std::string, std::string>& exploreMore() const { return explore_more; }

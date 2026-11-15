@@ -103,7 +103,10 @@ services::MPV::MPV() {
     // Gapless: the next file is opened while this one ends (its stream URL is
     // already resolved), and audio carries over without a gap when formats match.
     mpv_set_option_string(mpv, "prefetch-playlist", "yes");
-    mpv_set_option_string(mpv, "gapless-audio", "weak");
+    {
+        const std::string g = Config::get().GAPLESS;
+        mpv_set_option_string(mpv, "gapless-audio", (g == "yes" || g == "no") ? g.c_str() : "weak");
+    }
 
     mpv_set_option_string(mpv, "log-file", std::string(utils::resolve_path(MORODER_LOG_PATH).string() + "/mpv.log").c_str());
 
