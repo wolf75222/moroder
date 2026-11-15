@@ -29,7 +29,8 @@ struct PlaybackData {
     std::string sleep_label;   // sleep timer: "25m", "end", empty when off
 
     // Screen areas of the clickable parts, filled at render time.
-    ftxui::Box box_progress, box_prev, box_play, box_next, box_like, box_volume, box_loop, box_shuffle, box_track;
+    ftxui::Box box_progress, box_prev, box_play, box_next, box_like, box_volume, box_loop, box_shuffle, box_track, box_queue;
+    bool queue_open = false;    // the queue view is showing: its icon lit
 
     bool is_playing = false;
     bool can_skip_forwards  = true;

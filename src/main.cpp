@@ -1085,6 +1085,7 @@ int main(int argc, char *argv[]) {
 
         ui::getSidebarData(&state_copy, &sidebar_data);
         ui::getPlaybackData(&state_copy, &playback_bar_data, screen.dimx());
+        playback_bar_data.queue_open = current_state == ui::State::QUEUE;
 
         // The heart of a track not rated this session: ask the account (once per track).
         if (auto song = std::dynamic_pointer_cast<music::Song>(state_copy.current);
@@ -1338,7 +1339,8 @@ int main(int argc, char *argv[]) {
                 const Box none{-1, -1, -1, -1};
                 for (Box* b : { &playback_bar_data.box_progress, &playback_bar_data.box_prev, &playback_bar_data.box_play,
                                 &playback_bar_data.box_next, &playback_bar_data.box_like, &playback_bar_data.box_volume,
-                                &playback_bar_data.box_loop, &playback_bar_data.box_shuffle, &playback_bar_data.box_track }) *b = none;
+                                &playback_bar_data.box_loop, &playback_bar_data.box_shuffle, &playback_bar_data.box_track,
+                                &playback_bar_data.box_queue }) *b = none;
                 return emptyElement();
             }(),
             Config::get().EXTRA_BOTTOM_PADDING ? text("") : emptyElement()
@@ -1719,6 +1721,12 @@ int main(int argc, char *argv[]) {
                 if(in(playback_bar_data.box_like))   { player.toggleLikeCurrent(); return true; }
                 if(in(playback_bar_data.box_loop))   { player.cycleLoop();         return true; }
                 if(in(playback_bar_data.box_shuffle)){ player.shuffleUpcoming();   return true; }
+                if(in(playback_bar_data.box_queue)) {
+                    // Open the queue; on it, back to where you were.
+                    if (current_state == ui::State::QUEUE) { if (!go_back()) sidebar_data.onHome(); }
+                    else ui->OnEvent(Config::keyEvent(cfg.KEY_QUEUE_VIEW));
+                    return true;
+                }
                 if(current_state == ui::State::NOWPLAYING && (in(ui::now_playing_artist_box) || in(ui::now_playing_album_box))) {
                     if (const auto song = current_song()) {
                         if (in(ui::now_playing_artist_box) && !song->ref.artists.empty() && !song->ref.artists[0].id.empty()) { open_artist_page(song->ref.artists[0]); return true; }
@@ -2476,7 +2484,7 @@ int main(int argc, char *argv[]) {
             text(""),
             heading("Mouse"),
             row("click",                  "select (sidebar: open)"),
-            row("dbl-click",              "play"),
+            row("dbl-click",              "play (stays on the page)"),
             row("right-click",            "menu: play next, radio..."),
             row("middle",                 "preview 15 s"),
             row("wheel",                  "scroll by lines"),
@@ -2484,7 +2492,9 @@ int main(int argc, char *argv[]) {
             row("swipe cover",            "now playing: skip tracks"),
             row("volume",                 "click: slider, wheel: level"),
             row("bar",                    "click or drag the line to seek"),
-            row("title",                  "now playing"),
+            row("title / dbl-click cover", "now playing"),
+            row("\uf03a",                     "queue (click again: back)"),
+            row("home / library again",   "refresh"),
             row("lyrics",                 "click a line: jump there"),
             row("queue",                  "drag a row to move it"),
             text(""),
@@ -2508,6 +2518,15 @@ int main(int argc, char *argv[]) {
         }
 
         Element base = ui->Render();
+
+        // A notice ("Link copied", "Refreshing Home"...) normally shows in the
+        // playback bar; with nothing playing there is no bar: a small toast at
+        // the top right instead.
+        if (!playback_bar_data.notice.empty() && playback_bar_data.box_progress.y_min < 0) {
+            Element toast = hbox({ text(" "), text(playback_bar_data.notice) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text(" ") })
+                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bgcolor(Color::RGB(22, 22, 26)) | clear_under;
+            base = dbox({ base, vbox({ filler() | size(HEIGHT, EQUAL, 4), hbox({ filler(), toast, text("  ") }), filler() }) });
+        }
 
         // Search suggestions, under the bar.
         auto& sb = search_bar_data;

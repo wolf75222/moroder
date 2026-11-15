@@ -144,6 +144,9 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text("") | color(loop_color) | reflect(data->box_loop),
             text("   "),
             text("\uf074") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_shuffle),
+            text("   "),
+            // The queue view, one click away (a key: a).
+            text("\uf03a") | color(data->queue_open ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_queue),
             text("  "),
         });
 
