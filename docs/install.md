@@ -43,8 +43,10 @@ irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
   and Edge lock their cookies on Windows (app-bound encryption): pick
   **New window** in setup, sign in there once, and the browser hands the
   session over itself
-- Media keys (play / pause, next, previous) work wherever the focus is;
-  notifications are Windows toasts
+- The track shows in Windows' media flyout and on the lock screen (title,
+  artist, album, cover) with its play / pause / next / previous buttons; the
+  keyboard's media keys work wherever the focus is; notifications are
+  Windows toasts
 
 Built with MSYS2 (UCRT64); `.github/workflows/windows.yml` shows the steps.
 
