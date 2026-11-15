@@ -1663,6 +1663,11 @@ int main(int argc, char *argv[]) {
             }
 
             if(click) {
+                // A carousel / grid's ‹ ›.
+                for (auto& item : main_content_items) {
+                    if (!*item.shown) continue;
+                    if (ui::hscrollClick(&item.carousel_data.hscroll, m.x, m.y) || ui::hscrollClick(&item.grid_data.hscroll, m.x, m.y)) return true;
+                }
                 if(in(nav_back_box))    { go_back();    return true; }
                 if(in(nav_forward_box)) { go_forward(); return true; }
                 if(in(playback_bar_data.box_prev))   { player.skipBackward();      return true; }
