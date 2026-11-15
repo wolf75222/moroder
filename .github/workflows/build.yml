@@ -56,7 +56,7 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMORODER_VERSION="${{ steps.ver.outputs.version }}" -DMORODER_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel -- -k 0      # every error at once
 
       - name: Smoke test
         run: |

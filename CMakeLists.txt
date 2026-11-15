@@ -92,6 +92,8 @@ FetchContent_Declare(
     UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(ftxui-image-view)
+# Its example program isn't Moroder's, and doesn't build on Windows.
+set_target_properties(ftxui-imageview-example PROPERTIES EXCLUDE_FROM_ALL TRUE)
 # tiv links X11 but never uses it (CImg display is disabled); there is no X11
 # on macOS or Windows. On Windows CImg would otherwise draw with GDI: off too.
 if(APPLE OR WIN32)
