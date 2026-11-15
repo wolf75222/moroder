@@ -617,6 +617,19 @@ struct FoundBrowser { std::string name; std::string ytdlp_spec; fs::path dir; };
 #ifdef _WIN32
 fs::path appData()      { const char* p = std::getenv("APPDATA");      return p ? fs::path(p) : utils::home() / "AppData/Roaming"; }
 fs::path localAppData() { const char* p = std::getenv("LOCALAPPDATA"); return p ? fs::path(p) : utils::home() / "AppData/Local"; }
+
+/* Arc for Windows is a Store (MSIX) app: its profile lives in its package's
+folder (TheBrowserCompany.Arc_<id>\LocalCache\Local\Arc\User Data), not in
+%LOCALAPPDATA%\Arc. Both are looked at. */
+std::vector<fs::path> arcWindowsDirs() {
+    std::vector<fs::path> out = { localAppData() / "Arc/User Data" };
+    std::error_code ec;
+    for (fs::directory_iterator it(localAppData() / "Packages", ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = it->path().filename().string();
+        if (n.rfind("TheBrowserCompany.Arc", 0) == 0) out.push_back(it->path() / "LocalCache/Local/Arc/User Data");
+    }
+    return out;
+}
 #endif
 
 std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
@@ -633,6 +646,7 @@ std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
         {"zen",      {h / "Library/Application Support/zen/Profiles"}},
         {"librewolf",{h / "Library/Application Support/librewolf/Profiles"}},
 #elif defined(_WIN32)
+        {"arc",      arcWindowsDirs()},
         {"chrome",   {localAppData() / "Google/Chrome/User Data"}},
         {"edge",     {localAppData() / "Microsoft/Edge/User Data"}},
         {"brave",    {localAppData() / "BraveSoftware/Brave-Browser/User Data"}},
@@ -663,7 +677,11 @@ std::vector<FoundBrowser> installedBrowsers(const std::string& preferred) {
         for (const auto& d : dirs) {
             if (!fs::is_directory(d, ec)) continue;
             const bool ff = std::find(firefox_like.begin(), firefox_like.end(), name) != firefox_like.end();
-            out.push_back({name, ff ? "firefox:" + d.string() : name, d});
+            // yt-dlp has no "arc": it is Chromium, read as Chrome from its own
+            // profile folder (whose parent holds the key, in Local State).
+            const std::string spec = ff ? "firefox:" + d.string()
+                                   : name == "arc" ? "chrome:" + (d / "Default").string() : name;
+            out.push_back({name, spec, d});
             break;
         }
     }
@@ -714,10 +732,16 @@ std::string cookiesViaYtdlpCli(const FoundBrowser& b, std::string& error) {
     if (!p.start({ "yt-dlp", "--cookies-from-browser", b.ytdlp_spec, "--cookies", file.string(),
                    "--skip-download", "--no-warnings", "--quiet", "ytsearch0:moroder" })) { error = "couldn't start yt-dlp"; return ""; }
     p.closeStdin();
-    std::string ignored;
+    std::string said;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (p.read(ignored, 200) >= 0) { ignored.clear(); if (std::chrono::steady_clock::now() > deadline) { p.kill(); break; } }
+    while (p.read(said, 200) >= 0) { if (said.size() > 8192) said.erase(0, said.size() - 8192); if (std::chrono::steady_clock::now() > deadline) { p.kill(); break; } }
     p.wait();
+    // yt-dlp's reason, if it gave one (a locked or app-bound cookie store...).
+    std::string why;
+    for (size_t at = said.rfind("ERROR:"); at != std::string::npos; at = std::string::npos) {
+        why = said.substr(at + 6, said.find('\n', at) == std::string::npos ? std::string::npos : said.find('\n', at) - at - 6);
+        why = utils::trim(why);
+    }
 
     // Netscape format: domain, subdomains, path, secure, expiry, name, value.
     std::ifstream in(file);
@@ -742,7 +766,15 @@ std::string cookiesViaYtdlpCli(const FoundBrowser& b, std::string& error) {
 
     std::string header;
     for (const auto& name : order) header += (header.empty() ? "" : "; ") + name + "=" + jar[name];
-    if (header.empty()) error = "couldn't read its cookies";
+    if (header.empty()) {
+        error = "couldn't read its cookies";
+        if (why.find("copy") != std::string::npos || why.find("lock") != std::string::npos)
+            error += ": the browser keeps them locked while it runs, close it and try again";
+        else if (why.find("DPAPI") != std::string::npos || why.find("decrypt") != std::string::npos || why.find("App-Bound") != std::string::npos)
+            error += ": they're encrypted for the browser alone (use the new-window sign-in)";
+        else if (!why.empty())
+            error += " (" + utils::trimSuffix(why, 120, "\u2026") + ")";
+    }
     return header;
 }
 
@@ -1198,6 +1230,7 @@ int setup::run(int argc, char* argv[]) {
             live.start();
             std::mutex m;
             std::vector<std::thread> threads;
+            std::vector<std::pair<std::string, std::string>> failed;   // browser, why its cookies couldn't be read
             for (const auto& b : found) {
                 threads.emplace_back([&, b] {
                     std::vector<Source> mine;
@@ -1207,6 +1240,7 @@ int setup::run(int argc, char* argv[]) {
                         std::string error;
                         const std::string cookie = cookiesViaYtdlp(b, error);
                         if (hasLogin(cookie)) mine.push_back({b, "", "", false, cookie});
+                        else if (!error.empty()) { std::lock_guard lock(m); failed.emplace_back(b.name, error); }
                     }
                     std::lock_guard lock(m);
                     sources.insert(sources.end(), mine.begin(), mine.end());
@@ -1220,6 +1254,11 @@ int setup::run(int argc, char* argv[]) {
             for (const auto& s : sources) if (names.find(prettyBrowser(s.fb.name)) == std::string::npos) names += (names.empty() ? "" : ", ") + prettyBrowser(s.fb.name);
             live.set(id, sources.empty() ? cli::State::Warn : cli::State::Ok, sources.empty() ? "none signed in to YouTube" : "signed in: " + names);
             live.finish();
+            // Why a browser you may be signed in to didn't count (Arc open on
+            // Windows keeps its cookies locked...), rather than silence.
+            for (const auto& [name, why] : failed)
+                if (std::none_of(sources.begin(), sources.end(), [&](const Source& src) { return src.fb.name == name; }))
+                    note(prettyBrowser(name) + ": " + why);
         }
 
         // Signed in to Google but never to youtube.com there: say so, it looks

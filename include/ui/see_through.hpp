@@ -11,6 +11,7 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/dom/node.hpp>
 #include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/string.hpp>
 
 namespace ui {
 
@@ -31,6 +32,13 @@ public:
     void Render(ftxui::Screen& screen) override {
         using ftxui::Color;
         const Color none = Color::Default, black = Color::RGB(0, 0, 0);
+        // A double-width character cut by an edge: its other half goes too,
+        // or the rest of the row shifts by a column.
+        for (int y = box_.y_min; y <= box_.y_max; ++y) {
+            if (box_.x_min > 0 && screen.CellAt(box_.x_min, y).character.empty()
+                && ftxui::string_width(screen.CellAt(box_.x_min - 1, y).character) == 2) screen.CellAt(box_.x_min - 1, y).character = " ";
+            if (box_.x_max + 1 < screen.dimx() && screen.CellAt(box_.x_max + 1, y).character.empty()) screen.CellAt(box_.x_max + 1, y).character = " ";
+        }
         for (int y = box_.y_min; y <= box_.y_max; ++y) {
             for (int x = box_.x_min; x <= box_.x_max; ++x) {
                 ftxui::Cell& c = screen.CellAt(x, y);
@@ -39,6 +47,7 @@ public:
                 if (block(c.character) && !(c.foreground_color == none))
                     under = under == none ? c.foreground_color : Color::Interpolate(0.5f, c.foreground_color, under);
                 c = ftxui::Cell();
+                c.character = " ";
                 if (!(under == none)) c.background_color = Color::Interpolate(0.72f, under, black);
             }
         }

@@ -8,8 +8,24 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/string.hpp>
 
 using namespace ftxui;
+
+// Cut to w columns, not w characters: a CJK title is twice as wide.
+static std::string fitWidth(const std::string& s, int w) {
+    if (ftxui::string_width(s) <= w) return s;
+    std::string out;
+    int used = 0;
+    for (const auto& g : ftxui::Utf8ToGlyphs(s)) {
+        if (g.empty()) continue;                           // second half of a wide glyph
+        const int gw = ftxui::string_width(g);
+        if (used + gw > w - 3) break;
+        out += g; used += gw;
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out + "...";
+}
 
 void ui::getCarouselData(services::Player::PlayerState* state, std::string category, CarouselData* data) {
     getCarouselDataFrom(state->home, category, data);
@@ -134,8 +150,8 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
                 hbox({
                     text(" "),
                     vbox({
-                        text(utils::trimSuffix(item.top, item.wide ? 31 : 20, "...")) | (state.active && *focused ?  color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
-                        text(utils::trimSuffix(item.bottom, item.wide ? 31 : 20, "...")) | (state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
+                        text(fitWidth(item.top, item.wide ? 31 : 20)) | (state.active && *focused ?  color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                        text(fitWidth(item.bottom, item.wide ? 31 : 20)) | (state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                     }),
                 }),
             }),
