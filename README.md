@@ -11,7 +11,7 @@ Keyboard, mouse or trackpad. macOS, Linux and Windows.
 <img alt="Windows" src="https://img.shields.io/badge/Windows-161b22?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDMuNDUgOS43NSAyLjF2OS40NUgwem0xMC45NS0xLjVMMjQgMHYxMS40SDEwLjk1ek0wIDEyLjZoOS43NXY5LjQ1TDAgMjAuN3ptMTAuOTUuMTVIMjRWMjRsLTEzLjA1LTEuOHoiLz48L3N2Zz4=">
 <img alt="YouTube Music" src="https://img.shields.io/badge/YouTube%20Music-161b22?style=for-the-badge&logo=youtubemusic&logoColor=FF0000">
 
-<img src="docs/assets/app.gif" alt="Moroder playing Get Lucky with synced lyrics" width="760">
+<img src="docs/assets/app.gif" alt="Moroder playing Get Lucky with synced lyrics" width="900">
 
 Fast, gapless playback · synced lyrics · album art<br>
 Playlists, radio, search, queue · clicks, swipes, menus

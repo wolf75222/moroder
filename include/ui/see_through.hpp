@@ -69,11 +69,15 @@ public:
     }
 
 private:
-    // U+2580..U+259F (block elements) and the box / legacy shapes covers use.
+    // U+2580..U+259F: block elements.
     static bool block(const std::string& s) {
         if (s.size() != 3) return false;
         const auto a = static_cast<unsigned char>(s[0]), b = static_cast<unsigned char>(s[1]);
-        return a == 0xE2 && (b == 0x96 || b == 0x94 || b == 0x95 || b == 0x8E || b == 0x8F);
+        // Only the solid block shapes (U+2580..U+259F) fill their cell with
+        // ink. Lines (━ the progress bar, ─ │) are thin: counting them as a
+        // whole cell turned the bar under a menu into a wide band.
+        const auto c = static_cast<unsigned char>(s[2]);
+        return a == 0xE2 && b == 0x96 && c >= 0x80 && c <= 0x9F;
     }
 };
 
