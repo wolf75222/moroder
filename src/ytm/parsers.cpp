@@ -760,7 +760,15 @@ json mixedContent(const json& rows) {
                         a["trend"] = icon.find("UP") != std::string::npos ? 1 : icon.find("DOWN") != std::string::npos ? -1 : 0;
                         contents.push_back(a);
                     } else {
-                        contents.push_back(songFlat(*data));
+                        json song = songFlat(*data);
+                        // A chart row (Trending): its rank and how it moved.
+                        const std::string rank = str(nav(data, {"customIndexColumn", "musicCustomIndexColumnRenderer", "text", "runs", 0, "text"}));
+                        if (!rank.empty() && song.is_object()) {
+                            song["rank"] = rank;
+                            const std::string icon = str(nav(data, {"customIndexColumn", "musicCustomIndexColumnRenderer", "icon", "iconType"}));
+                            song["trend"] = icon.find("UP") != std::string::npos ? 1 : icon.find("DOWN") != std::string::npos ? -1 : 0;
+                        }
+                        contents.push_back(song);
                     }
 
                 } else if ((data = nav(result, {MMRIR}))) {

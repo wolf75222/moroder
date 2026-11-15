@@ -283,8 +283,9 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
 
         // A chart's artist: its rank and how it moved, like YouTube Music's.
         const auto* ranked = std::get_if<music::ArtistRef>(&result.data);
-        const std::string rank = ranked ? ranked->rank : "";
-        const int trend = ranked ? ranked->trend : 0;
+        const auto* ranked_song = std::get_if<music::SongRef>(&result.data);
+        const std::string rank = ranked ? ranked->rank : ranked_song ? ranked_song->rank : "";
+        const int trend = ranked ? ranked->trend : ranked_song ? ranked_song->trend : 0;
         option.transform = [item, focused, selected, index, rank, trend](const EntryState& state) {
             // Report the focused tile, for the context menu and prefetch.
             if (state.focused && *focused && selected) *selected = index;

@@ -32,6 +32,10 @@ struct SongRef {
 
     int duration_s = 0;     // 0: unknown
 
+    // In a chart (Explore > Trending): its rank, and how it moved (1, -1, 0).
+    std::string rank;
+    int trend = 0;
+
     // Inverse of from_json (search-result shape), for history / session files.
     nlohmann::json to_json() const {
         nlohmann::json j;
@@ -51,6 +55,8 @@ struct SongRef {
         s.id = utils::jstr(j, "videoId");
         s.title = utils::jstr(j, "title");
         s.set_video_id = utils::jstr(j, "setVideoId");
+        s.rank = utils::jstr(j, "rank");
+        if (j.contains("trend") && j["trend"].is_number_integer()) s.trend = j["trend"].get<int>();
         if (j.contains("duration_seconds") && j["duration_seconds"].is_number()) {
             s.duration_s = j["duration_seconds"].get<int>();
         } else if (j.contains("duration") && j["duration"].is_string()) {

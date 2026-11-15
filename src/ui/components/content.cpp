@@ -13,6 +13,7 @@
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
+#include <ftxui/screen/terminal.hpp>
 #include <type_traits>
 #include <string>
 
@@ -1005,10 +1006,11 @@ namespace {
 /* Moods & genres as YouTube Music shows them: small buttons with a coloured
 stripe, in rows that fill the width (not a carousel of big empty tiles).
 One click opens the mood. */
-ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press) {
+ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, size_t limit = 0) {
     using namespace ftxui;
     auto row = Container::Horizontal({});
     for (const auto& r : results) {
+        if (limit && row->ChildCount() >= limit) break;
         const auto* pl = std::get_if<music::PlaylistRef>(&r.data);
         if (!pl) continue;
         const std::string name = pl->title;
@@ -1018,14 +1020,14 @@ ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::fun
             stripe = Color::RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
         }
         ButtonOption opt;
+        // One line, no box: the coloured stripe, the name; the selected one bold.
         opt.transform = [name, stripe](const EntryState& s) {
             return hbox({
-                text("\u258c") | color(stripe),
-                text(" " + utils::trimSuffix(name, 20, "\u2026")) | (s.focused ? bold : nothing)
+                text(s.focused ? "\u2588" : "\u258c") | color(stripe),
+                text("  " + utils::trimSuffix(name, 22, "\u2026")) | (s.focused ? bold : nothing)
                     | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 filler(),
-            }) | size(WIDTH, EQUAL, 24)
-               | borderStyled(BorderStyle::ROUNDED, s.focused ? stripe : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
+            }) | size(WIDTH, EQUAL, 26);
         };
         const music::ApiResult result = r;
         opt.on_click = [on_press, result] { on_press(Config::keyEvent(Config::get().KEY_PLAY_NOW), result); };
@@ -1035,8 +1037,8 @@ ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::fun
         Elements tiles;
         for (size_t i = 0; i < row->ChildCount(); i++) tiles.push_back(row->ChildAt(i)->Render());
         FlexboxConfig cfg;
-        cfg.gap_x = 1;
-        cfg.gap_y = 0;
+        cfg.gap_x = 2;
+        cfg.gap_y = 1;
         return hbox({ text("  "), flexbox(std::move(tiles), cfg) | flex });
     });
 }
@@ -1050,11 +1052,13 @@ bool allMoods(const std::vector<music::ApiResult>& v) {
     return true;
 }
 
+// A chart: every row ranked (Top artists, Trending).
 bool rankedArtists(const std::vector<music::ApiResult>& v) {
     if (v.empty()) return false;
     for (const auto& r : v) {
         const auto* a = std::get_if<music::ArtistRef>(&r.data);
-        if (!a || a->rank.empty()) return false;
+        const auto* s = std::get_if<music::SongRef>(&r.data);
+        if (!((a && !a->rank.empty()) || (s && !s->rank.empty()))) return false;
     }
     return true;
 }
@@ -1070,7 +1074,10 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
 
     const auto ef = state->flags.find("explore");
     const bool loading = ef == state->flags.end() || ef->second == services::Player::Flags::Ongoing;
-    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":"
+    // New releases' first section is a grid of covers filling the width, as on
+    // YouTube Music: laid out again when the window's width changes.
+    const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / ui::GRID_TILE_WIDTH);
+    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + std::to_string(wrap_cols) + ":"
                                 + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
 
     if (main_content_items.empty() || main_content_items.front().category != signature) {
@@ -1122,11 +1129,22 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             if (allMoods(shelf)) {
                 // A heading, then the buttons.
                 item.category = "__explore_moods__" + category;
-                auto grid = MoodGrid(shelf, on_press);
+                // On Explore itself, four rows (the Moods & genres tab has them all).
+                const size_t per_row = static_cast<size_t>(std::max(1, (ftxui::Terminal::Size().dimx - 38) / 28));
+                auto grid = MoodGrid(shelf, on_press, state->explore_tab == "FEmusic_explore" ? 4 * per_row : 0);
                 const std::string heading = category;
                 item.component = MouseGate(Renderer(grid, [grid, heading] {
                     return vbox({ text(""), text(""), hbox({ text(" "), text(heading) }), text(""), grid->Render() });
                 }), item.shown);
+            } else if (state->explore_tab == "FEmusic_new_releases" && category == state->explore_order.front()) {
+                item.category = "__explore_wall__" + category;
+                item.grid_data.category_name = category;
+                item.grid_data.results = shelf;
+                item.grid_data.entries.clear();
+                ui::getCarouselDataFrom(state->explore, category, &item.carousel_data);   // its covers and captions
+                item.grid_data.entries = item.carousel_data.entries;
+                item.grid_data.is_loading = false;
+                item.component = MouseGate(Grid(&item.grid_data, &item.selected, &item.focused, -wrap_cols, on_press, ui::GridStyle::Tile), item.shown);
             } else if (rankedArtists(shelf)) {
                 // Ranked, four rows per column, like YouTube Music's chart.
                 item.category = "__explore_ranked__" + category;
@@ -1134,8 +1152,13 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 item.grid_data.results = shelf;
                 item.grid_data.entries.clear();
                 for (const auto& r : shelf) {
-                    const auto& a = std::get<music::ArtistRef>(r.data);
-                    item.grid_data.entries.push_back({ a.thumbnail_small, a.name, a.subtitle });
+                    if (const auto* a = std::get_if<music::ArtistRef>(&r.data)) {
+                        item.grid_data.entries.push_back({ a->thumbnail_small, a->name, a->subtitle });
+                    } else if (const auto* s = std::get_if<music::SongRef>(&r.data)) {
+                        std::string by;
+                        for (const auto& ar : s->artists) by += (by.empty() ? "" : ", ") + ar.name;
+                        item.grid_data.entries.push_back({ s->thumbnail_small, s->title, by });
+                    }
                 }
                 item.grid_data.is_loading = false;
                 item.component = MouseGate(Grid(&item.grid_data, &item.selected, &item.focused, 4, on_press), item.shown);
