@@ -20,6 +20,17 @@ extern ftxui::Box now_playing_title_box;    // right-click: the track's menu
 extern ftxui::Box now_playing_artist_box;   // click: the artist's page
 extern ftxui::Box now_playing_album_box;    // click: the album
 
+/* What plays next, shown beside the lyrics (no need for the queue view):
+filled by the caller each frame, index = the queue index (skipTo plays it). */
+struct UpNextRow {
+    int index = 0;
+    bool autoplay = false;      // from the autoplay radio, after the queue
+    std::string title, artist, thumb;
+};
+extern std::vector<UpNextRow> now_playing_upnext;
+// Its rows drawn last frame, with their queue index (click to play).
+extern std::vector<std::pair<ftxui::Box, int>> now_playing_upnext_boxes;
+
 ftxui::Element renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height);
 
 }

@@ -987,6 +987,29 @@ int main(int argc, char *argv[]) {
                 }
             }
 
+            // Now Playing's "up next": a few rows after the current one, then
+            // autoplay, with their queue indexes (as the queue view counts them).
+            ui::now_playing_upnext.clear();
+            if (current_state == ui::State::NOWPLAYING) {
+                auto row = [](const std::shared_ptr<music::IStreamable>& item, int index, bool autoplay) {
+                    ui::UpNextRow r; r.index = index; r.autoplay = autoplay;
+                    if (auto s = std::dynamic_pointer_cast<music::Song>(item)) {
+                        r.title = s->ref.title; r.artist = s->ref.artists.empty() ? "" : s->ref.artists[0].name; r.thumb = s->ref.thumbnail_small;
+                    } else if (auto e = std::dynamic_pointer_cast<music::Episode>(item)) {
+                        r.title = e->ref.title; r.artist = e->ref.podcast.name; r.thumb = e->ref.thumbnail_small;
+                    }
+                    return r;
+                };
+                const auto& uq = player.state.user_queue;
+                for (int i = std::max(0, player.state.queue_position + 1); i < static_cast<int>(uq.size()) && ui::now_playing_upnext.size() < 6; i++)
+                    if (uq[i]) ui::now_playing_upnext.push_back(row(uq[i], i, false));
+                if (player.state.autoplay) {
+                    const auto& rq = player.state.radio_queue;
+                    for (size_t i = 0; i < rq.size() && i < 6; i++)
+                        if (rq[i]) ui::now_playing_upnext.push_back(row(rq[i], static_cast<int>(uq.size() + i), true));
+                }
+            }
+
             audio_playing = state_copy.flags["audio"] == services::Player::Flags::Ongoing;
             has_track = state_copy.current != nullptr;
         }
@@ -1752,6 +1775,13 @@ int main(int argc, char *argv[]) {
                         search_bar->OnEvent(Event::Return);
                         return true;
                     }
+                }
+            }
+
+            // Now Playing: a click on a row of "up next" plays it.
+            if(click && current_state == ui::State::NOWPLAYING) {
+                for (const auto& [b, index] : ui::now_playing_upnext_boxes) {
+                    if (in(b)) { player.skipTo(index); return true; }
                 }
             }
 

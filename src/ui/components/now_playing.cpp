@@ -56,11 +56,14 @@ Box ui::now_playing_cover_box{-1, -1, -1, -1};
 Box ui::now_playing_title_box{-1, -1, -1, -1};
 Box ui::now_playing_artist_box{-1, -1, -1, -1};
 Box ui::now_playing_album_box{-1, -1, -1, -1};
+std::vector<ui::UpNextRow> ui::now_playing_upnext;
+std::vector<std::pair<Box, int>> ui::now_playing_upnext_boxes;
 
 Element ui::renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height) {
     ui::lyric_boxes.clear();
     ui::now_playing_cover_box = Box{-1, -1, -1, -1};
     ui::now_playing_title_box = ui::now_playing_artist_box = ui::now_playing_album_box = Box{-1, -1, -1, -1};
+    ui::now_playing_upnext_boxes.clear();
     auto song = std::dynamic_pointer_cast<music::Song>(state->current);
     if (!song) {
         return text("Nothing is playing. Press v or Esc to go back.") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | center | flex;
@@ -79,12 +82,19 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     // Cover: as large as the page allows, square in terminal cells (2:1).
     const int room_w = std::max(16, width - 33 - 8);     // the page minus sidebar and margins
-    const int cover_h = no_lyrics ? std::clamp(std::min(height - 9, room_w / 2), 8, 40)
-                                  : std::clamp(height - 12, 8, 26);
+    // With lyrics, "up next" gets a column when the page is wide enough,
+    // the cover giving up a little room for it (down to 12 rows).
+    constexpr int UP_W = 34;
+    const int page_w = width - 33;                       // the page: the screen minus the sidebar
+    const int fixed = 3 + 6 + 30 + 4 + UP_W + 2;         // margins, lyrics' minimum, the column
+    const bool room_for_next = !no_lyrics && !ui::now_playing_upnext.empty() && page_w - fixed >= 24;
+    int cover_h = no_lyrics ? std::clamp(std::min(height - 9, room_w / 2), 8, 40)
+                            : std::clamp(height - 12, 8, 26);
+    if (room_for_next) cover_h = std::max(12, std::min(cover_h, (page_w - fixed) / 2));
     const int cover_w = cover_h * 2;
 
     // Room for the lyrics: the page minus sidebar, cover and margins.
-    const int lyrics_w = std::max(20, width - 33 - cover_w - 13);
+    int lyrics_w = std::max(20, width - 33 - cover_w - 13);
 
     Element cover = art.empty()
         ? filler() | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h) | border
@@ -135,8 +145,47 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         }) | size(WIDTH, EQUAL, cover_w);
     };
 
+    /* Up next: the queue, then autoplay, as in the queue view; a column of
+    its own when the page is wide enough. */
+    auto up_next = [&](int rows_room) -> Element {
+        if (ui::now_playing_upnext.empty()) return emptyElement();
+        ui::now_playing_upnext_boxes.reserve(ui::now_playing_upnext.size());
+        Elements col;
+        bool in_auto = false, first = true;
+        int used = 0;
+        for (const auto& r : ui::now_playing_upnext) {
+            if (first || r.autoplay != in_auto) {
+                if (!first) { col.push_back(text("")); used++; }
+                col.push_back(text(r.autoplay ? "Autoplay" : "Next in queue") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
+                col.push_back(separatorLight() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)));
+                used += 2;
+                in_auto = r.autoplay; first = false;
+            }
+            if (used + 3 > rows_room) break;
+            Element thumb = r.thumb.empty() ? ui::noCover(4, 2)
+                                            : image_view(ui::cover(r.thumb)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+            ui::now_playing_upnext_boxes.emplace_back(Box{-1, -1, -1, -1}, r.index);
+            Box& b = ui::now_playing_upnext_boxes.back().first;
+            col.push_back(text(""));
+            col.push_back(hbox({
+                thumb, text("  "),
+                vbox({
+                    text(utils::trimSuffix(r.title, UP_W - 7, "...")) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(utils::trimSuffix(r.artist, UP_W - 7, "...")) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                }),
+                filler(),
+            }) | reflect(b));
+            used += 3;
+        }
+        return vbox({ text(""), vbox(std::move(col)), filler() }) | size(WIDTH, EQUAL, UP_W);
+    };
+    if (room_for_next) lyrics_w = std::max(20, lyrics_w - UP_W - 2);
+
     if (no_lyrics) {
-        return vbox({ filler(), line(vbox({ cover, track_block(true) }), true), filler() }) | flex;
+        Element centre_block = vbox({ cover, track_block(true) });
+        if (page_w >= cover_w + 8 + UP_W + 6)
+            centre_block = hbox({ std::move(centre_block), text("      "), up_next(height - 2) });
+        return vbox({ filler(), line(std::move(centre_block), true), filler() }) | flex;
     }
 
     // Lyrics: synced lines around the current one, or the plain text.
@@ -270,6 +319,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         vbox({ filler(), cover, track_block(false), filler() }),
         text("      "),
         lyrics,
+        room_for_next ? hbox({ text("  "), up_next(height - 2) }) : emptyElement(),
         text("  "),
     }) | flex;
 }
