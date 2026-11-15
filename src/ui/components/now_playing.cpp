@@ -70,12 +70,21 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     const std::string artist = ref.artists.empty() ? "" : ref.artists[0].name;
     const std::string art = ref.thumbnail_large.empty() ? ref.thumbnail_small : ref.thumbnail_large;
 
+    // No lyrics to show (none found, or turned off): the cover and the track
+    // take the page on their own, centred and larger.
+    const bool ours = state->lyrics && state->lyrics_id == ref.id;
+    const auto lyrics_flag = state->flags.count("lyrics") ? state->flags["lyrics"] : services::Player::Flags::Done;
+    const bool no_lyrics = !Config::get().ENABLE_LYRICS
+                        || (!(!ours && lyrics_flag == services::Player::Flags::Ongoing) && (!ours || !state->lyrics->found));
+
     // Cover: as large as the page allows, square in terminal cells (2:1).
-    const int cover_h = std::clamp(height - 12, 8, 26);
+    const int room_w = std::max(16, width - 33 - 8);     // the page minus sidebar and margins
+    const int cover_h = no_lyrics ? std::clamp(std::min(height - 9, room_w / 2), 8, 40)
+                                  : std::clamp(height - 12, 8, 26);
     const int cover_w = cover_h * 2;
 
     // Room for the lyrics: the page minus sidebar, cover and margins.
-    const int lyrics_w = std::max(20, width - 33 - cover_w - 10);
+    const int lyrics_w = std::max(20, width - 33 - cover_w - 13);
 
     Element cover = art.empty()
         ? filler() | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h) | border
@@ -84,28 +93,54 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     const float ratio = duration > 0 ? static_cast<float>(std::clamp(position / duration, 0.0, 1.0)) : 0.f;
 
-    Element info = vbox({
-        text(""),
-        text(utils::trimSuffix(ref.title, cover_w, "...")) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(ui::now_playing_title_box),
-        // Click the artist or the album to open it; right-click for the track's menu.
-        hbox({ text(artist) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(ui::now_playing_artist_box), filler() }),
-        hbox({ text(song->album.title) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) | reflect(ui::now_playing_album_box), filler() }),
-        text(""),
-        gauge(ratio) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, cover_w),
-        hbox({
-            text(clock(position)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-            filler(),
-            text(playing ? "" : "paused") | dim,
-            filler(),
-            text(clock(duration)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-        }) | size(WIDTH, EQUAL, cover_w),
-    });
+    /* The track under the cover
+    - Title on up to two lines, then artist and album (click to open them)
+    - A thin progress line like the playback bar's, times under its ends
+    */
+    auto line = [&](Element e, bool centre) {
+        return centre ? hbox({ filler(), std::move(e), filler() }) : hbox({ std::move(e), filler() });
+    };
+    auto track_block = [&](bool centre) {
+        Elements title_rows;
+        const std::vector<std::string> words = splitWords(ref.title);
+        const auto rows = wrapWords(words, cover_w);
+        for (size_t r = 0; r < rows.size() && r < 2; r++) {
+            std::string t;
+            for (int k : rows[r]) t += (t.empty() ? "" : " ") + words[k];
+            if (r == 1 && rows.size() > 2) t = utils::trimSuffix(t + " ...", cover_w - 3, "...");
+            title_rows.push_back(line(text(utils::trimSuffix(t, cover_w, "...")) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), centre));
+        }
+        if (title_rows.empty()) title_rows.push_back(text(""));
+
+        const int played = static_cast<int>(std::lround(ratio * static_cast<float>(cover_w)));
+        std::string done, rest;
+        for (int i = 0; i < cover_w; i++) (i < played ? done : rest) += "\u2501";
+        return vbox({
+            text(""),
+            vbox(std::move(title_rows)) | reflect(ui::now_playing_title_box),
+            line(text(artist) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(ui::now_playing_artist_box), centre),
+            line(text(song->album.title) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) | reflect(ui::now_playing_album_box), centre),
+            text(""),
+            hbox({
+                text(done) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
+                text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+            }),
+            hbox({
+                text(clock(position)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                filler(),
+                text(playing ? "" : "paused") | dim,
+                filler(),
+                text(clock(duration)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+            }),
+        }) | size(WIDTH, EQUAL, cover_w);
+    };
+
+    if (no_lyrics) {
+        return vbox({ filler(), line(vbox({ cover, track_block(true) }), true), filler() }) | flex;
+    }
 
     // Lyrics: synced lines around the current one, or the plain text.
     Elements lines;
-    ui::lyric_boxes.clear();
-    const bool ours = state->lyrics && state->lyrics_id == ref.id;
-    const auto lyrics_flag = state->flags.count("lyrics") ? state->flags["lyrics"] : services::Player::Flags::Done;
 
     if (!Config::get().ENABLE_LYRICS) {
         lines.push_back(text("Lyrics are off (ENABLE_LYRICS)") | dim);
@@ -138,14 +173,16 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         const Color bright = Color::RGB(255, 255, 255);
         const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
 
-        const int visible = std::max(5, height - 6);     // rows
-        const int before = visible / 3;
+        const int visible = std::max(5, height - 2);     // rows
+        const int before = visible * 2 / 5;
+        // A blank row between lines when there's room: easier to follow.
+        const int gap = height >= 28 ? 1 : 0;
 
         // Rows each line takes once wrapped, to keep the current line a third
         // of the way down whatever the line lengths.
         auto rows_of = [&](int i) {
-            if (ls[i].second.empty()) return 1;
-            return static_cast<int>(wrapWords(splitWords(ls[i].second), lyrics_w).size());
+            if (ls[i].second.empty()) return 1 + gap;
+            return static_cast<int>(wrapWords(splitWords(ls[i].second), lyrics_w).size()) + gap;
         };
         int start = std::max(0, cur);
         for (int used = 0; start > 0 && used + rows_of(start - 1) <= before; ) used += rows_of(--start);
@@ -171,6 +208,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                     lines.push_back(text("\u2022 \u2022 \u2022") | color(i < cur ? sung : ahead) | reflect(*b));
                 }
                 rows_left--;
+                if (gap && rows_left > 0) { lines.push_back(text("")); rows_left--; }
                 continue;
             }
 
@@ -188,6 +226,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                         if (ease < 1.f) c = Color::Interpolate(ease, ahead, c);         // fades in
                     } else {
                         c = i < cur ? sung : ahead;
+                        // Further ahead, fainter: the eye stays near the current line.
+                        if (i > cur + 2) c = Color::Interpolate(std::min(0.6f, 0.15f * static_cast<float>(i - cur - 2)), ahead, sung);
                         if (i == cur - 1 && ease < 1.f) c = Color::Interpolate(ease, bright, sung);   // fades out
                     }
                     Element w = text(words[k] + " ") | color(c);
@@ -197,22 +237,23 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                 ui::lyric_boxes.emplace_back(b, t0);
                 lines.push_back(hbox(std::move(ws)) | reflect(*b));
             }
+            if (gap && rows_left > 0) { lines.push_back(text("")); rows_left--; }
         }
     } else {
         for (const auto& t : state->lyrics->plain) lines.push_back(paragraph(t.empty() ? " " : t) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
     }
 
-    Element lyrics = vbox({
-        text(""),
-        text("Lyrics") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-        text(""),
-        vbox(std::move(lines)) | flex,
-    }) | flex;
+    // Synced lyrics fill the column; a message or plain text sits level with the cover.
+    const bool synced = ours && state->lyrics->found && !state->lyrics->lines.empty();
+    const bool fill = synced || lines.size() > 2;     // plain text, top down
+    Element lyrics = fill
+        ? vbox({ text(""), vbox(std::move(lines)) | flex }) | flex
+        : vbox({ filler(), vbox(std::move(lines)), filler() }) | flex;
 
     return hbox({
-        text("  "),
-        vbox({ cover, info }),
-        text("    "),
+        text("   "),
+        vbox({ filler(), cover, track_block(false), filler() }),
+        text("      "),
         lyrics,
         text("  "),
     }) | flex;

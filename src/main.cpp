@@ -1375,6 +1375,33 @@ int main(int argc, char *argv[]) {
         ctx.open = true;
     };
 
+    // "Copy…": a second menu to pick what goes to the clipboard.
+    auto open_copy_menu = [&](const music::SongRef& ref, const std::string& album_title) {
+        auto copy = [&player](std::string what, std::string value) {
+            return [&player, what, value] {
+                const bool ok = services::copyToClipboard(value);
+                std::lock_guard lock(player.state_mutex);
+                player.state.notice = ok ? what + " copied" : "No clipboard tool found";
+                player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            };
+        };
+        std::string artists;
+        for (const auto& a : ref.artists) artists += (artists.empty() ? "" : ", ") + a.name;
+        std::vector<ContextItem> items;
+        items.push_back({"\uf0c5", "Title", "", copy("Title", ref.title)});
+        if (!artists.empty()) {
+            items.push_back({"\uf007", "Artist", "", copy("Artist", artists)});
+            items.push_back({"\uf001", "Title - Artist", "", copy("Title and artist", ref.title + " - " + artists)});
+        }
+        if (!album_title.empty()) items.push_back({"\uf07c", "Album", "", copy("Album", album_title)});
+        items.push_back({"\uf0c1", "Link", "", copy("Link", "https://music.youtube.com/watch?v=" + ref.id)});
+        ctx.title = "Copy";
+        ctx.items = std::move(items);
+        ctx.hover = 0;
+        ctx.boxes.assign(ctx.items.size(), Box{});
+        ctx.open = true;
+    };
+
     auto open_artist_page = [&](const music::ArtistRef& artist) {
         player.openArtist(artist);
         current_state = ui::State::ARTIST;
@@ -1425,12 +1452,7 @@ int main(int argc, char *argv[]) {
             ctx.items.push_back({"\uf07c", "Go to album", "", [&, album] { open_album_page(album); }});
         }
         const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
-        ctx.items.push_back({"\uf0c5", "Copy link", "", [&player, link] {
-            const bool ok = services::copyToClipboard(link);
-            std::lock_guard lock(player.state_mutex);
-            player.state.notice = ok ? "Link copied" : "No clipboard tool found";
-            player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        }});
+        ctx.items.push_back({"\uf0c5", "Copy\u2026", "", [&, ref, t = album.title] { open_copy_menu(ref, t); }});
         ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
         ctx.open = true;
         ctx.x = x;
@@ -1947,12 +1969,7 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                             const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
-                            ctx.items.push_back({"\uf0c5", "Copy link", "", [&player, link] {
-                                const bool ok = services::copyToClipboard(link);
-                                std::lock_guard lock(player.state_mutex);
-                                player.state.notice = ok ? "Link copied" : "No clipboard tool found";
-                                player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-                            }});
+                            ctx.items.push_back({"\uf0c5", "Copy\u2026", "", [&, ref] { open_copy_menu(ref, ""); }});
                             ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
                             if(state_logged_in()) {
                                 ctx.items.push_back({"\uf0fe", "Add to playlist\u2026", "", [&, ref] { open_playlist_picker(ref); }});
