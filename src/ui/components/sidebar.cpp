@@ -63,6 +63,14 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
 
     options.entries_option.transform = [data, focused](const EntryState& entry_state) {
         const auto& item = data->entries[entry_state.index];
+        // Where you are: an accent mark and the brighter colour, whatever has the focus.
+        const bool here = entry_state.index == data->current;
+        auto mark = [here] { return here ? text(" \u258e") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : text("  "); };
+        auto tone = [&](bool top) {
+            return (entry_state.active && *focused) || here
+                ? color(ui::GetColor(top ? ui::MColor::TEXT_TOP_PRIMARY : ui::MColor::TEXT_BOTTOM_PRIMARY)) | (entry_state.active && *focused ? bold : nothing)
+                : color(ui::GetColor(top ? ui::MColor::TEXT_TOP_SECONDARY : ui::MColor::TEXT_BOTTOM_SECONDARY));
+        };
 
         if(entry_state.index == ui::SIDEBAR_FIXED - 1) {
             return vbox({
@@ -80,21 +88,21 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
 
         if(entry_state.index >= ui::SIDEBAR_FIXED) {
             return hbox({
-                text("  "),
+                vbox({ text(""), mark(), text(here ? " \u258e" : "  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }),
                 vbox({
                     text(""),
-                    text(item.top) | (entry_state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
-                    text(item.bottom) | (entry_state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
+                    text(item.top) | tone(true),
+                    text(item.bottom) | tone(false),
                 })
             });
         }
 
         return hbox({
-            text("  "),
+            mark(),
             vbox({
-                text(item.top) | (entry_state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                text(item.top) | tone(true),
                 text("")
-            }) | (entry_state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)))
+            })
         });
     };
 

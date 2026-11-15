@@ -896,6 +896,27 @@ int main(int argc, char *argv[]) {
     };
 
     // Search history survives restarts (~/.cache/moroder/searches.json).
+    // Lyrics shifted by hand (, and .), kept across restarts.
+    const fs::path offsets_file = [] {
+        const fs::path h = utils::home();
+        return h.empty() ? fs::path() : h / ".cache" / "moroder" / "lyrics_offsets.json";
+    }();
+    {
+        std::ifstream in(offsets_file);
+        if (in.is_open()) {
+            nlohmann::json j = nlohmann::json::parse(in, nullptr, false);
+            if (j.is_object()) for (auto it = j.begin(); it != j.end(); ++it) if (it.value().is_number()) ui::lyrics_offset[it.key()] = it.value().get<double>();
+        }
+    }
+    auto save_offsets = [offsets_file] {
+        if (offsets_file.empty()) return;
+        nlohmann::json j = nlohmann::json::object();
+        for (const auto& [id, off] : ui::lyrics_offset) if (off != 0.0) j[id] = off;
+        std::error_code ec;
+        fs::create_directories(offsets_file.parent_path(), ec);
+        std::ofstream(offsets_file, std::ios::trunc) << j.dump();
+    };
+
     const fs::path searches_file = [] {
         const std::string home_s = utils::home().string(); const char* home = home_s.empty() ? nullptr : home_s.c_str();
         return home ? fs::path(home) / ".cache" / "moroder" / "searches.json" : fs::path();
@@ -1130,6 +1151,15 @@ int main(int argc, char *argv[]) {
         }
 
         ui::getSidebarData(&state_copy, &sidebar_data);
+        {
+            // The sidebar marks the page shown (under Now Playing / the queue: the one below).
+            const ui::State page = current_state == ui::State::NOWPLAYING ? before_now_playing : current_state;
+            sidebar_data.current = page == ui::State::HOME ? 0 : page == ui::State::EXPLORE ? 1 : page == ui::State::LIBRARY ? 2 : -1;
+            if (page == ui::State::PLAYLIST && state_copy.open_playlist) {
+                for (size_t i = 0; i < sidebar_data.results.size(); i++)
+                    if (sidebar_data.results[i].ref.id == state_copy.open_playlist->ref.id) { sidebar_data.current = ui::SIDEBAR_FIXED + static_cast<int>(i); break; }
+            }
+        }
         ui::getPlaybackData(&state_copy, &playback_bar_data, screen.dimx());
         playback_bar_data.queue_open = current_state == ui::State::QUEUE;
 
@@ -2387,6 +2417,7 @@ int main(int argc, char *argv[]) {
                 double& off = ui::lyrics_offset[song->ref.id];
                 off += event == Event::Character(".") ? 0.5 : -0.5;
                 if (std::abs(off) < 0.01) off = 0;
+                save_offsets();
             }
             return true;
         }

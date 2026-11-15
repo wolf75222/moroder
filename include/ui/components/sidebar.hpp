@@ -18,6 +18,7 @@ struct SidebarData {
     std::vector<music::Playlist> results;
 
     bool is_loading = true;
+    int current = -1;       // the row of the page shown (accent mark), -1: none
 
     std::function<void()> onHome;
     std::function<void()> onLibrary;
