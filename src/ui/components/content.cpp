@@ -748,7 +748,8 @@ void ui::buildLibrary(services::Player::PlayerState* state, std::deque<ContentEn
     ContentEntry& grid = main_content_items[1];
 
     const std::string filter = activeLibraryFilter(&filters.chips_data);
-    const std::string signature = librarySignature(state, filter, query);
+    // The layout too: a wider or narrower window lays the tiles out again.
+    const std::string signature = librarySignature(state, filter, query) + "|" + std::to_string(rows);
 
     if (grid.category != signature) {
         grid.category = signature;

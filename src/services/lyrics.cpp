@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <regex>
 #include <sstream>
 
@@ -85,13 +86,36 @@ services::Lyrics services::fetchLyrics(const std::string& title, const std::stri
         if (l.found) return l;
     }
 
+    /* The search: the synced hit whose length is closest to this track's.
+    The first one was often another cut (radio edit, remaster, live) whose
+    timings drift from what plays. */
     j = nlohmann::json::parse(get("https://lrclib.net/api/search?q=" + escape(t + " " + artist)), nullptr, false);
     if (j.is_array()) {
+        const nlohmann::json* best = nullptr;
+        double best_gap = 1e9;
+        for (const auto& hit : j) {
+            if (!hit.value("syncedLyrics", nlohmann::json()).is_string()) continue;
+            const double d = hit.value("duration", nlohmann::json()).is_number() ? hit["duration"].get<double>() : 0;
+            const double gap = duration > 0 && d > 0 ? std::abs(d - duration) : 1e6;
+            if (gap < best_gap) { best_gap = gap; best = &hit; }
+        }
+        // Off by more than 8 s: another version; its timings would be wrong.
+        if (best && (duration <= 0 || best_gap <= 8)) {
+            Lyrics l = parse(*best);
+            if (!l.lines.empty()) return l;
+        }
+        // Words without timings rather than mistimed ones.
         for (const auto& hit : j) {
             Lyrics l = parse(hit);
-            if (!l.lines.empty()) return l;     // prefer a synced one
+            l.lines.clear();
+            if (l.plain.empty() && hit.value("plainLyrics", nlohmann::json()).is_string()) {
+                std::istringstream p(hit["plainLyrics"].get<std::string>());
+                std::string line;
+                while (std::getline(p, line)) l.plain.push_back(line);
+            }
+            l.found = !l.plain.empty();
+            if (l.found) return l;
         }
-        if (!j.empty()) return parse(j[0]);
     }
 
     spdlog::info("LYRICS: none for {} - {}", artist, t);

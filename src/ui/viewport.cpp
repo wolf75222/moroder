@@ -58,9 +58,17 @@ public:
         // Keep the selection in view, moving no further than needed.
         const int s = slot(active_);
         if (state_->follow && s >= 0) {
-            const int h = top[s + 1] - top[s];
-            if (top[s] < y) y = top[s];
-            else if (top[s + 1] > y + view) y = h > view ? top[s] : top[s + 1] - view;
+            int from = top[s], to = top[s + 1];
+            // Taller than the view (the library's grid): follow what is
+            // selected inside it, not the top of the whole block.
+            const auto& f = children_[s]->requirement().focused;
+            if (to - from > view && f.enabled && f.box.y_max >= f.box.y_min) {
+                from = top[s] + f.box.y_min;
+                to = std::min(top[s + 1], top[s] + f.box.y_max + 1);
+            }
+            const int h = to - from;
+            if (from < y) y = from;
+            else if (to > y + view) y = h > view ? from : to - view;
         }
 
         y = std::max(0, std::min(y, std::max(0, total - view)));

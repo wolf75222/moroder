@@ -39,5 +39,8 @@ void getGridData(services::Player::PlayerState* state, std::string category, Gri
 */
 void getLibraryGridData(services::Player::PlayerState* state, const std::string& filter, const std::string& query, GridData* data);
 
+/* rows > 0: that many rows, filled column by column, wider than the screen if
+need be (a shelf). rows < 0: -rows columns, filled row by row, as many rows
+as it takes (a page that scrolls down, like the library). */
 ftxui::Component Grid(GridData* data, int* selected, bool* focused, int rows, std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, GridStyle style = GridStyle::List);
 }

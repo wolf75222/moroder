@@ -73,9 +73,9 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // No lyrics to show (none found, or turned off): the cover and the track
     // take the page on their own, centred and larger.
     const bool ours = state->lyrics && state->lyrics_id == ref.id;
-    const auto lyrics_flag = state->flags.count("lyrics") ? state->flags["lyrics"] : services::Player::Flags::Done;
-    const bool no_lyrics = !Config::get().ENABLE_LYRICS
-                        || (!(!ours && lyrics_flag == services::Player::Flags::Ongoing) && (!ours || !state->lyrics->found));
+    // Only once the lookup has answered (it starts with the stream): before
+    // that the layout would jump from centred to two columns.
+    const bool no_lyrics = !Config::get().ENABLE_LYRICS || (ours && !state->lyrics->found);
 
     // Cover: as large as the page allows, square in terminal cells (2:1).
     const int room_w = std::max(16, width - 33 - 8);     // the page minus sidebar and margins
@@ -144,7 +144,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     if (!Config::get().ENABLE_LYRICS) {
         lines.push_back(text("Lyrics are off (ENABLE_LYRICS)") | dim);
-    } else if (!ours && lyrics_flag == services::Player::Flags::Ongoing) {
+    } else if (!ours) {
         lines.push_back(hbox({ spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)), text(" looking for lyrics") | dim }));
     } else if (!ours || !state->lyrics->found) {
         lines.push_back(text("No lyrics found for this track") | dim);
@@ -188,6 +188,21 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         for (int used = 0; start > 0 && used + rows_of(start - 1) <= before; ) used += rows_of(--start);
 
         int rows_left = visible;
+
+        // Before the first line (the intro): three dots that fill until the
+        // voice comes in, instead of a column of grey lines and nothing lit.
+        if (cur < 0 && !ls.empty() && ls[0].first > 1.0) {
+            const float intro = static_cast<float>(std::clamp(position / ls[0].first, 0.0, 1.0));
+            Elements dots;
+            for (int d = 0; d < 3; d++) {
+                const bool on = intro * 3.f > static_cast<float>(d);
+                dots.push_back(text(on ? "\u25cf " : "\u25cb ") | color(on ? bright : ahead));
+            }
+            lines.push_back(hbox(std::move(dots)));
+            rows_left--;
+            if (gap && rows_left > 0) { lines.push_back(text("")); rows_left--; }
+        }
+
         for (int i = start; i < static_cast<int>(ls.size()) && rows_left > 0; i++) {
             const double t0 = ls[i].first;
             const double t1 = i + 1 < static_cast<int>(ls.size()) ? ls[i + 1].first : std::max(duration, t0 + 4.0);

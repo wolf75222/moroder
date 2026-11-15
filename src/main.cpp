@@ -714,6 +714,10 @@ int main(int argc, char *argv[]) {
     ui::SidebarData sidebar_data = {};
     auto sidebar = ui::Sidebar(&sidebar_data, &sidebar_selected, &sidebar_focused, on_sidebar_press);
 
+    // The page, kept (focus and scroll included) but out of reach of keys and
+    // clicks while Now Playing is over it.
+    auto main_content_gate = Maybe(main_content, [&current_state] { return current_state != ui::State::NOWPLAYING; });
+
     auto sidebar_container = Container::Horizontal({
         sidebar
     });
@@ -728,7 +732,7 @@ int main(int argc, char *argv[]) {
         }),
         Container::Vertical({
             search_gate,
-            main_content
+            main_content_gate
         }, &content_column),
     });
 
@@ -794,9 +798,17 @@ int main(int argc, char *argv[]) {
         if (main_content->Focusable()) main_content->TakeFocus();
     };
 
-    sidebar_data.onHome = [&current_state, &main_content_items, &main_content, &screen] {
+    // Home / Library again while on it: fetched afresh (the page stays up
+    // until the new one lands).
+    auto refreshing = [&player](const char* what) {
+        std::lock_guard lock(player.state_mutex);
+        player.state.notice = std::string("Refreshing ") + what;
+        player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    };
+    sidebar_data.onHome = [&current_state, &main_content_items, &main_content, &screen, &player, refreshing] {
         spdlog::info("SIDEBAR: Home pressed");
 
+        if (current_state == ui::State::HOME) { player.getHome(); refreshing("Home"); }
         current_state = ui::State::HOME;
 
         main_content_items.clear();
@@ -831,8 +843,9 @@ int main(int argc, char *argv[]) {
         prompt.done = [&player](const std::string& name) { player.createPlaylist(name); };
     };
 
-    sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen] {
+    sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen, &player, refreshing] {
         spdlog::info("SIDEBAR: Library pressed");
+        if (current_state == ui::State::LIBRARY) { player.retryLibrary(); refreshing("your library"); }
         current_state = ui::State::LIBRARY;
 
         main_content_items.clear();
@@ -1063,7 +1076,9 @@ int main(int argc, char *argv[]) {
             if (current_state == ui::State::PLAYLIST && state_copy.open_playlist) { now.playlist = state_copy.open_playlist->ref; now.kind = state_copy.open_kind; }
             if (current_state == ui::State::ARTIST && state_copy.open_artist) now.artist = state_copy.open_artist->ref;
             if (current_state == ui::State::SEARCH) now.query = last_query;
-            if (now.key() != nav_current.key()) {
+            if (now.state == ui::State::NOWPLAYING) {
+                // Over the page, not a page of its own: not in the history.
+            } else if (now.key() != nav_current.key()) {
                 if (!nav_restoring) {
                     nav_back.push_back(nav_current);
                     if (nav_back.size() > 50) nav_back.erase(nav_back.begin());
@@ -1175,7 +1190,9 @@ int main(int argc, char *argv[]) {
                 });
 
         } else if(current_state == ui::State::LIBRARY) {
-            int library_rows = std::max(1, (screen.dimy() - 12) / ui::GRID_TILE_HEIGHT);
+            // As many columns as fit, then rows downwards (the page scrolls).
+            const int library_cols = std::max(1, (screen.dimx() - (sidebar_hidden ? 6 : 38)) / ui::GRID_TILE_WIDTH);
+            const int library_rows = -library_cols;
 
             ui::buildLibrary(&state_copy, main_content_items, main_content, library_rows, search_active ? search_bar_data.value : std::string(), on_chip_press, on_item_press,
                 [&player, &screen] {
@@ -1542,6 +1559,9 @@ int main(int argc, char *argv[]) {
         player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
     };
     auto go_back = [&]() -> bool {
+        // Now Playing sits over the page it was opened from: back is that
+        // page, as it was (not a rebuilt one, scrolled to the top).
+        if (current_state == ui::State::NOWPLAYING) { current_state = before_now_playing; return true; }
         if (nav_back.empty()) return false;
         NavEntry target = nav_back.back();
         nav_back.pop_back();
@@ -2233,20 +2253,15 @@ int main(int argc, char *argv[]) {
 
         // v: full-screen Now Playing, and back.
         if(Config::isKey(event, cfg.KEY_NOW_PLAYING) || (event == Event::Escape && current_state == ui::State::NOWPLAYING)) {
+            /* Now Playing goes over the page, which stays built underneath
+            (hidden from keys and clicks, see main_content_gate): leaving it
+            finds the page where it was, same row, same scroll. */
             if (current_state == ui::State::NOWPLAYING) {
-                // Back to the page it was opened from, as a "back": recording
-                // it as a new page made Esc bounce between the two.
-                if (!nav_back.empty() && nav_back.back().state == before_now_playing && go_back()) return true;
-                nav_restoring = true;
                 current_state = before_now_playing;
             } else if (event != Event::Escape) {
                 before_now_playing = current_state;
                 current_state = ui::State::NOWPLAYING;
             }
-            main_content_items.clear();
-            main_content->DetachAllChildren();
-            main_content->Add(Renderer([] { return emptyElement(); }));
-            if (current_state == ui::State::HOME) player.getHome();
             return true;
         }
 
@@ -2467,31 +2482,58 @@ int main(int argc, char *argv[]) {
         // Search suggestions, under the bar.
         auto& sb = search_bar_data;
         if (search_bar->Focused() && !sb.suggestions.empty() && sb.suggestions_for == sb.value && !sb.value.empty()) {
+            /* A panel of its own, opaque (a see-through terminal showed the
+            page through it): what you typed in grey, what the suggestion
+            adds in bold, the picked row on a lighter band with the accent bar. */
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+            const Color panel = Color::RGB(22, 22, 26), band = Color::RGB(40, 40, 46);
+            const Color typed = ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY), dimc = ui::GetColor(ui::MColor::SEPARATOR_PRIMARY);
+            auto lower = [](std::string t) { for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return t; };
+            const std::string q = lower(sb.value);
+            size_t longest = 0;
+            for (const auto& t : sb.suggestions) longest = std::max(longest, t.size());
+            const int W = std::clamp(static_cast<int>(longest) + 12, 40, std::max(40, std::min(72, sb.box.x_max - sb.box.x_min - 4)));
+
             sb.suggestion_boxes.assign(sb.suggestions.size(), Box{});
             Elements rows;
+            rows.push_back(text(""));
             for (size_t i = 0; i < sb.suggestions.size(); i++) {
+                const std::string& t = sb.suggestions[i];
                 const bool on = static_cast<int>(i) == sb.suggestion_index;
-                const bool past = std::find(sb.history.begin(), sb.history.end(), sb.suggestions[i]) != sb.history.end();
+                const bool past = std::find(sb.history.begin(), sb.history.end(), t) != sb.history.end();
+                const size_t n = lower(t).rfind(q, 0) == 0 ? q.size() : 0;     // the part you typed
                 Element row = hbox({
                     text(on ? "\u258e" : " ") | color(accent),
                     text(" "),
-                    text(past ? "\uf1da " : "\uf002 ") | color(on ? accent : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-                    text(" " + sb.suggestions[i]) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(past ? "\uf1da" : "\uf002") | color(on ? accent : dimc),
+                    text("  "),
+                    text(t.substr(0, n)) | color(on ? Color(Color::White) : typed),
+                    text(t.substr(n)) | bold | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
                 });
+                if (on) row = row | bgcolor(band);
                 rows.push_back(row | reflect(sb.suggestion_boxes[i]));
             }
-            rows.push_back(hbox({ filler(), text("\u2191\u2193 pick   tab fill   enter search ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }));
-            const int W = std::max(40, std::min(70, sb.box.x_max - sb.box.x_min - 4));
-            Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W)
-                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-                | clear_under;
+            rows.push_back(text(""));
+            rows.push_back(hbox({ text(" "), separatorLight() | color(Color::RGB(50, 50, 56)) | flex, text(" ") }));
+            rows.push_back(hbox({
+                text("  "),
+                text("\u2191\u2193") | color(typed), text(" pick   ") | color(dimc),
+                text("tab") | color(typed), text(" fill   ") | color(dimc),
+                text("enter") | color(typed), text(" search") | color(dimc),
+                filler(),
+            }));
+            Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W) | bgcolor(panel)
+                | borderStyled(BorderStyle::ROUNDED, Color::RGB(60, 60, 68))
+                | bgcolor(panel);
+            // A blank cell around it: lines of the page behind don't join its border.
+            list = hbox({ text(" "), vbox({ list, text("") }), text(" ") }) | clear_under;
             base = dbox({
                 base,
                 vbox({
-                    filler() | size(HEIGHT, EQUAL, std::max(0, sb.box.y_max + 1)),
-                    hbox({ filler() | size(WIDTH, EQUAL, std::max(0, sb.box.x_min + 4)), list, filler() }),
+                    // Below the line under the bar, not over it.
+                    filler() | size(HEIGHT, EQUAL, std::max(0, sb.box.y_max + 2)),
+                    hbox({ filler() | size(WIDTH, EQUAL, std::max(0, sb.box.x_min + 3)), list, filler() }),
                     filler(),
                 }),
             });

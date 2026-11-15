@@ -216,14 +216,16 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
         });
     }
 
-    int cols = (total + rows - 1) / rows;
+    const int wrap = rows < 0 ? -rows : 0;          // columns, row by row
+    if (wrap) rows = (total + wrap - 1) / wrap;
+    int cols = wrap ? wrap : (total + rows - 1) / rows;
 
     std::vector<std::vector<Component>> grid_components(rows);
 
     for (int index = 0; index < total; ++index) {
 
-        int r = index % rows;
-        int c = index / rows;
+        int r = wrap ? index / wrap : index % rows;
+        int c = wrap ? index % wrap : index / rows;
 
         const auto& item = data->entries[index];
         const auto& result = data->results[index];

@@ -422,6 +422,11 @@ uint64_t services::MPV::getStreamPosition() {
 
     double position = 0.0;
 
+    // audio-pts: what is being heard (the audio still buffered on its way
+    // to the speakers not counted), so synced lyrics land on the voice.
+    if (mpv_get_property(mpv, "audio-pts", MPV_FORMAT_DOUBLE, &position) >= 0 && position >= 0) {
+        return static_cast<uint64_t>(position * 1000000.0);
+    }
     if (mpv_get_property(mpv, "playback-time", MPV_FORMAT_DOUBLE, &position) < 0) {
         spdlog::warn("MPV: get property playback-time failed");
         return 0;
