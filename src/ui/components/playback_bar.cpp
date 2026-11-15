@@ -88,13 +88,12 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
         };
 
-        // Level with the sidebar's icons; a little more air between them.
         Element left_controls = hbox({
             text("  "),
             text("") | ((data->can_skip_backwards) ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_prev),
-            text("   "),
+            text("  "),
             text(data->is_playing ? "" : "") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(data->box_play),
-            text("   "),
+            text("  "),
             text("") | ((data->can_skip_forwards)  ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_next)
         });
 
@@ -124,17 +123,19 @@ Component ui::PlaybackBar(PlaybackData* data) {
         // Volume: icon follows the level (off / down / up).
         const char* volume_icon = data->volume == 0 ? "\uf026" : data->volume < 50 ? "\uf027" : "\uf028";
 
+        // The time beside the transport buttons: both sides about as wide,
+        // so the title can sit in the middle without a lopsided bar.
+        left_controls = hbox({ left_controls, text("     "), time });
+
         Element right_controls = hbox({
-            time,
-            text("     "),
             data->can_like
                 ? (data->liked
                     ? text("\uf004") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | reflect(data->box_like)
                     : text("\uf08a") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_like))
                 : emptyElement(),
-            data->can_like ? text("   ") : emptyElement(),
+            data->can_like ? text("    ") : emptyElement(),
             data->sleep_label.empty() ? emptyElement()
-                : hbox({ text("\U000f04b2 " + data->sleep_label) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)), text("   ") }),
+                : hbox({ text("\U000f04b2 " + data->sleep_label) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)), text("    ") }),
             hbox({
                 text(volume_icon) | color(data->volume == 0 ? ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                 text(" " + std::to_string(data->volume) + "%") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | size(WIDTH, EQUAL, 5),
@@ -146,30 +147,30 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text("   "),
             // The queue view, one click away (a key: a).
             text("\uf03a") | color(data->queue_open ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(data->box_queue),
-            text("   "),
+            text("  "),
         });
 
-        // Both sides as wide as the wider one: the title in the screen's middle
-        // (when there's room for that, below).
         left_controls->ComputeRequirement();
         right_controls->ComputeRequirement();
         const int left_min = left_controls->requirement().min_x, right_min = right_controls->requirement().min_x;
+        // Both sides as wide as the wider one: the title in the screen's middle,
+        // when that leaves it room (a narrow window: their own widths).
         int left_w = std::max(left_min, right_min), right_w = left_w;
+        if (width - left_w - right_w - 6 < 24) { left_w = left_min; right_w = right_min; }
 
-        // Title · artist in what is left between them (a long one used to push
-        // the icons off the right edge). (A 2-cell cover here read as a smudge.)
-        // Never more than that room: past it the sides were squeezed instead
-        // (80 columns: "8:1", "100" without its %). Too narrow to keep it in
-        // the middle (80 columns left it no room at all), it takes the slack
-        // beside the transport buttons; still short, the artist goes first.
-        int room = width - left_w - right_w - 4;
-        if (room < 12) { left_w = left_min; right_w = right_min; room = width - left_w - right_w - 4; }
-        room = std::max(0, room);
+        /* Cover, title - artist between the controls, in what they leave (a
+        long one used to push the icons off the right edge, and at 80
+        columns squeezed them: "8:1", "100" without its %). Short of room,
+        the artist goes first, then the cover. */
+        int room = std::max(0, width - left_w - right_w - 6);
+        const bool thumb = !data->image_url.empty() && room >= 24;
+        if (thumb) room -= 4;
         const int artist_w = data->artist.empty() || room < 16 ? 0 : std::min(ftxui::string_width(data->artist), room / 3);
-        const int title_w = room - (artist_w ? artist_w + 5 : 0);
+        const int title_w = room - (artist_w ? artist_w + 3 : 0);
         Element track_info = title_w < 2 ? emptyElement() : hbox({
+            thumb ? hbox({ image_view(ui::cover(data->image_url)) | size(WIDTH, EQUAL, 2) | size(HEIGHT, EQUAL, 1), text("  ") }) : emptyElement(),
             text(fitCells(data->title, title_w)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-            artist_w ? text("  \u00b7  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) : emptyElement(),
+            artist_w ? text(" - ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) : emptyElement(),
             artist_w ? text(fitCells(data->artist, artist_w)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) : emptyElement(),
         });
 

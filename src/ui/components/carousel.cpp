@@ -126,18 +126,19 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
             // Its name is on the tile: no title / "Playlist" under it.
             return hbox({ vbox({ thumb, text(""), text("") }), text(" ") });
         } else if (item.image_url.empty()) {
-            thumb = ui::noCover(item.wide ? 32 : 20, 10);
+            thumb = ui::noCover(20, 10);
         } else {
             try {
-                // A music video keeps its 16:9 picture (a wider tile), not a square.
+                // Every cover is cropped square when downloaded (cover_cache.cpp),
+                // videos too: every tile is a cover's width, its title cut to it.
                 thumb = image_view(ui::cover(item.image_url))
-                    | size(WIDTH, EQUAL, item.wide ? 32 : 20)
+                    | size(WIDTH, EQUAL, 20)
                     | size(HEIGHT, EQUAL, 10)
                     | borderStyled(BorderStyle::EMPTY);
                 // thumb = ui::noCover(20, 10);
 
             } catch (...) {
-                thumb = ui::noCover(item.wide ? 32 : 20, 10);
+                thumb = ui::noCover(20, 10);
             }
         }
 
@@ -150,13 +151,13 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
                 hbox({
                     text(" "),
                     vbox({
-                        text(fitWidth(item.top, item.wide ? 31 : 20)) | (state.active && *focused ?  color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
-                        text(fitWidth(item.bottom, item.wide ? 31 : 20)) | (state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
+                        text(fitWidth(item.top, 20)) | (state.active && *focused ?  color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
+                        text(fitWidth(item.bottom, 20)) | (state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                     }),
                 }),
             }),
             text(" "),
-        }) | size(WIDTH, EQUAL, (item.wide ? 32 : 20) + 3) | reflect(hb);   // every tile its cover's width, whatever its title
+        }) | size(WIDTH, EQUAL, 20 + 3) | reflect(hb);   // every tile its cover's width, whatever its title
     };
 
     options.on_enter = [data, selected] () {

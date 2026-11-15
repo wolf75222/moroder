@@ -1,4 +1,5 @@
 #include "../../../include/ui/components/sidebar.hpp"
+#include "../../../include/ui/fit_text.hpp"
 
 #include "../../../include/ui/constants/colors.hpp"
 #include "../../../include/ui/structs/entries.hpp"
@@ -91,8 +92,8 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
                 text("  "),
                 vbox({
                     text(""),
-                    text(item.top) | tone(true),
-                    text(item.bottom) | tone(false),
+                    ui::fitText(item.top) | tone(true),      // "…" in a narrow sidebar, not a cut word
+                    ui::fitText(item.bottom) | tone(false),
                 })
             });
         }

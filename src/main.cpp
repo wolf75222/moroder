@@ -1389,7 +1389,7 @@ int main(int argc, char *argv[]) {
                         text(" "),
 
                         sidebar->Render() | yframe | reflect(sidebar_box)
-                    }) | size(WIDTH, EQUAL, 30)
+                    }) | size(WIDTH, EQUAL, ui::sidebarWidth(screen.dimx()))
                     : emptyElement(),
 
                 !sidebar_hidden

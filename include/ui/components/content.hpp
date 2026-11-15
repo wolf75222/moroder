@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include <deque>
 
 #include "carousel.hpp"
@@ -67,6 +69,10 @@ extern ftxui::Box charts_country_box;
 const std::vector<std::pair<std::string, std::string>>& chartCountries();
 // A section title; with " ›" and clickable when it has a "More" page.
 ftxui::Element sectionTitle(const std::string& title, bool more);
+
+// The sidebar's width: a sixth of the window, 22 to 30 columns (a fixed 30
+// left a narrow window's page cramped and a wide one's sidebar half empty).
+inline int sidebarWidth(int dimx) { return std::clamp(dimx / 6, 22, 30); }
 // The keys reach a section's "More" link too: up from the shelf's top row
 // lands on its title (drawn lit), enter opens it. open_more is set by main.
 extern std::string more_focus;

@@ -69,7 +69,7 @@ std::string librarySignature(services::Player::PlayerState* state, const std::st
     for (const auto& a : state->library_artists) ids += a.id;
     const std::string digest = std::to_string(std::hash<std::string>{}(ids));
     // Songs are laid out in columns: the width counts.
-    const int song_cols = std::max(1, (ftxui::Terminal::Size().dimx - 42) / 42);
+    const int song_cols = std::max(1, (ftxui::Terminal::Size().dimx - ui::sidebarWidth(ftxui::Terminal::Size().dimx) - 12) / 42);
     return "__library_grid__:" + digest + ":" + std::to_string(song_cols) + ":" + filter
         + ":" + query
         + ":" + std::to_string(state->library_playlists.size())
@@ -807,7 +807,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
         its right edge. It takes what the list leaves (the page's width from
         the last frame), and goes when there is not room for a useful one.
         */
-        const int width = page->x_max > page->x_min ? page->x_max - page->x_min + 1 : ftxui::Terminal::Size().dimx - 32;
+        const int width = page->x_max > page->x_min ? page->x_max - page->x_min + 1 : ftxui::Terminal::Size().dimx - ui::sidebarWidth(ftxui::Terminal::Size().dimx) - 2;
         const int cover_w = std::clamp((width - 34) / 2 * 2, 0, 60);
         Element cover = cover_w < 16 ? emptyElement()
             : vbox({
@@ -911,7 +911,7 @@ void ui::buildLibrary(services::Player::PlayerState* state, std::deque<ContentEn
             // Songs read better as a list (thumbnail, title, artist) in columns
             // across the width; albums, playlists, artists as cover tiles.
             if (filter == "songs") {
-                const int cols = std::max(1, (ftxui::Terminal::Size().dimx - 42) / 42);
+                const int cols = std::max(1, (ftxui::Terminal::Size().dimx - ui::sidebarWidth(ftxui::Terminal::Size().dimx) - 12) / 42);
                 grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, -cols, on_item_press, ui::GridStyle::List);
             } else {
                 grid.component = Grid(&grid.grid_data, &grid.selected, &grid.focused, rows, on_item_press, ui::GridStyle::Tile);
@@ -1148,8 +1148,9 @@ ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::fun
         // One line, one colour: the name, the selected one bright and bold.
         opt.transform = [name](const EntryState& s) {
             return hbox({
-                // A dot like the charts' (red on the selected one).
-                text("\u2022 ") | color(s.focused ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                // A dot like the charts'; the selected one, the app's red bar.
+                s.focused ? text("\u258e ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY))
+                          : text("\u2022 ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text(utils::trimSuffix(name, 24, "\u2026")) | (s.focused ? bold : nothing)
                     | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 filler(),
@@ -1207,8 +1208,8 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
     const bool loading = ef == state->flags.end() || ef->second == services::Player::Flags::Ongoing;
     // New releases' first section is a grid of covers filling the width, as on
     // YouTube Music: laid out again when the window's width changes.
-    const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - 42) / ui::GRID_TILE_WIDTH);
-    const int moods_per_row = std::max(1, (ftxui::Terminal::Size().dimx - 42) / 28);
+    const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - ui::sidebarWidth(ftxui::Terminal::Size().dimx) - 12) / ui::GRID_TILE_WIDTH);
+    const int moods_per_row = std::max(1, (ftxui::Terminal::Size().dimx - ui::sidebarWidth(ftxui::Terminal::Size().dimx) - 12) / 28);
     const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + state->charts_country + ":" + std::to_string(wrap_cols) + "x" + std::to_string(moods_per_row) + ":"
                                 + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
 

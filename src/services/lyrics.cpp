@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <map>
+#include <set>
 #include <regex>
 #include <sstream>
 
@@ -70,6 +71,15 @@ std::string bareArtist(std::string a) {
     return a;
 }
 
+double lastStamp(const nlohmann::json& hit) {
+    static const std::regex stamp(R"(\[(\d+):(\d+(?:\.\d+)?)\])");
+    if (!hit.is_object() || !hit.value("syncedLyrics", nlohmann::json()).is_string()) return -1;
+    const std::string& s = hit["syncedLyrics"].get_ref<const std::string&>();
+    double last = -1;
+    for (std::sregex_iterator it(s.begin(), s.end(), stamp), end; it != end; ++it) last = std::stod((*it)[1]) * 60 + std::stod((*it)[2]);
+    return last;
+}
+
 double firstStamp(const nlohmann::json& hit) {
     static const std::regex stamp(R"(\[(\d+):(\d+(?:\.\d+)?)\])");
     if (!hit.is_object() || !hit.value("syncedLyrics", nlohmann::json()).is_string()) return -1;
@@ -120,99 +130,97 @@ services::Lyrics services::fetchLyrics(const std::string& title, const std::stri
         }
     }
     const std::string t = bareTitle(name);
-    nlohmann::json hits;
-    // Close enough to share timings: within 8 s, or (a video) up to 25 s longer than it.
-    auto fits = [&](double d) { return d > 0 && (std::abs(d - duration) <= 8 || (video && d < duration && duration - d <= 25)); };
-    auto find = [&]() -> Lyrics {
 
-        // Exact match first (title, artist, duration), then a looser search.
-        std::string url = "https://lrclib.net/api/get?track_name=" + escape(t) + "&artist_name=" + escape(artist);
-        if (duration > 0) url += "&duration=" + std::to_string((int)(duration + 0.5));
-
-        // An entry of a line or two is a stub someone uploaded (Nightcall's exact
-        // match is "There is a nightcall" alone): not lyrics, look further.
-        auto real = [](const Lyrics& l) { return l.lines.size() >= 6 || l.plain.size() >= 6; };
-
-        nlohmann::json j = nlohmann::json::parse(get(url), nullptr, false);
-        if (j.is_object()) {
-            Lyrics l = parse(j);
-            if (l.found && real(l)) return l;
-        }
-
-        /* The search: the synced hit whose length is closest to this track's.
-        The first one was often another cut (radio edit, remaster, live) whose
-        timings drift from what plays. */
-        // By title and artist first (precise), then free text.
-        j = nlohmann::json::parse(get("https://lrclib.net/api/search?track_name=" + escape(t) + "&artist_name=" + escape(artist)), nullptr, false);
-        if (!j.is_array() || j.empty()) j = nlohmann::json::parse(get("https://lrclib.net/api/search?q=" + escape(t + " " + artist)), nullptr, false);
-        hits = j;
-        if (j.is_array()) {
-            // Among those of the right length (within 8 s), the fullest.
-            const nlohmann::json* best = nullptr;
-            double best_gap = 1e9;
-            size_t best_lines = 0;
-            double best_d = 0;
-            for (const auto& hit : j) {
-                if (!hit.is_object() || !hit.value("syncedLyrics", nlohmann::json()).is_string()) continue;
-                const double d = hit.value("duration", nlohmann::json()).is_number() ? hit["duration"].get<double>() : 0;
-                const double gap = duration > 0 && d > 0 ? std::abs(d - duration) : 1e6;
-                const size_t n = static_cast<size_t>(std::count(hit["syncedLyrics"].get_ref<const std::string&>().begin(),
-                                                                hit["syncedLyrics"].get_ref<const std::string&>().end(), '\n')) + 1;
-                if (n < 6) continue;
-                const bool close = fits(d), best_close = best && fits(best_d);
-                if (!best || (close && !best_close) || (close == best_close && (close ? n > best_lines : gap < best_gap))) {
-                    best = &hit; best_gap = gap; best_lines = n; best_d = d;
-                }
-            }
-            // Off by more than 8 s: another version; its timings would be wrong.
-            if (best && (duration <= 0 || fits(best_d))) {
-                Lyrics l = parse(*best);
-                if (!l.lines.empty()) return l;
-            }
-            // Words without timings rather than mistimed ones.
-            for (const auto& hit : j) {
-                if (!hit.is_object()) continue;
-                Lyrics l = parse(hit);
-                l.lines.clear();
-                if (l.plain.empty() && hit.value("plainLyrics", nlohmann::json()).is_string()) {
-                    std::istringstream p(hit["plainLyrics"].get<std::string>());
-                    std::string line;
-                    while (std::getline(p, line)) l.plain.push_back(line);
-                }
-                l.found = l.plain.size() >= 6;     // not a stub
-                if (l.found) return l;
-            }
-        }
-
-        return {};
-    };
-    Lyrics l = find();
-
-    /* A music video runs longer than the song (an intro, a scene at the end),
-    while LRCLIB's timings are the album's (even entries filed under the
-    video's length often are). When the lyrics found start like an album
-    version a few seconds shorter, delay them by the difference: shown as
-    "+8.0 s" above them, and , / . still adjust it. */
-    if (video && duration > 0 && !l.lines.empty()) {
-        if (!hits.is_array())
-            hits = nlohmann::json::parse(get("https://lrclib.net/api/search?track_name=" + escape(t) + "&artist_name=" + escape(artist)), nullptr, false);
-        const double first = l.lines.front().first;
-        // The same timings are filed under many lengths (compilations, copies):
-        // the song's own is the one most of them give.
-        std::map<int, int> lengths;
-        if (hits.is_array()) for (const auto& hit : hits) {
-            const double d = hit.is_object() && hit.value("duration", nlohmann::json()).is_number() ? hit["duration"].get<double>() : 0;
-            const double gap = duration - d;
-            if (gap < 4 || gap > 25) continue;                         // a few seconds: the same cut, rounded
-            if (std::abs(firstStamp(hit) - first) > 0.3) continue;   // other timings: another cut
-            lengths[static_cast<int>(std::lround(d))]++;
-        }
-        double album = 0;
-        int most = 0;
-        for (const auto& [d, n] : lengths) if (n > most) { most = n; album = d; }
-        if (album > 0) l.shift = std::round((duration - album) * 2) / 2;   // half seconds, like the keys
+    /* Every entry LRCLIB has for the song, from two searches: the title
+    without what YouTube adds ("(Official Video)", "[Lyrics]"...) but with
+    the rest ("Habits (Stay High)"), and the bare title ("Habits"). The free
+    text search when both find nothing. */
+    std::string kept = name;
+    {
+        static const std::regex noise(R"(\s*[\(\[][^\)\]]*(official|video|audio|lyric|clip|visuali[sz]er|remaster|explicit|\bhd\b|4k|feat\.?|ft\.)[^\)\]]*[\)\]])",
+                                      std::regex::icase);
+        kept = std::regex_replace(kept, noise, "");
+        while (!kept.empty() && kept.back() == ' ') kept.pop_back();
     }
-    if (l.found) return l;
+    nlohmann::json hits = nlohmann::json::array();
+    std::set<long long> seen;
+    auto add = [&](const std::string& url) {
+        nlohmann::json j = nlohmann::json::parse(get(url), nullptr, false);
+        if (!j.is_array()) return;
+        for (auto& hit : j) {
+            if (!hit.is_object()) continue;
+            const long long id = hit.value("id", nlohmann::json()).is_number() ? hit["id"].get<long long>() : -1;
+            if (id >= 0 && !seen.insert(id).second) continue;
+            hits.push_back(std::move(hit));
+        }
+    };
+    const std::string by = "&artist_name=" + escape(artist);
+    if (!kept.empty() && kept != t) add("https://lrclib.net/api/search?track_name=" + escape(kept) + by);
+    add("https://lrclib.net/api/search?track_name=" + escape(t) + by);
+    if (hits.empty()) add("https://lrclib.net/api/search?q=" + escape(t + " " + artist));
+
+    /* Which timings. LRCLIB files one set of timings under many lengths
+    (compilations, copies, uploads with the wrong length: Habits' original
+    timings sit under 3:29 and under 4:25), so an entry's own length can't be
+    trusted. Entries are grouped by their timings (same first and last line);
+    a group's real length is the one most of its entries give; the group
+    closest to this track wins. Within 8 s: those timings. A music video up to
+    25 s longer than the song: the song's timings, delayed by its intro
+    (shown as "+8.0 s", , / . adjust it). Further off: another cut, whose
+    timings would run ahead or behind, so the words without timings. */
+    struct Group { double first, last; std::map<int, int> lengths; const nlohmann::json* fullest; size_t lines; };
+    std::vector<Group> groups;
+    for (const auto& hit : hits) {
+        if (!hit.value("syncedLyrics", nlohmann::json()).is_string()) continue;
+        const std::string& sync = hit["syncedLyrics"].get_ref<const std::string&>();
+        const size_t n = static_cast<size_t>(std::count(sync.begin(), sync.end(), '\n')) + 1;
+        if (n < 6) continue;                                  // a stub ("There is a nightcall")
+        const double first = firstStamp(hit), last = lastStamp(hit);
+        if (first < 0) continue;
+        const double d = hit.value("duration", nlohmann::json()).is_number() ? hit["duration"].get<double>() : 0;
+        auto g = std::find_if(groups.begin(), groups.end(), [&](const Group& x) { return std::abs(x.first - first) <= 0.6 && std::abs(x.last - last) <= 2; });
+        if (g == groups.end()) { groups.push_back({first, last, {}, &hit, n}); g = groups.end() - 1; }
+        if (d > 0) g->lengths[static_cast<int>(std::lround(d))]++;
+        if (n > g->lines) { g->fullest = &hit; g->lines = n; }
+    }
+    const Group* best = nullptr;
+    double best_score = 1e9, best_shift = 0;
+    int best_len = 0;
+    for (const auto& g : groups) {
+        int length = 0, most = 0, total = 0;
+        for (const auto& [len, count] : g.lengths) { total += count; if (count > most) { most = count; length = len; } }
+        double score, shift = 0;
+        if (duration <= 0) score = -static_cast<double>(total);         // no length to go by: the most common timings
+        else if (length == 0) continue;
+        else {
+            const double gap = duration - length;
+            if (video && gap >= 4 && gap <= 25) { score = gap; shift = std::round(gap * 2) / 2; }   // a video: the song plus an intro
+            else if (std::abs(gap) <= 8) score = std::abs(gap);
+            else continue;
+        }
+        if (!best || score < best_score || (score == best_score && g.lengths.size() > best->lengths.size())) {
+            best = &g; best_score = score; best_shift = shift; best_len = length;
+        }
+    }
+    if (best) {
+        Lyrics l = parse(*best->fullest);
+        if (!l.lines.empty()) {
+            l.shift = best_shift;
+            spdlog::info("LYRICS: {} - {}: timings of a {} s cut, shift {:.1f}", artist, t, best_len, best_shift);
+            return l;
+        }
+    }
+
+    // Words without timings rather than mistimed ones (not a stub).
+    for (const auto& hit : hits) {
+        Lyrics l;
+        if (hit.value("plainLyrics", nlohmann::json()).is_string()) {
+            std::istringstream p(hit["plainLyrics"].get<std::string>());
+            for (std::string line; std::getline(p, line); ) l.plain.push_back(line);
+        }
+        l.found = l.plain.size() >= 6;
+        if (l.found) return l;
+    }
 
     spdlog::info("LYRICS: none for {} - {}", artist, t);
     return {};
