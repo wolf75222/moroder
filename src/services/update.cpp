@@ -5,6 +5,7 @@
 #include "../../include/utils/platform.hpp"
 #include "../../include/ytm/ytmusic.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
@@ -65,7 +66,7 @@ size_t collect(char* d, size_t s, size_t n, void* out) {
 // A repository's latest release tag without the "v" ("1.2.0"), "" when unknown (offline, timeout).
 std::string latestRelease(long timeout_ms, const std::string& repo = MORODER_REPO) {
     std::string body;
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return "";
     const std::string url = "https://api.github.com/repos/" + repo + "/releases/latest";
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
@@ -145,7 +146,7 @@ void quietly(const std::string& cmd) {
 
 // Milliseconds for a HEAD request, -1 when it fails.
 long pingMs(const std::string& url, long timeout_ms) {
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return -1;
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_NOBODY, 1L);

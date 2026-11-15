@@ -1,5 +1,6 @@
 #include "../../include/services/lyrics.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -20,7 +21,7 @@ size_t collect(char* data, size_t size, size_t n, void* out) {
 
 std::string get(const std::string& url) {
     std::string body;
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return body;
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
@@ -35,7 +36,7 @@ std::string get(const std::string& url) {
 
 std::string escape(const std::string& s) {
     std::string out;
-    if (CURL* c = curl_easy_init()) {
+    if (CURL* c = utils::newCurl()) {
         if (char* e = curl_easy_escape(c, s.c_str(), (int)s.size())) { out = e; curl_free(e); }
         curl_easy_cleanup(c);
     }

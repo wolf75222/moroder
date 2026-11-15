@@ -14,6 +14,7 @@
 #include <csignal>
 #include <regex>
 #include <nlohmann/json.hpp>
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <cstdlib>
 #include <cstdio>
@@ -175,7 +176,7 @@ bool streamAccepted(const std::string& stream) {
     std::string ua = nl == std::string::npos ? "" : stream.substr(nl + 1);
     ua = ua.substr(0, ua.find('\n'));
 
-    CURL* curl = curl_easy_init();
+    CURL* curl = utils::newCurl();
     if (!curl) return true;     // can't tell: let mpv try
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");

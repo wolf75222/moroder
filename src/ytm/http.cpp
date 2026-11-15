@@ -1,6 +1,7 @@
 #include "../../include/ytm/http.hpp"
 
 #include <spdlog/spdlog.h>
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 
 #include <cstring>
@@ -51,7 +52,7 @@ namespace ytm {
 
 Http::Http() {
     std::call_once(curl_init_flag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-    curl = curl_easy_init();
+    curl = utils::newCurl();
 }
 
 Http::~Http() {
@@ -60,7 +61,7 @@ Http::~Http() {
 
 std::string Http::urlEncode(const std::string& value) {
     // Uses curl's escaper so the behaviour matches what the server expects.
-    CURL* tmp = curl_easy_init();
+    CURL* tmp = utils::newCurl();
     if (!tmp) return value;
 
     char* escaped = curl_easy_escape(tmp, value.c_str(), static_cast<int>(value.size()));
@@ -84,6 +85,7 @@ Http::Response Http::perform(const std::string& url, const std::string* body, co
     }
 
     curl_easy_reset(curl);
+    utils::curlTls(curl);
 
     struct curl_slist* list = nullptr;
     for (const std::string& h : headers) {

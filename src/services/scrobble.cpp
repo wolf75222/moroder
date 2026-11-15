@@ -5,6 +5,7 @@
 #include "../../include/services/notify.hpp"
 #include "../../include/config/config.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -107,7 +108,7 @@ nlohmann::json call(std::map<std::string, std::string> params, bool post) {
     params["api_sig"] = md5(sig + cfg.LASTFM_API_SECRET);
     params["format"] = "json";
 
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return nullptr;
     std::string body;
     for (const auto& [k, v] : params) {

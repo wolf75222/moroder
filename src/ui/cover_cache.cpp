@@ -1,6 +1,7 @@
 #include "../../include/ui/cover_cache.hpp"
 #include "../../include/utils/utils.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 
 #define cimg_display 0      // cimg_use_jpeg / cimg_use_png come from CMake, when the libs exist
@@ -132,7 +133,7 @@ size_t collect(char* data, size_t size, size_t n, void* out) {
 
 void download(std::string url, fs::path target) {
     std::string body;
-    if (CURL* c = curl_easy_init()) {
+    if (CURL* c = utils::newCurl()) {
         curl_easy_setopt(c, CURLOPT_URL, url.c_str());
         curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
         curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
