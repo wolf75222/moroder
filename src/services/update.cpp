@@ -460,7 +460,20 @@ static void removeLaunchers(bool always) {
     fs::remove(dir / L"moroder.cmd", ec);
     fs::remove(dir / L"moroder", ec);
 }
-void services::update::tidyLaunchers() { removeLaunchers(false); }
+void services::update::tidyLaunchers() {
+    removeLaunchers(false);
+    /* The copy an update replaced while it ran: install.ps1 moves it into a
+    .old-* folder beside the new one and only deletes it on the next
+    install, so ~200 MB stayed there for a whole release. Free now, it goes;
+    still in use, it stays for the next launch. */
+    const std::string self = platform::selfPath();
+    if (self.empty()) return;
+    std::error_code ec;
+    for (fs::directory_iterator it(fs::u8path(self).parent_path(), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e;
+        if (it->is_directory(e) && it->path().filename().wstring().rfind(L".old-", 0) == 0) fs::remove_all(it->path(), e);
+    }
+}
 #else
 void services::update::tidyLaunchers() {}
 #endif
