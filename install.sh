@@ -261,12 +261,11 @@ t_deps() {
     set_ deps run "${need:+installed$need, }yt-dlp $(yt-dlp --version 2>/dev/null)"
 }
 
-# yt-dlp needs a JavaScript runtime to solve YouTube's challenges: without
-# one, streams don't resolve. Deno into PREFIX/bin, unless one is there.
+# yt-dlp solves YouTube's challenges with Deno (the only JavaScript runtime it
+# uses by default: node / bun must be turned on by hand); without it streams
+# don't resolve. Deno into PREFIX/bin, unless it is there.
 t_js() {
-    for js in deno node bun; do
-        if have "$js"; then set_ js run "$js (already installed)"; return 0; fi
-    done
+    if have deno; then set_ js run "deno (already installed)"; return 0; fi
     case "$ARCH" in x86_64|amd64) target=x86_64-unknown-linux-gnu ;; aarch64|arm64) target=aarch64-unknown-linux-gnu ;; *) set_ js skip "no Deno build for $ARCH"; return 0 ;; esac
     have unzip || { set_ js fail "unzip is needed to install Deno"; return 1; }
     set_ js run "downloading Deno"

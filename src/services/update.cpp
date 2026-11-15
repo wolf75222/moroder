@@ -340,8 +340,9 @@ int services::update::doctor() {
     check("JS runtime", [&](size_t id) {
         std::error_code ec;      // its own: the checks run side by side
         (void)ec;
-        // yt-dlp solves YouTube's challenges with one; without it streams don't resolve.
-        for (const char* js : {"deno", "node", "bun"}) {
+        // yt-dlp solves YouTube's challenges with Deno (node / bun only when
+        // turned on with --js-runtimes); without it streams don't resolve.
+        for (const char* js : {"deno"}) {
             if (!have(js)) continue;
             // "deno 2.9.8 (stable, ...)", "v22.1.0" (node), "1.2.3" (bun): the version word.
             std::istringstream words(firstLine(std::string(js) + " --version"));
@@ -350,7 +351,7 @@ int services::update::doctor() {
             live.set(id, State::Ok, std::string(js) + " " + version);
             return;
         }
-        live.set(id, State::Fail, "none: yt-dlp needs Deno for YouTube (moroder update installs it)");
+        live.set(id, State::Fail, "no Deno: yt-dlp needs it for YouTube (moroder update installs it)");
     });
     check("Streams", [&](size_t id) {
         std::error_code ec;      // its own: the checks run side by side

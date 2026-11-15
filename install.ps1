@@ -93,11 +93,12 @@ try {
         Ok "yt-dlp" (& $Keep --version)
     }
 
-    # A JavaScript runtime: yt-dlp needs one to solve YouTube's challenges,
-    # without it streams don't resolve. Deno, unless one is installed already.
-    $Js = @("deno", "node", "bun") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+    # Deno: yt-dlp solves YouTube's challenges with it (the only JavaScript
+    # runtime it uses by default: node / bun must be turned on by hand), and
+    # without it streams don't resolve.
+    $Js = @("deno") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
     if ($Js -and -not (Test-Path $KeepDeno)) {
-        Ok "JS runtime" "$Js (already installed)"
+        Ok "JS runtime" "deno (already installed)"
     } elseif (Test-Path $KeepDeno) {
         Ok "JS runtime" ("deno " + ((& $KeepDeno --version) -split "\s+")[1])
     } else {
