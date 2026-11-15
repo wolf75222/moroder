@@ -328,7 +328,8 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
     auto grid = GridContainer(grid_components);
 
     grid = CatchEvent(grid, [data](const ftxui::Event& event) {
-        if (!event.is_mouse()) data->hscroll.offset = -1;   // keys: follow the selection again
+        // Keys follow the selection again (not the app's own refresh events).
+        if (!event.is_mouse() && event != ftxui::Event::Custom) data->hscroll.offset = -1;
         return false;
     });
 

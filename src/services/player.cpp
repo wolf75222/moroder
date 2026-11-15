@@ -1618,12 +1618,10 @@ void services::Player::worker_loop() {
             } else if constexpr (std::is_same_v<T, LikeStatusCommand>) {
                 const int status = music_service->likeStatus(c.video_id);
                 std::lock_guard lock(state_mutex);
-                if (status < 0) {
-                    like_status_asked.erase(c.video_id);   // try again next time it plays
-                } else {
-                    // A tap on the heart meanwhile wins.
-                    state.liked.emplace(c.video_id, status == 1);
-                }
+                // Unknown (offline, refused): stays unasked-again for this
+                // session; the UI asks every frame, so retrying would flood.
+                // A tap on the heart meanwhile wins.
+                if (status >= 0) state.liked.emplace(c.video_id, status == 1);
 
             } else if constexpr (std::is_same_v<T, RateCommand>) {
                 spdlog::info("PLAYER: RateCommand, {}", c.like ? "like" : "remove like");

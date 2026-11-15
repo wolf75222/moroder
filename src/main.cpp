@@ -1632,8 +1632,9 @@ int main(int argc, char *argv[]) {
             /* Progress line: a press on it, or on the blank row just under
             it (a one-row target is easy to miss), seeks; holding the button
             and moving scrubs, wherever the pointer goes, until it's released.
+            An open context menu takes the click first (it closes).
             */
-            {
+            if (!ctx.open) {
                 const Box& p = playback_bar_data.box_progress;
                 const bool has_bar = p.x_max > p.x_min && p.y_min >= 0;
                 const auto fraction = [&] { return std::clamp(double(m.x - p.x_min) / double(p.x_max - p.x_min), 0.0, 1.0); };
