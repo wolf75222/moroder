@@ -279,7 +279,7 @@ endif()
 
 if(WIN32)
     # ShellExecuteW (opening links). Win32 calls are the explicit W ones: no UNICODE.
-    target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE shell32 runtimeobject)   # runtimeobject: WinRT (media flyout)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 

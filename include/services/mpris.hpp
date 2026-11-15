@@ -194,6 +194,7 @@ public:
     
     void startLoopAsync();
     void mediaKey(int virtual_key);     // Windows: a media key was pressed
+    void smtcButton(int button);        // Windows: a media flyout button was pressed
     void startLoop();
 
     void setMetadata(const std::map<Field, sdbus::Variant> &value);
