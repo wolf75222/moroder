@@ -623,19 +623,11 @@ int main(int argc, char *argv[]) {
             return true;
         }
 
-        if (!queued) {
-            spdlog::info("ITEM: nothing queued for result type, " + result.resultType);
-            return true;
-        }
+        if (!queued) spdlog::info("ITEM: nothing queued for result type, " + result.resultType);
 
-        current_state = ui::State::QUEUE;
-
-        main_content_items.clear();
-        main_content->DetachAllChildren();
-        main_content->Add(Renderer([] { return emptyElement(); }));
-
+        // Playing or queueing keeps you where you are (the queue is one key
+        // away): no jump to the queue view and its big cover.
         screen.PostEvent(Event::Custom);
-
         return true;
     };
 
@@ -1057,6 +1049,12 @@ int main(int argc, char *argv[]) {
         ui::getSidebarData(&state_copy, &sidebar_data);
         ui::getPlaybackData(&state_copy, &playback_bar_data, screen.dimx());
 
+        // The heart of a track not rated this session: ask the account (once per track).
+        if (auto song = std::dynamic_pointer_cast<music::Song>(state_copy.current);
+            song && state_copy.is_logged_in && !state_copy.liked.count(song->ref.id)) {
+            player.fetchLikeStatus(song->ref.id);
+        }
+
         // History: a new page reached pushes the one we were on.
         {
             NavEntry now;
@@ -1355,6 +1353,93 @@ int main(int argc, char *argv[]) {
     };
 
     // The song under the selection (shelf, list row, playlist track), if any.
+    // Second menu at the same place: the user's playlists, to add ref to.
+    auto open_playlist_picker = [&](const music::SongRef& ref) {
+        std::vector<ContextItem> lists;
+        lists.push_back({"\uf067", "New playlist\u2026", "", [&, ref] {
+            prompt.open = true;
+            prompt.title = "New playlist with \u201c" + utils::trimSuffix(ref.title, 30, "...") + "\u201d";
+            prompt.value.clear();
+            prompt.done = [&player, id = ref.id](const std::string& name) { player.createPlaylist(name, id); };
+        }});
+        for (const auto& pl : sidebar_data.results) {
+            if (pl.ref.id == "LM" || pl.ref.id == "VLLM" || pl.ref.id == "SE" || pl.ref.id == "VLSE") continue;   // Liked Music / Episodes: not editable
+            const std::string pid = pl.ref.id, ptitle = pl.ref.title;
+            lists.push_back({"\uf03a", utils::trimSuffix(ptitle, 22, "..."), "", [&player, pid, ptitle, id = ref.id] { player.addToPlaylist(pid, ptitle, id); }});
+            if (lists.size() >= 15) break;
+        }
+        ctx.title = "Add to playlist";
+        ctx.items = std::move(lists);
+        ctx.hover = 0;
+        ctx.boxes.assign(ctx.items.size(), Box{});
+        ctx.open = true;
+    };
+
+    auto open_artist_page = [&](const music::ArtistRef& artist) {
+        player.openArtist(artist);
+        current_state = ui::State::ARTIST;
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+        main_content->Add(Renderer([] { return emptyElement(); }));
+        screen.PostEvent(Event::Custom);
+    };
+
+    auto open_album_page = [&](const music::AlbumRef& album) {
+        player.openAlbum(album);
+        current_state = ui::State::PLAYLIST;
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+        main_content->Add(Renderer([] { return emptyElement(); }));
+        screen.PostEvent(Event::Custom);
+    };
+
+    // The track playing, with its album, for the menus on Now Playing and the bar.
+    auto current_song = [&]() -> std::shared_ptr<music::Song> {
+        std::lock_guard lock(player.state_mutex);
+        return std::dynamic_pointer_cast<music::Song>(player.state.current);
+    };
+
+    /* Menu for the track playing: right-click on the Now Playing cover, title,
+    artist or album, or on the track in the playback bar */
+    auto open_current_menu = [&](int x, int y) -> bool {
+        const auto song = current_song();
+        if (!song) return false;
+        const music::SongRef ref = song->ref;
+        const music::AlbumRef album = song->album;
+        ctx.items.clear();
+        ctx.title = utils::trimSuffix(ref.title, 30, "...");
+        if (state_logged_in()) {
+            ctx.items.push_back({"\uf0fe", "Add to playlist\u2026", "", [&, ref] { open_playlist_picker(ref); }});
+            ctx.items.push_back({playback_bar_data.liked ? "\uf004" : "\uf08a", playback_bar_data.liked ? "Unlike" : "Like", "", [&player] { player.toggleLikeCurrent(); }});
+        }
+        ctx.items.push_back({"\uf1be", "Start radio", "", [&player, ref] {
+            auto s = std::make_shared<music::Song>();
+            s->setRef(ref);
+            player.queue(std::static_pointer_cast<music::IStreamable>(s), true, true);
+        }});
+        if (!ref.artists.empty() && !ref.artists[0].id.empty()) {
+            const music::ArtistRef artist = ref.artists[0];
+            ctx.items.push_back({"\uf007", "Go to " + utils::trimSuffix(artist.name, 16, "..."), "", [&, artist] { open_artist_page(artist); }});
+        }
+        if (!album.id.empty()) {
+            ctx.items.push_back({"\uf07c", "Go to album", "", [&, album] { open_album_page(album); }});
+        }
+        const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
+        ctx.items.push_back({"\uf0c5", "Copy link", "", [&player, link] {
+            const bool ok = services::copyToClipboard(link);
+            std::lock_guard lock(player.state_mutex);
+            player.state.notice = ok ? "Link copied" : "No clipboard tool found";
+            player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        }});
+        ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
+        ctx.open = true;
+        ctx.x = x;
+        ctx.y = y;
+        ctx.hover = 0;
+        ctx.boxes.assign(ctx.items.size(), Box{});
+        return true;
+    };
+
     auto focused_song = [&]() -> std::optional<music::SongRef> {
         for (auto& item : main_content_items) {
             if (!item.component || !item.component->Focused()) continue;
@@ -1372,6 +1457,7 @@ int main(int argc, char *argv[]) {
     auto last_click = std::chrono::steady_clock::time_point{};
     int last_click_x = -1, last_click_y = -1;
     Component last_click_target;    // the page entry the first click selected
+    auto double_click_played_at = std::chrono::steady_clock::time_point{};
 
     // Content entry that has focus (a row, a carousel, the filters...), if any.
     auto focused_entry = [&]() -> ui::ContentEntry* {
@@ -1453,6 +1539,12 @@ int main(int argc, char *argv[]) {
         std::chrono::steady_clock::time_point last{}, cooldown_until{};
     } swipe;
 
+    // Dragging along the progress line (see the mouse handler).
+    struct Scrub {
+        bool active = false;
+        std::chrono::steady_clock::time_point last{};
+    } scrub;
+
     ui = CatchEvent(ui, [&](Event event){
         /* Mouse
         - A click on the playback bar hits its controls; the progress line seeks
@@ -1506,12 +1598,39 @@ int main(int argc, char *argv[]) {
                 return true;
             }
 
-            if(click) {
+            /* Progress line: a press on it, or on the blank row just under
+            it (a one-row target is easy to miss), seeks; holding the button
+            and moving scrubs, wherever the pointer goes, until it's released.
+            */
+            {
                 const Box& p = playback_bar_data.box_progress;
-                if(in(p) && p.x_max > p.x_min) {
-                    player.seekToFraction(double(m.x - p.x_min) / double(p.x_max - p.x_min));
+                const bool has_bar = p.x_max > p.x_min && p.y_min >= 0;
+                const auto fraction = [&] { return std::clamp(double(m.x - p.x_min) / double(p.x_max - p.x_min), 0.0, 1.0); };
+                if(click && has_bar && m.x >= p.x_min && m.x <= p.x_max && m.y >= p.y_min && m.y <= p.y_max + 1) {
+                    scrub.active = true;
+                    scrub.last = std::chrono::steady_clock::now();
+                    player.seekToFraction(fraction());
                     return true;
                 }
+                if(scrub.active) {
+                    if(m.button == Mouse::Left && m.motion == Mouse::Moved) {
+                        const auto now = std::chrono::steady_clock::now();
+                        if(has_bar && now - scrub.last > std::chrono::milliseconds(120)) {
+                            scrub.last = now;
+                            player.seekToFraction(fraction());
+                        }
+                        return true;
+                    }
+                    if(m.motion == Mouse::Released) {
+                        scrub.active = false;
+                        if(has_bar) player.seekToFraction(fraction());
+                        return true;
+                    }
+                    scrub.active = false;   // any other press: the drag is over
+                }
+            }
+
+            if(click) {
                 if(in(nav_back_box))    { go_back();    return true; }
                 if(in(nav_forward_box)) { go_forward(); return true; }
                 if(in(playback_bar_data.box_prev))   { player.skipBackward();      return true; }
@@ -1520,7 +1639,18 @@ int main(int argc, char *argv[]) {
                 if(in(playback_bar_data.box_like))   { player.toggleLikeCurrent(); return true; }
                 if(in(playback_bar_data.box_loop))   { player.cycleLoop();         return true; }
                 if(in(playback_bar_data.box_shuffle)){ player.shuffleUpcoming();   return true; }
+                if(current_state == ui::State::NOWPLAYING && (in(ui::now_playing_artist_box) || in(ui::now_playing_album_box))) {
+                    if (const auto song = current_song()) {
+                        if (in(ui::now_playing_artist_box) && !song->ref.artists.empty() && !song->ref.artists[0].id.empty()) { open_artist_page(song->ref.artists[0]); return true; }
+                        if (in(ui::now_playing_album_box) && !song->album.id.empty()) { open_album_page(song->album); return true; }
+                    }
+                }
                 if(in(playback_bar_data.box_track))  {
+                    // Right after a double-click played something, the bar shows
+                    // up (or its title moves) under the pointer: a click that
+                    // quick is the end of that gesture, not a request for the
+                    // full screen.
+                    if (std::chrono::steady_clock::now() - double_click_played_at < std::chrono::milliseconds(800)) return true;
                     // Not as a key: with the search bar focused it would type "v".
                     if (search_active) close_search();
                     ui->OnEvent(Config::keyEvent(cfg.KEY_NOW_PLAYING));
@@ -1614,8 +1744,9 @@ int main(int argc, char *argv[]) {
             /* Wheel / trackpad
             - Vertical always scrolls vertically (the sidebar when the pointer is
               over it, the page otherwise), never sideways through a carousel
-            - Horizontal (trackpad swipe, or Shift+wheel) moves along a carousel
-            - Paced, so one swipe doesn't fly past everything
+            - Horizontal (trackpad swipe, or Shift+wheel) slides the carousel /
+              grid under the pointer by columns (see ui/components/hscroll.hpp)
+            - Elsewhere a deliberate sideways swipe goes back / forward
             */
             if(wheel || wheel_h) {
                 const bool horizontal = wheel_h || m.shift;
@@ -1623,22 +1754,21 @@ int main(int argc, char *argv[]) {
 
                 const auto now = std::chrono::steady_clock::now();
 
+                // The row under the pointer: a carousel / grid there is what
+                // sideways input (trackpad, or Shift+wheel) slides. The focus
+                // stays put, so the page never jumps to follow it.
+                ui::ContentEntry* under = nullptr;
+                if(horizontal && !(!sidebar_hidden && in(sidebar_box)) && current_state != ui::State::NOWPLAYING && current_state != ui::State::QUEUE) {
+                    for (const auto& [idx, b] : page_view.drawn) {
+                        if (!in(b) || idx >= static_cast<int>(main_content->ChildCount())) continue;
+                        Component child = main_content->ChildAt(idx);
+                        for (auto& item : main_content_items) if (item.component == child) { under = &item; break; }
+                    }
+                }
+                const bool sideways_list = under && (!under->carousel_data.results.empty() || !under->grid_data.results.empty());
+
                 // Trackpad swipe sideways (not Shift+wheel, which is always sideways scrolling).
                 if(wheel_h && !m.shift) {
-                    // The row under the pointer: a carousel / grid there scrolls sideways.
-                    ui::ContentEntry* under = nullptr;
-                    if(!(!sidebar_hidden && in(sidebar_box)) && current_state != ui::State::NOWPLAYING && current_state != ui::State::QUEUE) {
-                        for (const auto& [idx, b] : page_view.drawn) {
-                            if (!in(b) || idx >= static_cast<int>(main_content->ChildCount())) continue;
-                            Component child = main_content->ChildAt(idx);
-                            for (auto& item : main_content_items) if (item.component == child) { under = &item; break; }
-                        }
-                    }
-                    const bool sideways_list = under && (!under->carousel_data.results.empty() || !under->grid_data.results.empty());
-                    if(sideways_list && !under->component->Focused()) {
-                        main_content->SetActiveChild(under->component);
-                        if(!main_content->Focused()) main_content->TakeFocus();
-                    }
                     const bool on_cover = current_state == ui::State::NOWPLAYING && in(ui::now_playing_cover_box);
                     if(!sideways_list) {
                         const int dir = m.button == Mouse::WheelLeft ? -1 : 1;
@@ -1658,6 +1788,14 @@ int main(int argc, char *argv[]) {
                         }
                         return true;
                     }
+                }
+
+                // Sideways over a carousel / grid: the row slides by columns,
+                // smooth on a trackpad, the selection staying where it is.
+                if(horizontal && sideways_list) {
+                    ui::HScroll* h = !under->grid_data.results.empty() ? &under->grid_data.hscroll : &under->carousel_data.hscroll;
+                    ui::hscrollBy(h, (back ? -1 : 1) * (wheel_h ? 3 : 8));
+                    return true;
                 }
 
                 // The page scrolls by lines, like a web page: smooth on a
@@ -1704,6 +1842,11 @@ int main(int argc, char *argv[]) {
             const bool right_click = m.button == Mouse::Right && m.motion == Mouse::Pressed;
 
             if(right_click) {
+                const bool on_current = in(playback_bar_data.box_track) ||
+                    (current_state == ui::State::NOWPLAYING && (in(ui::now_playing_cover_box) || in(ui::now_playing_title_box) ||
+                                                                 in(ui::now_playing_artist_box) || in(ui::now_playing_album_box)));
+                if (on_current && open_current_menu(m.x, m.y)) return true;
+
                 // Focus what is under the pointer, as a left press would.
                 Event left = Event::Mouse(event.input(), m);
                 left.mouse().button = Mouse::Left;
@@ -1812,27 +1955,7 @@ int main(int argc, char *argv[]) {
                             }});
                             ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
                             if(state_logged_in()) {
-                                ctx.items.push_back({"\uf0fe", "Add to playlist\u2026", "", [&, ref] {
-                                    // Second menu at the same place: the user's playlists.
-                                    std::vector<ContextItem> lists;
-                                    lists.push_back({"\uf067", "New playlist\u2026", "", [&, ref] {
-                                        prompt.open = true;
-                                        prompt.title = "New playlist with \u201c" + utils::trimSuffix(ref.title, 30, "...") + "\u201d";
-                                        prompt.value.clear();
-                                        prompt.done = [&player, id = ref.id](const std::string& name) { player.createPlaylist(name, id); };
-                                    }});
-                                    for (const auto& pl : sidebar_data.results) {
-                                        if (pl.ref.id == "LM" || pl.ref.id == "VLLM" || pl.ref.id == "SE" || pl.ref.id == "VLSE") continue;   // Liked Music / Episodes: not editable
-                                        const std::string pid = pl.ref.id, ptitle = pl.ref.title;
-                                        lists.push_back({"\uf03a", utils::trimSuffix(ptitle, 22, "..."), "", [&player, pid, ptitle, id = ref.id] { player.addToPlaylist(pid, ptitle, id); }});
-                                        if (lists.size() >= 15) break;
-                                    }
-                                    ctx.title = "Add to playlist";
-                                    ctx.items = std::move(lists);
-                                    ctx.hover = 0;
-                                    ctx.boxes.assign(ctx.items.size(), Box{});
-                                    ctx.open = true;
-                                }});
+                                ctx.items.push_back({"\uf0fe", "Add to playlist\u2026", "", [&, ref] { open_playlist_picker(ref); }});
                             }
                             ctx.items.push_back({"\uf1be", "Start radio", "", [&player, ref] {
                                 auto s = std::make_shared<music::Song>();
@@ -1841,14 +1964,7 @@ int main(int argc, char *argv[]) {
                             }});
                             if(!ref.artists.empty() && !ref.artists[0].id.empty()) {
                                 const music::ArtistRef artist = ref.artists[0];
-                                ctx.items.push_back({"\uf007", "Go to " + utils::trimSuffix(artist.name, 16, "..."), "", [&, artist] {
-                                    player.openArtist(artist);
-                                    current_state = ui::State::ARTIST;
-                                    main_content_items.clear();
-                                    main_content->DetachAllChildren();
-                                    main_content->Add(Renderer([] { return emptyElement(); }));
-                                    screen.PostEvent(Event::Custom);
-                                }});
+                                ctx.items.push_back({"\uf007", "Go to " + utils::trimSuffix(artist.name, 16, "..."), "", [&, artist] { open_artist_page(artist); }});
                             }
                         }
                         if(current_state == ui::State::QUEUE) {
@@ -1912,6 +2028,7 @@ int main(int argc, char *argv[]) {
                 // Only what the first click selected (not, say, the row that was
                 // selected before a click on empty space).
                 if(e && !self_acting && !sidebar->Focused() && last_click_target && e->component == last_click_target) {
+                    double_click_played_at = std::chrono::steady_clock::now();
                     layout->OnEvent(Event::Return);
                     return true;
                 }
@@ -1940,6 +2057,7 @@ int main(int argc, char *argv[]) {
                     const bool self_acting = e->category.rfind("__error__", 0) == 0 || e->category.rfind("__playlist__", 0) == 0;
                     if(self_acting) navigation = false, double_click = false;
                 }
+                if(double_click) double_click_played_at = std::chrono::steady_clock::now();
                 if(navigation || double_click) layout->OnEvent(Event::Return);
             }
 
@@ -2273,7 +2391,7 @@ int main(int argc, char *argv[]) {
             row("\uf053 \uf054 / swipe",     "back / forward (swipe: not in Warp)"),
             row("swipe cover",            "now playing: skip tracks"),
             row("volume",                 "click: slider, wheel: level"),
-            row("bar",                    "click the line to seek"),
+            row("bar",                    "click or drag the line to seek"),
             row("title",                  "now playing"),
             row("lyrics",                 "click a line: jump there"),
             row("queue",                  "drag a row to move it"),

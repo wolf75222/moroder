@@ -139,6 +139,10 @@ private:
         bool like = true;
     };
 
+    struct LikeStatusCommand {
+        std::string video_id;
+    };
+
 public:
     /* PlayerState
     - Shared player state between all threads
@@ -289,6 +293,10 @@ public:
     // Like the current track, or remove the like if it was liked here.
     void toggleLikeCurrent();
 
+    // Asks the account whether this track is liked (once per track), so the
+    // heart is right whatever the track was started from.
+    void fetchLikeStatus(const std::string& video_id);
+
     // Load a playlist's tracks for the playlist view (state.open_playlist).
     void openPlaylist(const music::PlaylistRef& ref);
 
@@ -423,6 +431,7 @@ private:
         LibraryPodcastsCommand,
         IsLoggedInCommand,
         RateCommand,
+        LikeStatusCommand,
         OpenPlaylistCommand,
         RefreshSessionCommand,
         OpenAlbumCommand,
@@ -438,6 +447,7 @@ private:
         PlayNextCommand
     >;
     std::vector<Command> postponed;
+    std::unordered_set<std::string> like_status_asked;   // under state_mutex
 
 
     std::queue<Command> command_queue;

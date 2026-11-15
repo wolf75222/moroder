@@ -2,6 +2,7 @@
 
 #include "../../../include/services/player.hpp"
 #include "../structs/entries.hpp"
+#include "hscroll.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <string>
@@ -17,6 +18,8 @@ struct CarouselData {
     std::vector<ImageEntry> entries;
 
     bool is_loading = true;
+
+    HScroll hscroll;     // sideways, for the mouse
 
 };
 

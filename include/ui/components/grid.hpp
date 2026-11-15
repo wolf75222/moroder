@@ -6,6 +6,7 @@
 
 #include "../../../include/services/player.hpp"
 #include "../structs/entries.hpp"
+#include "hscroll.hpp"
 
 namespace ui {
 
@@ -27,6 +28,8 @@ struct GridData {
     std::vector<ImageEntry> entries;
 
     bool is_loading = true;
+
+    HScroll hscroll;     // sideways, for the mouse
 };
 
 void getGridData(services::Player::PlayerState* state, std::string category, GridData* data);

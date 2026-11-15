@@ -69,6 +69,8 @@ public:
 
     // Like / un-like a track on the account. False if signed out or it failed.
     bool rateSong(const std::string& videoId, bool like);
+    // 1 liked, 0 not, -1 unknown.
+    int likeStatus(const std::string& videoId);
     std::string createPlaylist(const std::string& title, const std::string& videoId);
     bool addToPlaylist(const std::string& playlistId, const std::string& videoId);
     bool removeFromPlaylist(const std::string& playlistId, const std::string& videoId, const std::string& setVideoId);

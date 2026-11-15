@@ -85,6 +85,9 @@ public:
     */
     bool rateSong(const std::string& videoId, bool like);
 
+    // The account's rating of a track: 1 liked, 0 not, -1 unknown (signed out, failed).
+    int likeStatus(const std::string& videoId);
+
     // New private playlist (optionally with a first track); its id, "" on failure.
     std::string createPlaylist(const std::string& title, const std::string& videoId = "");
 

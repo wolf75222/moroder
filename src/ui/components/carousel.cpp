@@ -137,6 +137,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
     auto menu = Menu(&data->entries_spoof, selected, options);
 
     menu = CatchEvent(menu, [data, selected, on_press](const ftxui::Event& event) {
+        if (!event.is_mouse()) data->hscroll.offset = -1;   // keys: follow the selection again
         if (*selected < 0 || static_cast<size_t>(*selected) >= data->results.size()) return false;
         return on_press(event, data->results[*selected]);
     });
@@ -150,7 +151,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
                 text(data->category_name),
             }),
             text(""),
-            menu->Render() | xframe,
+            ui::hscrolled(menu->Render(), &data->hscroll),
         });
     });
 }

@@ -632,6 +632,35 @@ bool YTMusic::rateSong(const std::string& videoId, bool like) {
     return response.is_object() && !response.empty();
 }
 
+namespace { json watchBody(const std::string& videoId, std::string playlistId); }
+
+int YTMusic::likeStatus(const std::string& videoId) {
+    if (!authenticated || videoId.empty()) return -1;
+
+    json response = sendRequest("next", watchBody(videoId, ""));
+    if (!response.is_object()) return -1;
+
+    // The player's own like button, when YouTube sends it.
+    if (const json* actions = nav(response, {"playerOverlays", "playerOverlayRenderer", "actions"}); actions && actions->is_array()) {
+        for (const json& a : *actions) {
+            const json* status = nav(a, {"likeButtonRenderer", "likeStatus"});
+            if (status && status->is_string()) return *status == "LIKE" ? 1 : 0;
+        }
+    }
+
+    // Else the track's menu in the queue panel.
+    const json* watchNext = nav(response, {"contents", "singleColumnMusicWatchNextResultsRenderer", "tabbedRenderer", "watchNextTabbedResultsRenderer"});
+    const json* results = nav(watchNext, TAB_CONTENT + Path{"musicQueueRenderer", "content", "playlistPanelRenderer"});
+    if (!results || !results->contains("contents")) return -1;
+    for (const json& track : parse::watchPlaylistTracks((*results)["contents"])) {
+        if (track.value("videoId", json()).is_string() && track["videoId"] == videoId) {
+            const json& like = track["likeStatus"];
+            return like.is_string() ? (like == "LIKE" ? 1 : 0) : -1;
+        }
+    }
+    return -1;
+}
+
 std::string YTMusic::createPlaylist(const std::string& title, const std::string& videoId) {
     if (!authenticated || title.empty()) return "";
 

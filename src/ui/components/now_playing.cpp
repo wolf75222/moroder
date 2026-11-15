@@ -53,10 +53,14 @@ std::string clock(double s) {
 
 std::vector<std::pair<std::shared_ptr<Box>, double>> ui::lyric_boxes;
 Box ui::now_playing_cover_box{-1, -1, -1, -1};
+Box ui::now_playing_title_box{-1, -1, -1, -1};
+Box ui::now_playing_artist_box{-1, -1, -1, -1};
+Box ui::now_playing_album_box{-1, -1, -1, -1};
 
 Element ui::renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height) {
     ui::lyric_boxes.clear();
     ui::now_playing_cover_box = Box{-1, -1, -1, -1};
+    ui::now_playing_title_box = ui::now_playing_artist_box = ui::now_playing_album_box = Box{-1, -1, -1, -1};
     auto song = std::dynamic_pointer_cast<music::Song>(state->current);
     if (!song) {
         return text("Nothing is playing. Press v or Esc to go back.") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | center | flex;
@@ -82,9 +86,10 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     Element info = vbox({
         text(""),
-        text(utils::trimSuffix(ref.title, cover_w, "...")) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-        text(artist) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-        text(song->album.title) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+        text(utils::trimSuffix(ref.title, cover_w, "...")) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(ui::now_playing_title_box),
+        // Click the artist or the album to open it; right-click for the track's menu.
+        hbox({ text(artist) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | reflect(ui::now_playing_artist_box), filler() }),
+        hbox({ text(song->album.title) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) | reflect(ui::now_playing_album_box), filler() }),
         text(""),
         gauge(ratio) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | size(WIDTH, EQUAL, cover_w),
         hbox({

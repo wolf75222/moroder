@@ -1615,6 +1615,16 @@ void services::Player::worker_loop() {
                     command_queue.push(PlaylistRestCommand{c.ref, have});
                 }
 
+            } else if constexpr (std::is_same_v<T, LikeStatusCommand>) {
+                const int status = music_service->likeStatus(c.video_id);
+                std::lock_guard lock(state_mutex);
+                if (status < 0) {
+                    like_status_asked.erase(c.video_id);   // try again next time it plays
+                } else {
+                    // A tap on the heart meanwhile wins.
+                    state.liked.emplace(c.video_id, status == 1);
+                }
+
             } else if constexpr (std::is_same_v<T, RateCommand>) {
                 spdlog::info("PLAYER: RateCommand, {}", c.like ? "like" : "remove like");
 
@@ -3501,6 +3511,20 @@ void services::Player::toggleLikeCurrent() {
         command_queue.push(RateCommand{id, like});
     }
 
+    command_cv.notify_one();
+}
+
+void services::Player::fetchLikeStatus(const std::string& video_id) {
+    if (video_id.empty()) return;
+    {
+        std::lock_guard lock(state_mutex);
+        if (!state.is_logged_in || state.liked.count(video_id)) return;
+        if (!like_status_asked.insert(video_id).second) return;
+    }
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(LikeStatusCommand{video_id});
+    }
     command_cv.notify_one();
 }
 

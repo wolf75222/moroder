@@ -326,14 +326,19 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
 
     auto grid = GridContainer(grid_components);
 
+    grid = CatchEvent(grid, [data](const ftxui::Event& event) {
+        if (!event.is_mouse()) data->hscroll.offset = -1;   // keys: follow the selection again
+        return false;
+    });
+
     return Renderer(grid, [grid, data] {
         if (data->category_name.empty()) {
             return vbox({
                 text(""),
-                hbox({
+                ui::hscrolled(hbox({
                     text(" "),
                     grid->Render() | xframe
-                }) | xframe,
+                }), &data->hscroll),
             });
         }
 
@@ -346,10 +351,10 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             }),
             text(""),
             text(""),
-            hbox({
+            ui::hscrolled(hbox({
                 text(" "),
                 grid->Render() | xframe
-            }) | xframe,
+            }), &data->hscroll),
         });
     });
 }

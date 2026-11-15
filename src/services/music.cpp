@@ -475,6 +475,13 @@ bool services::Music::rateSong(const std::string& videoId, bool like) {
     return ok && !last_error.failed;
 }
 
+int services::Music::likeStatus(const std::string& videoId) {
+    if (!ytm->isAuthenticated()) return -1;
+    const int status = ytm->likeStatus(videoId);
+    captureError("like status");
+    return last_error.failed ? -1 : status;
+}
+
 std::string services::Music::createPlaylist(const std::string& title, const std::string& videoId) {
     if (!ytm->isAuthenticated()) return "";
     std::string id = ytm->createPlaylist(title, videoId);
