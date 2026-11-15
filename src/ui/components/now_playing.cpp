@@ -59,6 +59,7 @@ Box ui::now_playing_album_box{-1, -1, -1, -1};
 std::vector<ui::UpNextRow> ui::now_playing_upnext;
 std::vector<std::pair<Box, int>> ui::now_playing_upnext_boxes;
 Box ui::now_playing_upnext_area{-1, -1, -1, -1};
+std::unordered_map<std::string, double> ui::lyrics_offset;
 Box ui::now_playing_progress_box{-1, -1, -1, -1};
 int ui::now_playing_upnext_scroll = 0;
 
@@ -227,8 +228,11 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         - Instrumental gaps show three dots that fill until the voice is back
         */
         const auto& ls = state->lyrics->lines;
+        // A hand shift: positive = the words come later.
+        const double shift = ui::lyrics_offset.count(ref.id) ? ui::lyrics_offset[ref.id] : 0.0;
+        const double lpos = position - shift;   // the lyrics' clock, not the progress line's
         int cur = -1;
-        for (size_t i = 0; i < ls.size(); i++) if (ls[i].first <= position + 0.15) cur = static_cast<int>(i);
+        for (size_t i = 0; i < ls.size(); i++) if (ls[i].first <= lpos + 0.15) cur = static_cast<int>(i);
 
         static std::string last_song;
         static int last_cur = -2;
@@ -262,7 +266,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         // Before the first line (the intro): three dots that fill until the
         // voice comes in, instead of a column of grey lines and nothing lit.
         if (cur < 0 && !ls.empty() && ls[0].first > 1.0) {
-            const float intro = static_cast<float>(std::clamp(position / ls[0].first, 0.0, 1.0));
+            const float intro = static_cast<float>(std::clamp(lpos / ls[0].first, 0.0, 1.0));
             Elements dots;
             for (int d = 0; d < 3; d++) {
                 const bool on = intro * 3.f > static_cast<float>(d);
@@ -276,7 +280,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         for (int i = start; i < static_cast<int>(ls.size()) && rows_left > 0; i++) {
             const double t0 = ls[i].first;
             const double t1 = i + 1 < static_cast<int>(ls.size()) ? ls[i + 1].first : std::max(duration, t0 + 4.0);
-            const float sungness = static_cast<float>(std::clamp((position - t0) / std::max(0.5, (t1 - t0) * 0.85), 0.0, 1.0));
+            const float sungness = static_cast<float>(std::clamp((lpos - t0) / std::max(0.5, (t1 - t0) * 0.85), 0.0, 1.0));
 
             if (ls[i].second.empty()) {
                 // Instrumental: three dots filling over the gap.
@@ -289,7 +293,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                     lines.push_back(hbox(std::move(dots)));
                 } else {
                     auto b = std::make_shared<Box>();
-                    ui::lyric_boxes.emplace_back(b, t0);
+                    ui::lyric_boxes.emplace_back(b, t0 + shift);
                     lines.push_back(text("\u2022 \u2022 \u2022") | color(i < cur ? sung : ahead) | reflect(*b));
                 }
                 rows_left--;
@@ -321,7 +325,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                     ws.push_back(i == cur ? w | bold : w);
                 }
                 auto b = std::make_shared<Box>();
-                ui::lyric_boxes.emplace_back(b, t0);
+                ui::lyric_boxes.emplace_back(b, t0 + shift);
                 lines.push_back(hbox(std::move(ws)) | reflect(*b));
             }
             if (gap && rows_left > 0) { lines.push_back(text("")); rows_left--; }
@@ -333,6 +337,11 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // Synced lyrics fill the column; a message or plain text sits level with the cover.
     const bool synced = ours && state->lyrics->found && !state->lyrics->lines.empty();
     const bool fill = synced || lines.size() > 2;     // plain text, top down
+    if (synced && ui::lyrics_offset.count(ref.id) && ui::lyrics_offset[ref.id] != 0.0) {
+        char badge[32];
+        std::snprintf(badge, sizeof badge, "%+.1f s", ui::lyrics_offset[ref.id]);
+        lines.insert(lines.begin(), text(badge) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)));
+    }
     // Synced lines centred in their column: balanced between the cover and
     // up next, like a lyrics view, rather than flush left with a gap after.
     if (synced) for (auto& l : lines) l = hbox({ filler(), std::move(l), filler() });

@@ -19,8 +19,16 @@ struct ArtistRef {
     std::string thumbnail_large;
     std::string thumbnail_small;
 
+    // In a chart (Explore): "2.05M subscribers", the rank, and how it moved.
+    std::string subtitle;
+    std::string rank;
+    int trend = 0;      // 1 up, -1 down, 0 same
+
     static ArtistRef from_json(const nlohmann::json& j) {
         ArtistRef a;
+        a.subtitle = utils::jstr(j, "subtitle");
+        a.rank = utils::jstr(j, "rank");
+        if (j.contains("trend") && j["trend"].is_number_integer()) a.trend = j["trend"].get<int>();
 
         if (j.contains("artists") && j["artists"].is_array() && !j["artists"].empty()) {
             const auto& first_artist = j["artists"].front();

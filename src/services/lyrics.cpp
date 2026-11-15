@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <cctype>
 #include <cmath>
 #include <regex>
 #include <sstream>
@@ -74,7 +75,21 @@ services::Lyrics parse(const nlohmann::json& j) {
 }
 
 services::Lyrics services::fetchLyrics(const std::string& title, const std::string& artist, double duration) {
-    const std::string t = bareTitle(title);
+    /* Music videos are titled "Artist - Title": cutting at " - " left the
+    artist's name as the title ("Therapie TAXI - SALOP(E)" looked up
+    "Therapie TAXI"). The artist in front goes first, then the rest. */
+    std::string name = title;
+    for (const char* dash : {" - ", " \u2013 ", " \u2014 "}) {
+        const std::string prefix = artist + dash;
+        if (!artist.empty() && name.size() > prefix.size()) {
+            std::string head = name.substr(0, prefix.size());
+            std::string want = prefix;
+            for (auto& c : head) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (auto& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (head == want) { name = name.substr(prefix.size()); break; }
+        }
+    }
+    const std::string t = bareTitle(name);
 
     // Exact match first (title, artist, duration), then a looser search.
     std::string url = "https://lrclib.net/api/get?track_name=" + escape(t) + "&artist_name=" + escape(artist);

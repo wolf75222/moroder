@@ -2380,6 +2380,17 @@ int main(int argc, char *argv[]) {
             if (is({"\x1b[1;2B", "\x1b[1;3B", "\x1b[1;9B"}) || (np && event == Event::ArrowDown)) { player.changeVolume(-cfg.VOLUME_STEP); return true; }
         }
 
+        // Now Playing: , and . shift the lyrics earlier / later by half a second
+        // (for lyrics timed on another cut of the song).
+        if (current_state == ui::State::NOWPLAYING && (event == Event::Character(",") || event == Event::Character("."))) {
+            if (auto song = current_song()) {
+                double& off = ui::lyrics_offset[song->ref.id];
+                off += event == Event::Character(".") ? 0.5 : -0.5;
+                if (std::abs(off) < 0.01) off = 0;
+            }
+            return true;
+        }
+
         // m (KEY_MUTE): mute / unmute.
         if(Config::isKey(event, cfg.KEY_MUTE)) {
             toggle_mute();
@@ -2611,6 +2622,7 @@ int main(int argc, char *argv[]) {
             row("\uf03a",                     "queue (click again: back)"),
             row("home / library again",   "refresh"),
             row("lyrics",                 "click a line: jump there"),
+            row(", .",                    "now playing: lyrics earlier / later"),
             row("queue",                  "drag a row to move it"),
             text(""),
             hbox({ text("  "), text("\u21e7 = shift or \u2325 option") | dim }),

@@ -1,4 +1,5 @@
 #include "../../include/ytm/parsers.hpp"
+#include <cstdio>
 
 #include <algorithm>
 #include <cstdint>
@@ -704,6 +705,12 @@ json mixedContent(const json& rows) {
                     mood["title"] = label;
                     mood["playlistId"] = "mood:" + params;
                     mood["thumbnails"] = json::array();
+                    // Its stripe colour (ARGB), as "#rrggbb" in author: moods have none.
+                    if (const json* c = nav(nb, {"solid", "leftStripeColor"}); c && c->is_number()) {
+                        char hex[8];
+                        std::snprintf(hex, sizeof hex, "#%06x", static_cast<unsigned>(c->get<uint64_t>() & 0xFFFFFF));
+                        mood["author"] = std::string(hex);
+                    }
                     contents.push_back(mood);
                     continue;
                 }
@@ -738,7 +745,23 @@ json mixedContent(const json& rows) {
                     }
 
                 } else if ((data = nav(result, {MRLIR}))) {
-                    contents.push_back(songFlat(*data));
+                    // A chart's artist row (Explore > Charts > Top artists): rank and trend kept.
+                    const std::string pt = str(nav(data, {"navigationEndpoint", "browseEndpoint", "browseEndpointContextSupportedConfigs",
+                                                          "browseEndpointContextMusicConfig", "pageType"}));
+                    if (pt == "MUSIC_PAGE_TYPE_ARTIST") {
+                        json a = json::object();
+                        a["resultType"] = "artist";
+                        a["browseId"] = str(nav(data, {"navigationEndpoint", "browseEndpoint", "browseId"}));
+                        a["title"] = str(nav(data, {"flexColumns", 0, "musicResponsiveListItemFlexColumnRenderer", "text", "runs", 0, "text"}));
+                        a["subtitle"] = str(nav(data, {"flexColumns", 1, "musicResponsiveListItemFlexColumnRenderer", "text", "runs", 0, "text"}));
+                        a["thumbnails"] = navJson(data, THUMBNAILS);
+                        a["rank"] = str(nav(data, {"customIndexColumn", "musicCustomIndexColumnRenderer", "text", "runs", 0, "text"}));
+                        const std::string icon = str(nav(data, {"customIndexColumn", "musicCustomIndexColumnRenderer", "icon", "iconType"}));
+                        a["trend"] = icon.find("UP") != std::string::npos ? 1 : icon.find("DOWN") != std::string::npos ? -1 : 0;
+                        contents.push_back(a);
+                    } else {
+                        contents.push_back(songFlat(*data));
+                    }
 
                 } else if ((data = nav(result, {MMRIR}))) {
                     contents.push_back(episode(*data));

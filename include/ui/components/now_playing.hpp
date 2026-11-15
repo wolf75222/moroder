@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <unordered_map>
+
 #include "../../services/player.hpp"
 #include <ftxui/dom/elements.hpp>
 #include <memory>
@@ -33,6 +35,10 @@ extern std::vector<std::pair<ftxui::Box, int>> now_playing_upnext_boxes;
 extern ftxui::Box now_playing_upnext_area;
 extern ftxui::Box now_playing_progress_box;  // its progress line: click / drag to seek   // the column: the wheel scrolls it
 extern int now_playing_upnext_scroll;        // rows scrolled past
+
+// Lyrics shifted by hand (, and . in Now Playing), seconds, per track id:
+// some lyrics on lrclib are timed for another cut of the song.
+extern std::unordered_map<std::string, double> lyrics_offset;
 
 ftxui::Element renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height);
 

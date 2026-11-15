@@ -281,7 +281,11 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             continue;
         }
 
-        option.transform = [item, focused, selected, index](const EntryState& state) {
+        // A chart's artist: its rank and how it moved, like YouTube Music's.
+        const auto* ranked = std::get_if<music::ArtistRef>(&result.data);
+        const std::string rank = ranked ? ranked->rank : "";
+        const int trend = ranked ? ranked->trend : 0;
+        option.transform = [item, focused, selected, index, rank, trend](const EntryState& state) {
             // Report the focused tile, for the context menu and prefetch.
             if (state.focused && *focused && selected) *selected = index;
             Element thumb;
@@ -292,7 +296,14 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
                 thumb = image_view(ui::cover(item.image_url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             }
 
+            Element rank_col = rank.empty() ? emptyElement() : hbox({
+                text(trend > 0 ? "\u25b2" : trend < 0 ? "\u25bc" : "\u2022")
+                    | color(trend > 0 ? Color::RGB(46, 160, 67) : trend < 0 ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text(rank) | align_right | size(WIDTH, EQUAL, 3) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                text("  "),
+            }) | vcenter;
             return hbox({
+                rank_col,
                 ui::coverHit(thumb),
                 text("  "),
                 vbox({
