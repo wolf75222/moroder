@@ -16,6 +16,20 @@ ftxui::Component ui::SearchBar(SearchBarData* data) {
     option.multiline = false;
 
     option.transform = [data](const InputState& state) {
+        /* FTXUI draws the placeholder centred in its frame: in a narrow window
+        both ends went ("rch songs, albums, artists, podca"). Drawn here from
+        the left instead, the longest wording that fits the bar's last width.
+        */
+        if (state.is_placeholder) {
+            static const char* const wordings[] = { "Search songs, albums, artists, podcasts", "Search songs, albums, artists", "Search" };
+            const int room = data->box.x_max - data->box.x_min - 6;   // the bar minus its icon and margins
+            const char* ph = wordings[2];
+            for (const char* w : wordings) {
+                if (room <= 0 || static_cast<int>(std::string(w).size()) <= room) { ph = w; break; }
+            }
+            return text(ph) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | xflex | frame;
+        }
+
         Element e = state.element;
 
         if (!data->value.empty())

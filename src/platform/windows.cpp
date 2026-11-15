@@ -98,6 +98,25 @@ int terminalColumns() {
     return 80;
 }
 
+// CONSOLE_FONT_INFOEX and GetCurrentConsoleFontEx sit behind NOGDI in the
+// headers (kept on project-wide: GDI's RGB macro clashes with FTXUI's).
+struct ConsoleFontInfoEx {
+    ULONG cbSize;
+    DWORD nFont;
+    COORD dwFontSize;
+    UINT FontFamily;
+    UINT FontWeight;
+    WCHAR FaceName[32];   // LF_FACESIZE
+};
+extern "C" __declspec(dllimport) BOOL WINAPI GetCurrentConsoleFontEx(HANDLE, BOOL, ConsoleFontInfoEx*);
+
+std::string consoleFontName() {
+    ConsoleFontInfoEx info{};
+    info.cbSize = sizeof(info);
+    if (!GetCurrentConsoleFontEx(GetStdHandle(STD_OUTPUT_HANDLE), FALSE, &info)) return {};
+    return narrow(info.FaceName);
+}
+
 int shell(const std::string& command_line, std::string* out, bool merge_stderr) {
     // cmd.exe needs the whole line quoted once more when it starts with a quote.
     const std::wstring cmd = L"\"" + wide(command_line + (merge_stderr ? " 2>&1" : "")) + L"\"";

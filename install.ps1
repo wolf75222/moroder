@@ -146,6 +146,15 @@
                     })
                 }
                 $Profile | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Fragment "moroder.json") -Encoding UTF8
+                # moroder.exe started in a console window of its own (where the
+                # old console is the default terminal): the window's settings key
+                # is the program's path, "\" as "_". Moroder sees the Nerd Font
+                # there and shows its icons; other console windows are untouched.
+                $ConsoleKey = "HKCU:\Console\" + ((Join-Path $Prefix "moroder.exe") -replace "\\", "_")
+                if (-not (Test-Path $ConsoleKey)) { New-Item -Path $ConsoleKey -Force | Out-Null }
+                New-ItemProperty -Path $ConsoleKey -Name "FaceName" -Value "CaskaydiaMono Nerd Font Mono" -PropertyType String -Force | Out-Null
+                New-ItemProperty -Path $ConsoleKey -Name "FontFamily" -Value 54 -PropertyType DWord -Force | Out-Null
+                New-ItemProperty -Path $ConsoleKey -Name "FontWeight" -Value 400 -PropertyType DWord -Force | Out-Null
                 Ok "Icons" "CaskaydiaMono Nerd Font + a Moroder profile in Windows Terminal"
             }
 

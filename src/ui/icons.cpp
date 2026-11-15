@@ -1,5 +1,6 @@
 #include "../../include/ui/icons.hpp"
 #include "../../include/config/config.hpp"
+#include "../../include/utils/platform.hpp"
 
 #include <ftxui/dom/node.hpp>
 #include <ftxui/screen/screen.hpp>
@@ -25,12 +26,18 @@ const std::unordered_map<std::string, std::string>& table() {
             {0xF07C, "▸"}, {0xF03A, "≡"}, {0xF1BE, "◉"}, {0xF007, "●"}, {0xF1DA, "↺"},
             {0xF002, "⌕"}, {0xF4E2, "⌂"}, {0xF14E, "◎"}, {0xF02E, "▤"}, {0xF16A, "►"},
             {0xF05D, "✓"}, {0xEA87, "✗"},
+            {0xF04B2, "◷"},                                                             // sleep timer (Material Design range)
         };
         std::unordered_map<std::string, std::string> m;
         for (const auto& [cp, plain] : pairs) {
             std::string utf8;
             if (cp < 0x10000) {
                 utf8 += static_cast<char>(0xE0 | (cp >> 12));
+                utf8 += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                utf8 += static_cast<char>(0x80 | (cp & 0x3F));
+            } else {
+                utf8 += static_cast<char>(0xF0 | (cp >> 18));
+                utf8 += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
                 utf8 += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
                 utf8 += static_cast<char>(0x80 | (cp & 0x3F));
             }
@@ -41,11 +48,91 @@ const std::unordered_map<std::string, std::string>& table() {
     return t;
 }
 
-// A private-use glyph (U+E000..U+F8FF, three UTF-8 bytes EE/EF ..).
+/* Windows' own console window, not a terminal app inside it: those say so,
+Windows Terminal (WT_SESSION), Warp, VS Code, WezTerm, Hyper... (TERM_PROGRAM),
+Alacritty, mintty, MSYS2 (TERM), ConEmu (ConEmuPID). Nothing set: conhost.
+*/
+bool consoleWindow() {
+#ifdef _WIN32
+    static const bool console = [] {
+        if (!platform::isTerminal(1)) return false;
+        for (const char* var : { "WT_SESSION", "TERM_PROGRAM", "TERM", "ConEmuPID" }) {
+            const char* v = std::getenv(var);
+            if (v && *v) return false;
+        }
+        return true;
+    }();
+    return console;
+#else
+    return false;
+#endif
+}
+
+// A private-use glyph: U+E000..U+F8FF (three UTF-8 bytes EE/EF ..) or, for
+// Nerd Fonts' Material Design icons, U+F0000..U+FFFFF (four bytes F3 B0-BF ..).
 bool privateUse(const std::string& s) {
+    if (s.size() == 4)
+        return static_cast<unsigned char>(s[0]) == 0xF3 && static_cast<unsigned char>(s[1]) >= 0xB0;
     return s.size() == 3 && (static_cast<unsigned char>(s[0]) == 0xEE || static_cast<unsigned char>(s[0]) == 0xEF) &&
            !(static_cast<unsigned char>(s[0]) == 0xEF && static_cast<unsigned char>(s[1]) >= 0xA4);   // >= U+F900: not PUA
 }
+
+/* The Windows console's own fonts (Consolas, Lucida Console) and no font
+fallback to count on: the symbols, partial blocks, heavy and rounded lines
+and braille Moroder draws came out as boxes. Each becomes one of the
+characters both fonts have (the old PC set: ─│┌ ═║╔ ▀▄█▌ ♪♥►○•≡↔∞...).
+*/
+const std::unordered_map<std::string, std::string>& consoleTable() {
+    static const std::unordered_map<std::string, std::string> t = {
+        // symbols and icons
+        {"♡", "♥"}, {"↻", "∞"}, {"↺", "←"}, {"⇄", "↔"}, {"⌕", "○"}, {"▤", "≡"}, {"◎", "◙"},
+        {"◉", "•"}, {"●", "•"}, {"▶", "►"}, {"▸", "►"}, {"▾", "▼"}, {"▪", "■"}, {"□", "■"},
+        {"✓", "√"}, {"✗", "x"}, {"✎", "*"}, {"⧉", "="}, {"↗", "→"}, {"↯", "♦"}, {"◷", "z"},
+        {"⇧", "^"}, {"⌥", "+"}, {"⌫", "←"}, {"‖", "║"}, {"−", "-"}, {"\xEF\xBF\xBD", "?"},
+        // rounded corners, heavy and half lines
+        {"╭", "┌"}, {"╮", "┐"}, {"╰", "└"}, {"╯", "┘"},
+        {"━", "═"}, {"┃", "║"}, {"┏", "╔"}, {"┓", "╗"}, {"┗", "╚"}, {"┛", "╝"},
+        {"┣", "╠"}, {"┫", "╣"}, {"┳", "╦"}, {"┻", "╩"}, {"╋", "╬"}, {"╏", "║"},
+        {"╴", "─"}, {"╶", "─"}, {"╵", "│"}, {"╷", "│"}, {"╸", "═"}, {"╺", "═"}, {"╹", "║"}, {"╻", "║"},
+        {"⎺", "▀"}, {"⎻", "─"}, {"⎼", "─"}, {"⎽", "▄"}, {"⎢", "│"}, {"⎥", "│"},
+        // partial blocks and quadrants
+        {"▁", "─"}, {"▂", "▄"}, {"▃", "▄"}, {"▅", "▄"}, {"▆", "█"}, {"▇", "█"},
+        {"▏", "▌"}, {"▎", "▌"}, {"▍", "▌"}, {"▋", "▌"}, {"▊", "█"}, {"▉", "█"},
+        {"▖", "▄"}, {"▗", "▄"}, {"▘", "▀"}, {"▝", "▀"}, {"▚", "▀"}, {"▞", "▀"},
+        {"▙", "█"}, {"▛", "█"}, {"▜", "█"}, {"▟", "█"},
+        // spinner: braille frames to a turning line
+        {"⠋", "|"}, {"⠙", "/"}, {"⠹", "-"}, {"⠸", "\\"}, {"⠼", "|"}, {"⠴", "/"}, {"⠦", "-"}, {"⠧", "\\"}, {"⠇", "|"}, {"⠏", "/"},
+    };
+    return t;
+}
+
+class ConsoleGlyphs : public ftxui::Node {
+public:
+    explicit ConsoleGlyphs(ftxui::Element child) : Node(ftxui::Elements{std::move(child)}) {}
+
+    void ComputeRequirement() override {
+        children_[0]->ComputeRequirement();
+        requirement_ = children_[0]->requirement();
+    }
+
+    void SetBox(ftxui::Box box) override {
+        Node::SetBox(box);
+        children_[0]->SetBox(box);
+    }
+
+    void Render(ftxui::Screen& screen) override {
+        children_[0]->Render(screen);
+        const auto& t = consoleTable();
+        for (int y = box_.y_min; y <= box_.y_max; ++y) {
+            for (int x = box_.x_min; x <= box_.x_max; ++x) {
+                std::string& c = screen.CellAt(x, y).character;
+                if (c.size() < 2) continue;
+                auto it = t.find(c);
+                if (it != t.end()) c = it->second;
+            }
+        }
+    }
+};
 
 class PlainIcons : public ftxui::Node {
 public:
@@ -85,7 +172,14 @@ bool ui::plainIcons() {
         if (mode == "plain") return true;
         if (mode == "nerd") return false;
 #ifdef _WIN32
-        return true;      // Windows Terminal's default font has no Nerd Font glyphs
+        // The console window set to a Nerd Font (the installer does it for
+        // moroder.exe started on its own): its icons. Elsewhere plain:
+        // Windows Terminal's default font has no Nerd Font glyphs.
+        if (consoleWindow()) {
+            const std::string font = platform::consoleFontName();
+            if (font.find("Nerd Font") != std::string::npos || font.find(" NF") != std::string::npos) return false;
+        }
+        return true;
 #else
         return false;
 #endif
@@ -93,7 +187,18 @@ bool ui::plainIcons() {
     return plain;
 }
 
+bool ui::consoleGlyphs() {
+    static const bool on = [] {
+        if (const char* env = std::getenv("MORODER_GLYPHS")) return std::string(env) == "console";
+        // Nerd Font icons: the console has been given a Nerd Font, which has
+        // every one of these characters too.
+        return consoleWindow() && plainIcons();
+    }();
+    return on;
+}
+
 ftxui::Element ui::withIcons(ftxui::Element view) {
-    if (!plainIcons()) return view;
-    return std::make_shared<PlainIcons>(std::move(view));
+    if (plainIcons()) view = std::make_shared<PlainIcons>(std::move(view));
+    if (consoleGlyphs()) view = std::make_shared<ConsoleGlyphs>(std::move(view));
+    return view;
 }

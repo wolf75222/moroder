@@ -9,12 +9,14 @@
 #include "ftxui-grid-container/grid-container.hpp"
 #include "../../../include/ui/cover_cache.hpp"
 #include "../../../include/ui/viewport.hpp"
+#include "../../../include/ui/fit_text.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
 #include <ftxui/screen/terminal.hpp>
+#include <algorithm>
 #include <type_traits>
 #include <string>
 
@@ -515,12 +517,12 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                 vbox({
                     hbox({
                         now ? text("\uf028  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : emptyElement(),
-                        text(top_cap) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
+                        ui::fitText(top_cap) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
                                        : s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
                                        : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                                        : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
                     }),
-                    text(bottom_cap) | (s.focused
+                    ui::fitText(bottom_cap) | (s.focused
                         ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY))
                         : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                 }) | flex,
@@ -789,7 +791,8 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
     from the track playing. */
     auto view = std::make_shared<ui::ViewportState>();
     view->anchor = std::max(0, std::min(state->queue_position + 1, child_count - 1));
-    auto queue_wrapper = Renderer(queue_container, [thumbnail_url, queue_container, view] {
+    auto page = std::make_shared<Box>();
+    auto queue_wrapper = Renderer(queue_container, [thumbnail_url, queue_container, view, page] {
         const int n = static_cast<int>(queue_container->ChildCount());
         Elements rows;
         std::vector<int> indices;
@@ -799,20 +802,29 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
             rows.push_back(queue_container->ChildAt(i)->Render());
             indices.push_back(i);
         }
+        /* The cover was always 60 x 30 beside a list of 30 or more: in an
+        80-column window that is wider than the page, and the list went off
+        its right edge. It takes what the list leaves (the page's width from
+        the last frame), and goes when there is not room for a useful one.
+        */
+        const int width = page->x_max > page->x_min ? page->x_max - page->x_min + 1 : ftxui::Terminal::Size().dimx - 32;
+        const int cover_w = std::clamp((width - 34) / 2 * 2, 0, 60);
+        Element cover = cover_w < 16 ? emptyElement()
+            : vbox({
+                filler(),
+                image_view(ui::cover(thumbnail_url)) | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_w / 2),
+                filler()
+            });
         return hbox({
             filler(),
-            vbox({
-                filler(),
-                image_view(ui::cover(thumbnail_url)) | size(WIDTH, EQUAL, 60) | size(HEIGHT, EQUAL, 30),
-                filler()
-            }),
+            cover,
             filler(),
             vbox({
                 text(" "),
                 text(" "),
                 ui::viewport(std::move(rows), std::move(indices), active, view.get()) | yflex | size(WIDTH, ftxui::GREATER_THAN, 30),
             }) | yflex,
-        }) | yflex;
+        }) | yflex | reflect(*page);
     });
 
     main_content->Add(queue_wrapper);
@@ -974,11 +986,14 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         ContentEntry& head = main_content_items.back();
         head.category = signature;
 
-        auto pill = [](const std::string& label, std::function<void()> fn) {
+        // In a narrow window (about 80 columns) the shorter label: the full
+        // ones didn't fit beside the cover and were cut inside their border.
+        auto pill = [](const std::string& label, std::function<void()> fn, const std::string& narrow = "") {
             ButtonOption opt;
             opt.on_click = [fn = std::move(fn)] { if (!ui::suppress_click) fn(); };
-            opt.transform = [label](const EntryState& s) {
-                auto e = text(" " + label + " ") | borderRounded;
+            opt.transform = [label, narrow](const EntryState& s) {
+                const std::string& shown = !narrow.empty() && ftxui::Terminal::Size().dimx < 84 ? narrow : label;
+                auto e = text(" " + shown + " ") | borderRounded;
                 return s.focused ? e | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY))
                                  : e | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
             };
@@ -988,7 +1003,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         auto actions = Container::Horizontal({
             pill("\uf04b  Play", on_play_all),
             Renderer([] { return text("  "); }),
-            pill("\uf067  Add to queue", on_queue_all),
+            pill("\uf067  Add to queue", on_queue_all, "\uf067  Queue"),
         });
 
         const std::string title = playlist->ref.title;
@@ -1019,14 +1034,14 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                     text("   "),
                     vbox({
                         text(kind) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
-                        text(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                        ui::fitText(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                         hbox({
-                            text(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                            ui::fitText(sub + count) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                             busy ? hbox({ text("  "), spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }) : emptyElement(),
                         }),
                         filler(),
                         actions->Render(),
-                    }),
+                    }) | flex_shrink,   // a narrow window: the title gives way ("…"), not the window's edge
                 }),
                 text(" "),
             });
@@ -1073,11 +1088,11 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                 ui::coverHit(thumb),
                 text("  "),
                 vbox({
-                    text(top) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
+                    ui::fitText(top) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
                                : s.focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold
                                : hover ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))
                                            : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))),
-                    text(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
+                    ui::fitText(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
                                                    : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 }) | flex,
                 // A gap a long title can't fill: it ran into the length.

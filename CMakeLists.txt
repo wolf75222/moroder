@@ -87,8 +87,12 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/orrnithogalum/ftxui-image-view-async.git
     GIT_TAG 1501b3263789b9b0a4aaa61143d78e02d48ad550
     # Caches each cover's finished cells per size (drawing a page of covers
-    # rebuilt every cell every frame). Applied once; skipped if already in.
+    # rebuilt every cell every frame), and lets the Windows console draw them
+    # with half blocks only (MORODER_COVER_BLOCKS=half: its fonts have no
+    # quadrants). Each applied once; skipped if already in.
     PATCH_COMMAND ${CMAKE_COMMAND} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-cell-cache.patch
+                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patch.cmake
+          COMMAND ${CMAKE_COMMAND} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/ftxui-image-view-half-blocks.patch
                   -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patch.cmake
     UPDATE_DISCONNECTED TRUE
 )
