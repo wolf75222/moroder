@@ -133,12 +133,54 @@ const std::vector<std::pair<std::string, std::string>>& ui::chartCountries() {
     };
     return list;
 }
+std::string ui::more_focus;
+std::function<void(const std::string&)> ui::open_more;
 ftxui::Element ui::sectionTitle(const std::string& title, bool more) {
     using namespace ftxui;
     if (!more) return hbox({ text(" "), text(title) });
     auto& slot = ui::more_boxes.emplace_back(Box{}, title);
-    return hbox({ text(" "), hbox({ text(title), text("  \uf054") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) }) | reflect(slot.first) });
+    const bool lit = ui::more_focus == title;
+    return hbox({ text(" "), hbox({
+        text(title) | (lit ? bold : nothing) | (lit ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : nothing),
+        text("  \uf054") | color(lit ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+    }) | reflect(slot.first) });
 }
+
+/* A shelf whose title opens a "More" page: up past its top row lands on the
+title (lit), enter opens it, down goes back to the row, up again moves on. */
+class MoreLinkBase : public ftxui::ComponentBase {
+public:
+    MoreLinkBase(ftxui::Component inner, std::string title, const bool* more) : title_(std::move(title)), more_(more) { Add(std::move(inner)); }
+
+    ftxui::Element OnRender() override {
+        if (!Focused() && ui::more_focus == title_) ui::more_focus.clear();
+        return ChildAt(0)->Render();
+    }
+
+    bool OnEvent(ftxui::Event e) override {
+        using ftxui::Event;
+        const bool on_title = ui::more_focus == title_;
+        if (on_title && !e.is_mouse() && e != Event::Custom) {
+            if (e == Event::Return) { ui::more_focus.clear(); if (ui::open_more) ui::open_more(title_); return true; }
+            if (e == Event::ArrowDown) { ui::more_focus.clear(); return true; }
+            if (e == Event::ArrowUp) { ui::more_focus.clear(); return false; }      // on to the shelf above
+            if (e == Event::ArrowLeft || e == Event::ArrowRight) return true;
+            ui::more_focus.clear();
+        }
+        if (on_title && e.is_mouse() && e.mouse().motion == ftxui::Mouse::Pressed) ui::more_focus.clear();
+        if (ChildAt(0)->OnEvent(e)) return true;
+        if (e == Event::ArrowUp && *more_ && Focused()) { ui::more_focus = title_; return true; }
+        return false;
+    }
+
+private:
+    std::string title_;
+    const bool* more_;
+};
+static ftxui::Component MoreLink(ftxui::Component inner, std::string title, const bool* more) {
+    return ftxui::Make<MoreLinkBase>(std::move(inner), std::move(title), more);
+}
+
 ftxui::Element ui::coverHit(ftxui::Element cover) {
     return std::move(cover) | ftxui::reflect(ui::cover_hit_boxes.emplace_back());
 }
@@ -1155,6 +1197,9 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         // The tab row keeps its selection across rebuilds.
         int tab_selected = 0;
         if (main_content_items.size() > 1 && main_content_items[1].category == "__explore_tabs__") tab_selected = main_content_items[1].selected;
+        // Was the page itself being browsed (not its tabs)? Then a refresh stays in it.
+        bool in_page = false;
+        for (size_t i = 2; i < main_content_items.size(); i++) in_page = in_page || main_content_items[i].focused;
 
         main_content_items.clear();
         main_content->DetachAllChildren();
@@ -1222,10 +1267,10 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 const size_t per_row = static_cast<size_t>(moods_per_row);
                 auto grid = MoodGrid(shelf, on_press, state->explore_tab == "FEmusic_explore" ? 4 * per_row : 0, moods_per_row);
                 const std::string heading = category;
-                const bool more = state->explore_tab == "FEmusic_explore" && state->explore_more.count(category);
-                item.component = MouseGate(Renderer(grid, [grid, heading, more] {
-                    return vbox({ text(""), text(""), ui::sectionTitle(heading, more), text(""), grid->Render() });
-                }), item.shown);
+                const bool* more = &item.carousel_data.more;
+                item.component = MouseGate(MoreLink(Renderer(grid, [grid, heading, more] {
+                    return vbox({ text(""), text(""), ui::sectionTitle(heading, *more), text(""), grid->Render() });
+                }), category, more), item.shown);
             } else if ((state->explore_tab == "FEmusic_new_releases" || state->explore_tab == "FEmusic_new_releases_albums"
                         || state->explore_tab == "FEmusic_new_releases_videos") && category == state->explore_order.front()) {
                 item.category = "__explore_wall__" + category;
@@ -1235,7 +1280,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 ui::getCarouselDataFrom(state->explore, category, &item.carousel_data);   // its covers and captions
                 item.grid_data.entries = item.carousel_data.entries;
                 item.grid_data.is_loading = false;
-                item.component = MouseGate(Grid(&item.grid_data, &item.selected, &item.focused, -wrap_cols, on_press, ui::GridStyle::Tile), item.shown);
+                item.component = MouseGate(MoreLink(Grid(&item.grid_data, &item.selected, &item.focused, -wrap_cols, on_press, ui::GridStyle::Tile), category, &item.grid_data.more), item.shown);
             } else if (rankedArtists(shelf)) {
                 // Ranked, four rows per column, like YouTube Music's chart.
                 item.category = "__explore_ranked__" + category;
@@ -1252,15 +1297,20 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                     }
                 }
                 item.grid_data.is_loading = false;
-                item.component = MouseGate(Grid(&item.grid_data, &item.selected, &item.focused, 4, on_press), item.shown);
+                item.component = MouseGate(MoreLink(Grid(&item.grid_data, &item.selected, &item.focused, 4, on_press), category, &item.grid_data.more), item.shown);
             } else {
-                item.component = MouseGate(Carousel(&item.carousel_data, &item.selected, &item.focused, on_press), item.shown);
+                item.component = MouseGate(MoreLink(Carousel(&item.carousel_data, &item.selected, &item.focused, on_press), category, &item.carousel_data.more), item.shown);
             }
             main_content->Add(item.component);
         }
 
-        // On the first shelf, or on the tabs while there is none yet.
-        if (!ui::search_has_focus) main_content_items[main_content_items.size() > 2 ? 2 : 1].component->TakeFocus();
+        /* Where the keys start: on the tabs (left / right switch them, down
+        goes into the page), as in the Library, and they stay there while a
+        tab loads. A mood's or a "More" page starts on its first shelf. */
+        if (!ui::search_has_focus) {
+            const bool sub_page = !state->explore_title.empty() || in_page;
+            main_content_items[sub_page && main_content_items.size() > 2 ? 2 : 1].component->TakeFocus();
+        }
     }
 
     for (auto& item : main_content_items) {
@@ -1271,8 +1321,10 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         const bool top = state->explore_title.empty();
         item.carousel_data.more = top && state->explore_more.count(item.category);
         const std::string plain = item.category.rfind("__explore_ranked__", 0) == 0 ? item.category.substr(18)
-                                : item.category.rfind("__explore_wall__", 0) == 0 ? item.category.substr(16) : item.category;
+                                : item.category.rfind("__explore_wall__", 0) == 0 ? item.category.substr(16)
+                                : item.category.rfind("__explore_moods__", 0) == 0 ? item.category.substr(17) : item.category;
         item.grid_data.more = top && state->explore_more.count(plain);
+        if (plain != item.category) item.carousel_data.more = item.grid_data.more;
         item.focused = item.component->Focused();
     }
 }

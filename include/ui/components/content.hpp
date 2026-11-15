@@ -67,6 +67,10 @@ extern ftxui::Box charts_country_box;
 const std::vector<std::pair<std::string, std::string>>& chartCountries();
 // A section title; with " ›" and clickable when it has a "More" page.
 ftxui::Element sectionTitle(const std::string& title, bool more);
+// The keys reach a section's "More" link too: up from the shelf's top row
+// lands on its title (drawn lit), enter opens it. open_more is set by main.
+extern std::string more_focus;
+extern std::function<void(const std::string&)> open_more;
 ftxui::Element coverHit(ftxui::Element cover);     // pages must not take the focus from the search bar
 
 /* buildPlaylist

@@ -59,7 +59,6 @@ Box ui::now_playing_album_box{-1, -1, -1, -1};
 std::vector<ui::UpNextRow> ui::now_playing_upnext;
 std::vector<std::pair<Box, int>> ui::now_playing_upnext_boxes;
 Box ui::now_playing_upnext_area{-1, -1, -1, -1};
-std::string ui::now_playing_next;
 std::unordered_map<std::string, double> ui::lyrics_offset;
 Box ui::now_playing_progress_box{-1, -1, -1, -1};
 int ui::now_playing_upnext_scroll = 0;
@@ -115,7 +114,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     /* The track under the cover
     - Title on up to two lines, then "artist · album" (click to open them)
-    - One line: elapsed, a thin bar (click / drag to seek), the length
+    - A thin progress line (click / drag to seek), the times under its ends
     */
     auto line = [&](Element e, bool centre) {
         return centre ? hbox({ filler(), std::move(e), filler() }) : hbox({ std::move(e), filler() });
@@ -143,26 +142,25 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
             }),
         });
 
-        // One line: elapsed, the bar, the length.
-        const std::string t0 = clock(position), t1 = clock(duration);
-        const int bar_w = std::max(4, cover_w - static_cast<int>(t0.size() + t1.size()) - 2);
-        const int played = static_cast<int>(std::lround(ratio * static_cast<float>(bar_w)));
+        // A thin progress line as wide as the cover, the times under its ends.
+        const int played = static_cast<int>(std::lround(ratio * static_cast<float>(cover_w)));
         std::string done, rest;
-        for (int i = 0; i < bar_w; i++) (i < played ? done : rest) += "\u2501";
+        for (int i = 0; i < cover_w; i++) (i < played ? done : rest) += "\u2501";
         return vbox({
             text(""),
             vbox(std::move(title_rows)) | reflect(ui::now_playing_title_box),
             line(std::move(who), centre),
             text(""),
             hbox({
-                text(t0) | color(ui::GetColor(playing ? ui::MColor::TEXT_TOP_PRIMARY : ui::MColor::SEPARATOR_PRIMARY)),
-                text(" "),
-                hbox({
-                    text(done) | color(ui::GetColor(playing ? ui::MColor::ACCENT_PRIMARY : ui::MColor::TEXT_BOTTOM_SECONDARY)),
-                    text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-                }) | reflect(ui::now_playing_progress_box),
-                text(" "),
-                text(t1) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                text(done) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
+                text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+            }) | reflect(ui::now_playing_progress_box),
+            hbox({
+                text(clock(position)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                filler(),
+                text(playing ? "" : "paused") | dim,
+                filler(),
+                text(clock(duration)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
             }),
         }) | size(WIDTH, EQUAL, cover_w);
     };
@@ -213,16 +211,6 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     };
     if (room_for_next) lyrics_w = std::max(20, lyrics_w - UP_W - 2);
 
-    // What plays next: small and dim in the bottom right corner (unless the
-    // up next column already says it).
-    auto next_hint = [&](int w) -> Element {
-        if (ui::now_playing_next.empty() || !ui::now_playing_upnext.empty() || w < 16) return emptyElement();
-        return hbox({
-            filler(),
-            text("next  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-            text(utils::trimSuffix(ui::now_playing_next, w - 6, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
-        });
-    };
 
     if (no_lyrics) {
         Element centre_block = vbox({
@@ -231,7 +219,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         });
         if (page_w >= cover_w + 8 + UP_W + 6)
             centre_block = hbox({ std::move(centre_block), text("      "), up_next(height - 2) });
-        return vbox({ filler(), line(std::move(centre_block), true), filler(), hbox({ next_hint(std::min(page_w - 6, 60)), text("  ") }) }) | flex;
+        return vbox({ filler(), line(std::move(centre_block), true), filler() }) | flex;
     }
 
     // Lyrics: synced lines around the current one, or the plain text.
@@ -372,8 +360,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // up next, like a lyrics view, rather than flush left with a gap after.
     if (synced) for (auto& l : lines) l = hbox({ filler(), std::move(l), filler() });
     Element lyrics = fill
-        ? vbox({ text(""), vbox(std::move(lines)) | flex, next_hint(lyrics_w) }) | flex
-        : vbox({ filler(), vbox(std::move(lines)), filler(), next_hint(lyrics_w) }) | flex;
+        ? vbox({ text(""), vbox(std::move(lines)) | flex }) | flex
+        : vbox({ filler(), vbox(std::move(lines)), filler() }) | flex;
 
     return hbox({
         text("   "),

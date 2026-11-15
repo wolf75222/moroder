@@ -743,6 +743,16 @@ json YTMusic::getBrowse(const std::string& browseId, int limit, const std::strin
 
     json home = parse::mixedContent(*results);
 
+    // A "More" page (all new albums, all videos) is one grid with no title of
+    // its own: it takes the page's (an untitled section showed nothing).
+    const std::string page_title = str(nav(response, {"header", "musicHeaderRenderer", "title", "runs", 0, "text"}));
+    for (json& section : home) {
+        if (!section.is_object() || home.size() != 1) continue;
+        const auto t = section.find("title");
+        if ((t == section.end() || t->is_null() || (t->is_string() && t->get<std::string>().empty())) && !page_title.empty())
+            section["title"] = page_title;
+    }
+
     const json* sectionList = nav(response, SINGLE_COLUMN_TAB + SECTION);
     if (sectionList && sectionList->contains("continuations")) {
         int remaining = limit < 0 ? -1 : std::max(0, limit - static_cast<int>(home.size()));

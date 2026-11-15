@@ -3,6 +3,7 @@
 #include "../include/ui/icons.hpp"
 #include <ftxui/screen/terminal.hpp>
 #include "../include/ui/viewport.hpp"
+#include "../include/ui/see_through.hpp"
 #include "../include/services/suggest.hpp"
 #include "../include/services/scrobble.hpp"
 #include "../include/services/update.hpp"
@@ -1084,19 +1085,6 @@ int main(int argc, char *argv[]) {
             // Now Playing's "up next": a few rows after the current one, then
             // autoplay, with their queue indexes (as the queue view counts them).
             ui::now_playing_upnext.clear();
-            ui::now_playing_next.clear();
-            if (current_state == ui::State::NOWPLAYING) {
-                // The next track, for the one line under the progress.
-                std::shared_ptr<music::IStreamable> nx;
-                const auto& uq0 = player.state.user_queue;
-                const int qp = player.state.queue_position;
-                if (qp + 1 >= 0 && static_cast<size_t>(qp + 1) < uq0.size()) nx = uq0[qp + 1];
-                else if (player.state.autoplay && !player.state.radio_queue.empty()) nx = player.state.radio_queue.front();
-                if (auto s = std::dynamic_pointer_cast<music::Song>(nx))
-                    ui::now_playing_next = s->ref.title + (s->ref.artists.empty() ? "" : " - " + s->ref.artists[0].name);
-                else if (auto e = std::dynamic_pointer_cast<music::Episode>(nx))
-                    ui::now_playing_next = e->ref.title;
-            }
             {
                 static const music::IStreamable* last_current = nullptr;   // a new track: up next from the top
                 if (player.state.current.get() != last_current) { last_current = player.state.current.get(); ui::now_playing_upnext_scroll = 0; }
@@ -1613,6 +1601,29 @@ int main(int argc, char *argv[]) {
         screen.PostEvent(Event::Custom);
     };
 
+    // Explore: a section's "More" page (the full chart is a playlist; the rest,
+    // a page of Explore under that title). From a click on its title or the keys.
+    ui::open_more = [&](const std::string& title) {
+        std::string id;
+        {
+            std::lock_guard lock(player.state_mutex);
+            auto it = player.state.explore_more.find(title);
+            if (it != player.state.explore_more.end()) id = it->second;
+        }
+        if (id.rfind("VL", 0) == 0) {
+            music::PlaylistRef ref;
+            ref.id = id.substr(2);
+            ref.title = title;
+            player.openPlaylist(ref);
+            current_state = ui::State::PLAYLIST;
+            main_content_items.clear();
+            main_content->DetachAllChildren();
+            main_content->Add(Renderer([] { return emptyElement(); }));
+        } else if (!id.empty()) {
+            player.getExplore(id, "", title);
+        }
+    };
+
     auto open_album_page = [&](const music::AlbumRef& album) {
         player.openAlbum(album);
         current_state = ui::State::PLAYLIST;
@@ -1927,24 +1938,7 @@ int main(int argc, char *argv[]) {
                 if (current_state == ui::State::EXPLORE) {
                     for (const auto& [b, title] : ui::more_boxes) {
                         if (!in(b)) continue;
-                        std::string id;
-                        {
-                            std::lock_guard lock(player.state_mutex);
-                            auto it = player.state.explore_more.find(title);
-                            if (it != player.state.explore_more.end()) id = it->second;
-                        }
-                        if (id.rfind("VL", 0) == 0) {
-                            music::PlaylistRef ref;
-                            ref.id = id.substr(2);
-                            ref.title = title;
-                            player.openPlaylist(ref);
-                            current_state = ui::State::PLAYLIST;
-                            main_content_items.clear();
-                            main_content->DetachAllChildren();
-                            main_content->Add(Renderer([] { return emptyElement(); }));
-                        } else if (!id.empty()) {
-                            player.getExplore(id, "", title);
-                        }
+                        ui::open_more(title);
                         return true;
                     }
                 }
@@ -2848,7 +2842,7 @@ int main(int argc, char *argv[]) {
         // the top right instead.
         if (!playback_bar_data.notice.empty() && playback_bar_data.box_progress.y_min < 0) {
             Element toast = hbox({ text(" "), text(playback_bar_data.notice) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)), text(" ") })
-                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bgcolor(Color::RGB(22, 22, 26)) | clear_under;
+                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | ui::seeThrough;
             base = dbox({ base, vbox({ filler() | size(HEIGHT, EQUAL, 4), hbox({ filler(), toast, text("  ") }), filler() }) });
         }
 
@@ -2894,7 +2888,7 @@ int main(int argc, char *argv[]) {
             Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W)
                 | borderStyled(BorderStyle::ROUNDED, dimc);
             // A blank cell on each side: lines of the page don't join its border.
-            list = hbox({ text(" "), list, text(" ") }) | clear_under;
+            list = hbox({ text(" "), list, text(" ") }) | ui::seeThrough;
             base = dbox({
                 base,
                 vbox({
@@ -2932,7 +2926,7 @@ int main(int argc, char *argv[]) {
                 text("  "),
                 text(std::to_string(v)) | align_right | size(WIDTH, EQUAL, 3) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 text(" "),
-            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | bgcolor(Color::RGB(20, 20, 24)) | clear_under;
+            }) | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | ui::seeThrough;
 
             constexpr int W = BAR + 12;
             const Box& vb = playback_bar_data.box_volume;
@@ -2958,35 +2952,36 @@ int main(int argc, char *argv[]) {
             for (const auto& it : ctx.items) W = std::max(W, static_cast<int>(ftxui::string_width(it.label) + ftxui::string_width(it.hint)) + 11);
             // The title fits the items' width (trimmed), it doesn't widen the menu.
             W = std::min(W, 40);
-            /* Like a native menu: a solid panel (the same on any terminal
-            background, see-through or not), grey icons, the picked row on a
-            lighter band in bold white. No title, no red. */
-            const Color panel = Color::RGB(28, 28, 33), band = Color::RGB(58, 58, 68);
+            /* The app's style: a red bar and red icon on the picked row, its
+            label bold white; the title dim on top. Under it, what the menu
+            covers shows through, darkened (see see_through.hpp): a cover
+            stays a cover, a see-through terminal stays see-through. */
+            const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
             Elements rows;
+            if (!ctx.title.empty())
+                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 5, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)), filler() }));
             for (size_t i = 0; i < ctx.items.size(); i++) {
                 const auto& it = ctx.items[i];
                 const bool on = static_cast<int>(i) == ctx.hover;
                 Element row = hbox({
+                    text(on ? "\u258e" : " ") | color(accent),
                     text(" "),
-                    text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                    text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? accent : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                     text(utils::trimSuffix(it.label, std::max(4, W - 8 - static_cast<int>(ftxui::string_width(it.hint))), "\u2026"))
                         | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
-                    text(it.hint) | color(on ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-                    text(" "),
+                    text(it.hint) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+                    text("  "),
                 });
-                if (on) row = row | bgcolor(band);
                 rows.push_back(row | reflect(ctx.boxes[i]));
             }
 
-            Element menu = vbox(std::move(rows))
+            Element menu = ui::seeThrough(vbox(std::move(rows))
                 | size(WIDTH, EQUAL, W)
-                | bgcolor(panel)
-                | borderStyled(BorderStyle::ROUNDED, Color::RGB(64, 64, 74))
-                | bgcolor(panel) | clear_under;
+                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)));
 
             // Keep it on screen near the pointer.
-            const int h = static_cast<int>(ctx.items.size()) + 2;
+            const int h = static_cast<int>(ctx.items.size()) + (ctx.title.empty() ? 0 : 1) + 2;
             const int x = std::max(0, std::min(ctx.x, screen.dimx() - W - 3));
             const int y = std::max(0, std::min(ctx.y, screen.dimy() - h - 1));
             base = dbox({
@@ -3013,12 +3008,12 @@ int main(int argc, char *argv[]) {
                        text("esc") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), text(" cancel  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) }),
             }) | size(WIDTH, EQUAL, 56)
                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-               | bgcolor(Color::RGB(20, 20, 24)) | clear_under | center;
+               | ui::seeThrough | center;
             base = dbox({ base, box });
         }
 
         if (!show_help) return base;
-        return dbox({ base, help_sheet() | bgcolor(Color::RGB(20, 20, 24)) | clear_under | center });
+        return dbox({ base, help_sheet() | ui::seeThrough | center });
     });
 
     /* Quitting must be instant and clean
