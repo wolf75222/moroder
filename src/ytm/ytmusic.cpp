@@ -730,9 +730,10 @@ json YTMusic::getHome(int limit) {
     return getBrowse("FEmusic_home", limit);
 }
 
-json YTMusic::getBrowse(const std::string& browseId, int limit) {
+json YTMusic::getBrowse(const std::string& browseId, int limit, const std::string& params) {
     json body = json::object();
     body["browseId"] = browseId;
+    if (!params.empty()) body["params"] = params;
 
     json response = sendRequest("browse", body);
 

@@ -1220,9 +1220,10 @@ void services::Player::worker_loop() {
             } else if constexpr (std::is_same_v<T, ExploreCommand>) {
                 spdlog::info("PLAYER: ExploreCommand");
                 explore_queued = false;
-                auto shelves = music_service->getExplore();
+                auto shelves = music_service->getExplore(c.browse_id, c.params);
                 const services::RequestError& err = music_service->lastError();
                 std::lock_guard lock(state_mutex);
+                if (state.explore_tab != c.browse_id) return;       // another page was asked for meanwhile
                 if (err.failed && !err.cancelled) {
                     state.flags["explore"] = Flags::Error;
                     state.errors["explore"] = { err.message, err.retryable };
@@ -1856,9 +1857,19 @@ void services::Player::getHome() {
     command_cv.notify_one();
 }
 
-void services::Player::getExplore() {
+void services::Player::getExplore(const std::string& browse_id_in, const std::string& params, const std::string& title) {
+    std::string browse_id = browse_id_in;
     {
         std::lock_guard lock(state_mutex);
+        if (browse_id.empty()) browse_id = state.explore_tab;      // the page shown: again
+        else if (browse_id != state.explore_tab || !params.empty() || title != state.explore_title) {
+            // Another page: the old one's shelves must not show under its name.
+            state.explore.clear();
+            state.explore_order.clear();
+            explore_queued = false;
+        }
+        state.explore_tab = browse_id;
+        state.explore_title = title;
         // find, not []: an absent flag would read as Ongoing (the enum's first value).
         if (auto it = state.flags.find("explore"); it != state.flags.end() && it->second == Flags::Ongoing && explore_queued) return;
         explore_queued = true;
@@ -1867,7 +1878,7 @@ void services::Player::getExplore() {
     }
     {
         std::lock_guard lock(command_mutex);
-        pushUrgent(ExploreCommand{});
+        pushUrgent(ExploreCommand{browse_id, params});
     }
     command_cv.notify_one();
 }

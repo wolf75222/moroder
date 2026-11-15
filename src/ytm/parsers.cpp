@@ -682,12 +682,31 @@ json mixedContent(const json& rows) {
             // iterator is safe in nlohmann but the compiler can't prove it.
             auto it = row.begin();
             const json& results = it.value();
-            if (!results.is_object() || !results.contains("contents")) continue;
+            // A grid (Explore's new releases, moods & genres) lists "items".
+            const char* list_key = results.is_object() && results.contains("contents") ? "contents"
+                                 : results.is_object() && results.contains("items") ? "items" : nullptr;
+            if (!list_key) continue;
 
             title = navJson(&results, CAROUSEL_TITLE + Path{"text"});
             if (title.is_null()) title = navJson(&results, CAROUSEL_STRAPLINE + Path{"text"});
+            if (title.is_null()) title = navJson(&results, Path{"header", "gridHeaderRenderer", "title", "runs", 0, "text"});
+            if (title.is_null()) title = navJson(&results, Path{"header", "musicShelfHeaderRenderer", "title", "runs", 0, "text"});
+            if (title.is_null()) title = navJson(&results, Path{"title", "runs", 0, "text"});
 
-            for (const json& result : results["contents"]) {
+            for (const json& result : results[list_key]) {
+                // A mood / genre button: a page of playlists, opened by its params.
+                if (const json* nb = nav(result, {"musicNavigationButtonRenderer"})) {
+                    const std::string params = str(nav(nb, {"clickCommand", "browseEndpoint", "params"}));
+                    const std::string label = str(nav(nb, {"buttonText", "runs", 0, "text"}));
+                    if (params.empty() || label.empty()) continue;
+                    json mood = json::object();
+                    mood["resultType"] = "playlist";
+                    mood["title"] = label;
+                    mood["playlistId"] = "mood:" + params;
+                    mood["thumbnails"] = json::array();
+                    contents.push_back(mood);
+                    continue;
+                }
                 const json* data = nav(result, {MTRIR});
 
                 if (data) {

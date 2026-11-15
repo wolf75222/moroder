@@ -69,7 +69,9 @@ private:
     };
 
     struct HomeCommand {};
-    struct ExploreCommand {};
+    struct ExploreCommand {
+        std::string browse_id, params;
+    };
     struct LibraryPlaylistsCommand {};
     struct LibraryAlbumsCommand {};
     struct LibrarySongsCommand {};
@@ -180,6 +182,8 @@ public:
         std::vector<std::string> home_order;    // shelf titles, YouTube Music's order
         std::unordered_map<std::string, std::vector<music::ApiResult>> explore;
         std::vector<std::string> explore_order;
+        std::string explore_tab = "FEmusic_explore";   // which page of Explore is shown
+        std::string explore_title;                      // a mood / genre's name, else ""
 
         /* library
         - Filled by the Library*Commands, all require the user to be logged in
@@ -457,7 +461,9 @@ private:
     std::queue<Command> command_queue;
     void pushUrgent(Command c);              // to the front (command_mutex held)
 public:
-    void getExplore();                       // the Explore page (state.explore)
+    // A page of Explore (state.explore): FEmusic_explore, FEmusic_new_releases,
+    // FEmusic_charts, FEmusic_moods_and_genres, or a mood (its params, title).
+    void getExplore(const std::string& browse_id = "", const std::string& params = "", const std::string& title = "");
 private:
     std::atomic<bool> home_queued{false};    // a HomeCommand waits: no second one
     std::atomic<bool> explore_queued{false}; // same for Explore

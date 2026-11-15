@@ -394,8 +394,8 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     return response.results;
 }
 
-std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getExplore() {
-    nlohmann::json sections = ytm->getBrowse("FEmusic_explore", 6);
+std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getExplore(const std::string& browseId, const std::string& params) {
+    nlohmann::json sections = ytm->getBrowse(browseId, 6, params);
     captureError("explore");
 
     ipc::HomeResponse response;

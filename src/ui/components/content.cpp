@@ -1001,35 +1001,61 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
 }
 
 void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content,
-                      std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry) {
+                      std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry,
+                      std::function<bool(const ftxui::Event&, const ui::ChipEntry&)> on_tab) {
     if (buildError(state, "explore", main_content_items, main_content, on_retry)) {
         return;
     }
 
     const auto ef = state->flags.find("explore");
     const bool loading = ef == state->flags.end() || ef->second == services::Player::Flags::Ongoing;
-    const std::string signature = "__explore__:" + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
+    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":"
+                                + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
 
     if (main_content_items.empty() || main_content_items.front().category != signature) {
+        // The tab row keeps its selection across rebuilds.
+        int tab_selected = 0;
+        if (main_content_items.size() > 1 && main_content_items[1].category == "__explore_tabs__") tab_selected = main_content_items[1].selected;
+
         main_content_items.clear();
         main_content->DetachAllChildren();
 
         main_content_items.push_back(ContentEntry{});
         ContentEntry& head = main_content_items.back();
         head.category = signature;
-        head.component = Renderer([loading] {
+        const std::string title = state->explore_title.empty() ? "Explore" : state->explore_title;
+        const std::string sub = state->explore_title.empty() ? "New releases, charts, moods & genres" : "Moods & genres";
+        head.component = Renderer([loading, title, sub] {
             return vbox({
                 text(" "),
                 hbox({
                     text(" "),
-                    text("Explore") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(title) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     text("   "),
                     loading ? spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : emptyElement(),
                 }),
-                hbox({ text(" "), text("New releases, what's trending, moods") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) }),
+                hbox({ text(" "), text(sub) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) }),
             });
         });
         main_content->Add(head.component);
+
+        // Tabs: YouTube Music's Explore buttons (a mood belongs to Moods & genres).
+        main_content_items.push_back(ContentEntry{});
+        ContentEntry& tabs = main_content_items.back();
+        tabs.category = "__explore_tabs__";
+        tabs.selected = tab_selected;
+        tabs.chips_data.exclusive = true;
+        const std::string on = state->explore_tab == "FEmusic_moods_and_genres_category" ? "FEmusic_moods_and_genres" : state->explore_tab;
+        std::vector<ui::ChipEntry> chips = {
+            {"FEmusic_explore", "Explore"},
+            {"FEmusic_new_releases", "New releases"},
+            {"FEmusic_charts", "Charts"},
+            {"FEmusic_moods_and_genres", "Moods & genres"},
+        };
+        for (auto& c : chips) c.enabled = c.id == on;
+        ui::setChipsData(&tabs.chips_data, chips);
+        tabs.component = Chips(&tabs.chips_data, &tabs.selected, &tabs.focused, on_tab);
+        main_content->Add(tabs.component);
 
         for (const std::string& category : state->explore_order) {
             main_content_items.push_back(ContentEntry{});
@@ -1040,11 +1066,12 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             main_content->Add(item.component);
         }
 
-        if (main_content_items.size() > 1 && !ui::search_has_focus) main_content_items[1].component->TakeFocus();
+        // On the first shelf, or on the tabs while there is none yet.
+        if (!ui::search_has_focus) main_content_items[main_content_items.size() > 2 ? 2 : 1].component->TakeFocus();
     }
 
     for (auto& item : main_content_items) {
-        if (item.category.rfind("__explore__", 0) == 0) continue;
+        if (item.category.rfind("__explore", 0) == 0) continue;
         ui::getCarouselDataFrom(state->explore, item.category, &item.carousel_data);
         item.focused = item.component->Focused();
     }

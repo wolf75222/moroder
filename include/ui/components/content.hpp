@@ -68,7 +68,8 @@ void buildPlaylist(services::Player::PlayerState* state, std::deque<ContentEntry
 // Artist page (state->open_artist): header, then one carousel per section.
 // Explore: YouTube Music's page of new albums & singles, trending, videos...
 void buildExplore(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container,
-                  std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
+                  std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry,
+                  std::function<bool(const ftxui::Event&, const ui::ChipEntry&)> on_tab);
 void buildArtist(services::Player::PlayerState* state, std::deque<ContentEntry>& items, ftxui::Component main_container,
                  std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry);
 

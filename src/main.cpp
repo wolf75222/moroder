@@ -605,6 +605,12 @@ int main(int argc, char *argv[]) {
                 queued = true;
 
             } else if constexpr (std::is_same_v<T, music::PlaylistRef>) {
+                // A mood / genre (Explore): its page of playlists, in Explore.
+                if (data.id.rfind("mood:", 0) == 0) {
+                    if (!should_queue) player.getExplore("FEmusic_moods_and_genres_category", data.id.substr(5), data.title);
+                    opened_playlist = false;
+                    return;
+                }
                 if (should_queue) {
                     auto container = make_streamable(music::Playlist{});
                     player.queue(container, false, false);
@@ -1234,6 +1240,11 @@ int main(int argc, char *argv[]) {
                     main_content->DetachAllChildren();
                     main_content->Add(Renderer([] { return emptyElement(); }));
                     screen.PostEvent(Event::Custom);
+                },
+                [&player, &cfg](const Event& event, const ui::ChipEntry& chip) {
+                    if (!Config::isKey(event, cfg.KEY_PLAY_NOW)) return false;
+                    player.getExplore(chip.id);
+                    return true;
                 });
 
         } else if(current_state == ui::State::ARTIST) {
@@ -2071,7 +2082,7 @@ int main(int argc, char *argv[]) {
                     }
                 } else if(ui::ContentEntry* e = focused_entry()) {
                     const std::string& c = e->category;
-                    const bool special = c.rfind("__library_filters__", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
+                    const bool special = c.rfind("__library_filters__", 0) == 0 || c.rfind("__explore", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
                     if(!special) {
                         const bool track = c.rfind("__track__", 0) == 0;
 
@@ -2231,7 +2242,7 @@ int main(int argc, char *argv[]) {
             if(click && handled && !search_bar->Focused()) {
                 bool navigation = sidebar->Focused();
                 if(ui::ContentEntry* e = focused_entry()) {
-                    navigation = navigation || e->category.rfind("__library_filters__", 0) == 0;
+                    navigation = navigation || e->category.rfind("__library_filters__", 0) == 0 || e->category == "__explore_tabs__";
                     const bool self_acting = e->category.rfind("__error__", 0) == 0 || e->category.rfind("__playlist__", 0) == 0;
                     if(self_acting) navigation = false, double_click = false;
                 }
