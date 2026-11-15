@@ -13,7 +13,15 @@ namespace ui {
 
 bool plainIcons();
 
-// The view with its Nerd Font glyphs swapped for plain ones when plainIcons().
+/* The Windows console window (conhost), not a terminal app: its fonts lack
+most symbols and partial blocks and it has no font fallback, so they are
+swapped for characters its fonts have, and covers are drawn with half blocks.
+MORODER_GLYPHS=console / full decides instead.
+*/
+bool consoleGlyphs();
+
+// The view with its Nerd Font glyphs swapped for plain ones when plainIcons(),
+// and, in the console window, the characters its fonts lack (consoleGlyphs()).
 ftxui::Element withIcons(ftxui::Element view);
 
 }

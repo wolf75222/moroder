@@ -31,6 +31,10 @@ fs::path homeDir();
 // Columns of the terminal on stdout, 80 when unknown.
 int terminalColumns();
 
+// The font of the console window stdout is in (Windows' own console); ""
+// elsewhere or when unknown. Under Windows Terminal it says nothing useful.
+std::string consoleFontName();
+
 /* shell
 - Runs a command line through the system shell (sh, cmd.exe), its stdout
   (and stderr when merge_stderr) into *out; returns the exit code, -1 when it

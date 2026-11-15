@@ -553,6 +553,10 @@ int services::update::uninstall() {
             std::error_code e;
             if (fs::exists(fragment, e)) { fs::remove_all(fragment, e); live.set(live.add("WT profile"), e ? State::Fail : State::Ok, e ? e.message() : "removed"); }
         }
+        // The console window settings install.ps1 gave moroder.exe (its Nerd Font).
+        std::string console_key = fs::path(bin).string();
+        for (auto& c : console_key) if (c == '\\' || c == '/') c = '_';
+        quietly("reg delete \"HKCU\\Console\\" + console_key + "\" /f");
     }
 #else
     remove("program", bin);

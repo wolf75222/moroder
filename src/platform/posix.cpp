@@ -44,6 +44,8 @@ int terminalColumns() {
     return ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 20 ? w.ws_col : 80;
 }
 
+std::string consoleFontName() { return {}; }
+
 int shell(const std::string& command_line, std::string* out, bool merge_stderr) {
     FILE* p = popen((command_line + (merge_stderr ? " 2>&1" : "")).c_str(), "r");
     if (!p) return -1;

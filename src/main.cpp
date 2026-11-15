@@ -354,6 +354,13 @@ int main(int argc, char *argv[]) {
     }
 
     detectSyncOutput();
+    // The console window's fonts have no quadrants or partial blocks: covers
+    // drawn with half blocks only (read by the image view, see icons.hpp).
+    if (ui::consoleGlyphs()) platform::setEnv("MORODER_COVER_BLOCKS", "half");
+#ifdef _WIN32
+    spdlog::info("TERMINAL: console font \"{}\", icons {}, {}", platform::consoleFontName(),
+                 ui::plainIcons() ? "plain" : "nerd", ui::consoleGlyphs() ? "console glyphs" : "full glyphs");
+#endif
     auto screen = ScreenInteractive::Fullscreen();
 
     // Mouse: click items and controls, wheel to scroll (see the handler below).
@@ -1728,6 +1735,12 @@ int main(int argc, char *argv[]) {
                     music::AlbumRef a;
                     a.id = e.playlist.id; a.title = e.playlist.title;
                     a.thumbnail_large = e.playlist.thumbnail_large; a.thumbnail_small = e.playlist.thumbnail_small;
+                    // The header's "artist •" comes from here: back / forward lost it.
+                    if (!e.playlist.author.empty()) {
+                        music::ArtistRef by;
+                        by.name = e.playlist.author;
+                        a.artists.push_back(by);
+                    }
                     player.openAlbum(a);
                 } else {
                     player.openPlaylist(e.playlist);
@@ -2818,14 +2831,18 @@ int main(int argc, char *argv[]) {
             row("swipe cover",            "now playing: skip tracks"),
             row("volume",                 "click: slider, wheel: level"),
             row("bar",                    "click or drag the line to seek"),
-            row("title / dbl-click cover", "now playing"),
+            row("title",                  "now playing (dbl-click a cover too)"),
             row("\uf03a",                     "queue (click again: back)"),
-            row("home / library again",   "refresh"),
+            row("home, library",          "click again: refresh"),
             row("lyrics",                 "click a line: jump there"),
             row(", .",                    "now playing: lyrics earlier / later"),
             row("queue",                  "drag a row to move it"),
             text(""),
+#ifdef _WIN32
+            hbox({ text("  "), text("\u21e7 = shift or alt") | dim }),
+#else
             hbox({ text("  "), text("\u21e7 = shift or \u2325 option") | dim }),
+#endif
         });
 
         return vbox({

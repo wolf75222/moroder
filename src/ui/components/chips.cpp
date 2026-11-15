@@ -7,6 +7,7 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
 
@@ -56,7 +57,10 @@ ftxui::Component ui::Chips(ChipsData* data, int* selected, bool* focused, std::f
         Element line = (chip.enabled || active)
             ? text(under) | color(chip.enabled ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
             : text(std::string(utils::utf8Length(name), ' '));
-        return hbox({ text("  "), vbox({ text(""), label, line }), text("  ") });
+        // A narrow window: less air between tabs, so Explore's four still fit
+        // at 80 columns (the last one went past the edge, out of the mouse's reach).
+        const std::string pad = ftxui::Terminal::Size().dimx < 120 ? " " : "  ";
+        return hbox({ text(pad), vbox({ text(""), label, line }), text(pad) });
     };
 
     auto menu = Menu(&data->entries_spoof, selected, options);

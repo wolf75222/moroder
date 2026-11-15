@@ -42,7 +42,7 @@ A free key: <https://www.last.fm/api/account/create>
 | `SEARCH_RESULT_LIMIT` | `40` | results per search |
 | `RADIO_RESULT_LIMIT` | `50` | tracks per radio continuation |
 | `NORMALIZE_VOLUME` | `true` | level tracks with YouTube's loudness figure (loud masters come down) |
-| `ICONS` | `"auto"` | `"nerd"`: Nerd Font glyphs; `"plain"`: symbols any font has; `"auto"`: plain on Windows outside the Moroder profile, nerd elsewhere (`MORODER_ICONS` overrides) |
+| `ICONS` | `"auto"` | `"nerd"`: Nerd Font glyphs; `"plain"`: symbols any font has; `"auto"`: plain on Windows outside the Moroder profile (or a console window set to a Nerd Font), nerd elsewhere (`MORODER_ICONS` overrides) |
 | `FADE_SECONDS` | `0` | fade out the end of a track and fade in the next one (0: off) |
 | `LASTFM_API_SECRET` | `""` | with `LASTFM_API_KEY`, enables scrobbling (`moroder lastfm` once) |
 
