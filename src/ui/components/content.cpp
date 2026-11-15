@@ -1077,7 +1077,8 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
     // New releases' first section is a grid of covers filling the width, as on
     // YouTube Music: laid out again when the window's width changes.
     const int wrap_cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / ui::GRID_TILE_WIDTH);
-    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + std::to_string(wrap_cols) + ":"
+    const int moods_per_row = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 28);
+    const std::string signature = "__explore__:" + state->explore_tab + ":" + state->explore_title + ":" + std::to_string(wrap_cols) + "x" + std::to_string(moods_per_row) + ":"
                                 + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
 
     if (main_content_items.empty() || main_content_items.front().category != signature) {
@@ -1130,7 +1131,7 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
                 // A heading, then the buttons.
                 item.category = "__explore_moods__" + category;
                 // On Explore itself, four rows (the Moods & genres tab has them all).
-                const size_t per_row = static_cast<size_t>(std::max(1, (ftxui::Terminal::Size().dimx - 38) / 28));
+                const size_t per_row = static_cast<size_t>(moods_per_row);
                 auto grid = MoodGrid(shelf, on_press, state->explore_tab == "FEmusic_explore" ? 4 * per_row : 0);
                 const std::string heading = category;
                 item.component = MouseGate(Renderer(grid, [grid, heading] {
@@ -1173,8 +1174,9 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
     }
 
     for (auto& item : main_content_items) {
-        if (item.category.rfind("__explore", 0) == 0) continue;
-        ui::getCarouselDataFrom(state->explore, item.category, &item.carousel_data);
+        // Every shelf knows whether it has the focus (a chart's selected row
+        // is drawn from it); only plain carousels refill from the shelves.
+        if (item.category.rfind("__explore", 0) != 0) ui::getCarouselDataFrom(state->explore, item.category, &item.carousel_data);
         item.focused = item.component->Focused();
     }
 }

@@ -262,6 +262,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         for (int used = 0; start > 0 && used + rows_of(start - 1) <= before; ) used += rows_of(--start);
 
         int rows_left = visible;
+        // The shift badge takes a row at the top.
+        if (ui::lyrics_offset.count(ref.id) && ui::lyrics_offset[ref.id] != 0.0) rows_left--;
 
         // Before the first line (the intro): three dots that fill until the
         // voice comes in, instead of a column of grey lines and nothing lit.

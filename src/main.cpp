@@ -1153,7 +1153,8 @@ int main(int argc, char *argv[]) {
         ui::getSidebarData(&state_copy, &sidebar_data);
         {
             // The sidebar marks the page shown (under Now Playing / the queue: the one below).
-            const ui::State page = current_state == ui::State::NOWPLAYING ? before_now_playing : current_state;
+            ui::State page = current_state == ui::State::NOWPLAYING ? before_now_playing : current_state;
+            if (page == ui::State::QUEUE) page = before_queue;
             sidebar_data.current = page == ui::State::HOME ? 0 : page == ui::State::EXPLORE ? 1 : page == ui::State::LIBRARY ? 2 : -1;
             if (page == ui::State::PLAYLIST && state_copy.open_playlist) {
                 for (size_t i = 0; i < sidebar_data.results.size(); i++)
@@ -2135,7 +2136,7 @@ int main(int argc, char *argv[]) {
                     }
                 } else if(ui::ContentEntry* e = focused_entry()) {
                     const std::string& c = e->category;
-                    const bool special = c.rfind("__library_filters__", 0) == 0 || c.rfind("__explore", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
+                    const bool special = c.rfind("__library_filters__", 0) == 0 || c == "__explore_tabs__" || c.rfind("__explore_moods__", 0) == 0 || c.rfind("__explore__", 0) == 0 || c.rfind("__error__", 0) == 0 || c.rfind("__playlist__", 0) == 0;
                     if(!special) {
                         const bool track = c.rfind("__track__", 0) == 0;
 
@@ -2147,8 +2148,11 @@ int main(int argc, char *argv[]) {
 
                         // Acts on the item that was clicked, even if the page changes
                         // while the menu is open (only playlist rows replay the key).
+                        // A carousel's, or a grid's (Explore's charts and covers), selected item.
                         const music::ApiResult clicked = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
-                            ? e->carousel_data.results[e->selected] : e->result;
+                            ? e->carousel_data.results[e->selected]
+                            : (!e->grid_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->grid_data.results.size())
+                                ? e->grid_data.results[e->selected] : e->result;
                         auto act = [&, clicked, track](const std::string& bind) -> std::function<void()> {
                             if (track || current_state == ui::State::QUEUE) return key(bind);
                             return [&, clicked, bind] { on_item_press(Config::keyEvent(bind), clicked); };
