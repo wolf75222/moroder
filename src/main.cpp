@@ -1637,6 +1637,15 @@ int main(int argc, char *argv[]) {
         player.state.notice_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
     };
     auto go_back = [&]() -> bool {
+        // A mood's page: back to the list of moods & genres.
+        if (current_state == ui::State::EXPLORE) {
+            bool in_mood;
+            {
+                std::lock_guard lock(player.state_mutex);
+                in_mood = player.state.explore_tab == "FEmusic_moods_and_genres_category";
+            }
+            if (in_mood) { player.getExplore("FEmusic_moods_and_genres"); return true; }
+        }
         // Now Playing sits over the page it was opened from: back is that
         // page, as it was (not a rebuilt one, scrolled to the top).
         if (current_state == ui::State::NOWPLAYING) { current_state = before_now_playing; return true; }

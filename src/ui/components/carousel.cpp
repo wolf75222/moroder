@@ -101,7 +101,17 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
 
         ftxui::Element thumb;
 
-        if (item.image_url.empty()) {
+        // A mood / genre (Explore) has no picture: its name in a frame.
+        const auto* pl = state.index < static_cast<int>(data->results.size()) ? std::get_if<music::PlaylistRef>(&data->results[state.index].data) : nullptr;
+        if (item.image_url.empty() && pl && pl->id.rfind("mood:", 0) == 0) {
+            thumb = vbox({ filler(), hbox({ filler(), paragraphAlignCenter(pl->title) | bold, filler() }), filler() })
+                | color(state.active && *focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY))
+                | size(WIDTH, EQUAL, 18) | size(HEIGHT, EQUAL, 8)
+                | borderStyled(BorderStyle::ROUNDED, state.active && *focused ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY));
+            thumb = thumb | size(WIDTH, EQUAL, 20) | size(HEIGHT, EQUAL, 10);
+            // Its name is on the tile: no title / "Playlist" under it.
+            return hbox({ vbox({ thumb, text(""), text("") }), text(" ") });
+        } else if (item.image_url.empty()) {
             thumb = ui::noCover(20, 10);
         } else {
             try {
