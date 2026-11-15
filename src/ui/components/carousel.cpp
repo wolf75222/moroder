@@ -1,5 +1,6 @@
 #include "../../../include/ui/components/carousel.hpp"
 #include "../../../include/ui/constants/colors.hpp"
+#include "../../../include/ui/components/content.hpp"
 #include "image_view.hpp"
 #include "../../../include/ui/cover_cache.hpp"
 
@@ -117,7 +118,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
 
         return hbox({
             vbox({
-                thumb,
+                ui::coverHit(thumb),
                 hbox({
                     text(" "),
                     vbox({

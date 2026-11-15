@@ -107,6 +107,11 @@ ftxui::Component ui::MouseGate(ftxui::Component child, std::shared_ptr<bool> sho
 // Video id of the track playing now, for the "now playing" marks in lists.
 static std::string playing_id;
 
+std::deque<ftxui::Box> ui::cover_hit_boxes;
+ftxui::Element ui::coverHit(ftxui::Element cover) {
+    return std::move(cover) | ftxui::reflect(ui::cover_hit_boxes.emplace_back());
+}
+
 static void updatePlayingId(services::Player::PlayerState* state) {
     playing_id.clear();
     if (auto s = std::dynamic_pointer_cast<music::Song>(state->current)) playing_id = s->ref.id;
@@ -410,7 +415,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                 : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
 
             auto row = hbox({
-                thumb,
+                ui::coverHit(thumb),
                 text("  "),
                 vbox({
                     hbox({
@@ -596,7 +601,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
                     : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
 
                 auto row_el = hbox({
-                    thumb,
+                    ui::coverHit(thumb),
                     text("  "),
                     vbox({
                         text(utils::trimSuffix(top_cap, 20, "...")) | (s.focused
@@ -929,14 +934,16 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                 ? ui::noCover(4, 2)
                 : image_view(ui::cover(url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             const bool now = !id.empty() && id == playing_id;
-            return hbox({
+            // A blank row above each track: one track's artist never sits
+            // right against the next one's title.
+            return vbox({ text(" "), hbox({
                 // The selected row: an accent bar, like the menus.
                 vbox({ text(s.focused ? "\u258e" : " "), text(s.focused ? "\u258e" : " ") }) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 // The playing track shows a speaker in the accent colour.
                 (now ? text("\uf028") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
                      : text(number) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | size(WIDTH, EQUAL, 5) | align_right,
                 text("  "),
-                thumb,
+                ui::coverHit(thumb),
                 text("  "),
                 vbox({
                     text(top) | (now ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold
@@ -948,7 +955,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                 // Its length, right-aligned like a music app's track list.
                 text(length) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text("   "),
-            }) | size(HEIGHT, EQUAL, 2);
+            }) | size(HEIGHT, EQUAL, 2) });
         };
 
         const int index = static_cast<int>(i);

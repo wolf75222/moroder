@@ -951,6 +951,7 @@ int main(int argc, char *argv[]) {
         ui::search_has_focus = search_bar->Focused();
 
         services::Player::PlayerState state_copy;
+        ui::cover_hit_boxes.clear();      // refilled as this frame draws the covers
         {
             std::lock_guard lock(player.state_mutex);
             state_copy = player.state;
@@ -1402,6 +1403,13 @@ int main(int argc, char *argv[]) {
         ctx.open = true;
     };
 
+    // "Search “title”": the title in the search, as if typed.
+    auto search_for = [&](const std::string& q) {
+        if (q.empty()) return;
+        search_bar_data.value = q;
+        search_bar_data.onSearch(q);
+    };
+
     auto open_artist_page = [&](const music::ArtistRef& artist) {
         player.openArtist(artist);
         current_state = ui::State::ARTIST;
@@ -1452,6 +1460,7 @@ int main(int argc, char *argv[]) {
             ctx.items.push_back({"\uf07c", "Go to album", "", [&, album] { open_album_page(album); }});
         }
         const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
+        ctx.items.push_back({"\uf002", "Search \u201c" + utils::trimSuffix(ref.title, 18, "...") + "\u201d", "", [&, t = ref.title] { search_for(t); }});
         ctx.items.push_back({"\uf0c5", "Copy\u2026", "", [&, ref, t = album.title] { open_copy_menu(ref, t); }});
         ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
         ctx.open = true;
@@ -1969,6 +1978,7 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                             const std::string link = "https://music.youtube.com/watch?v=" + ref.id;
+                            ctx.items.push_back({"\uf002", "Search \u201c" + utils::trimSuffix(ref.title, 18, "...") + "\u201d", "", [&, t = ref.title] { search_for(t); }});
                             ctx.items.push_back({"\uf0c5", "Copy\u2026", "", [&, ref] { open_copy_menu(ref, ""); }});
                             ctx.items.push_back({"\uf08e", "Open in browser", "", [link] { services::openUrl(link); }});
                             if(state_logged_in()) {
@@ -2035,6 +2045,11 @@ int main(int argc, char *argv[]) {
                 last_click_y = m.y;
             }
 
+            // Was it on a cover / thumbnail (as drawn last frame)?
+            bool on_cover = false;
+            for (const Box& b : ui::cover_hit_boxes) if (in(b)) { on_cover = true; break; }
+            auto has_current = [&] { std::lock_guard lock(player.state_mutex); return player.state.current != nullptr; };
+
             /* The second press of a double-click plays what the first one
             selected: re-dispatching it could select something else if the
             page moved in between.
@@ -2046,7 +2061,12 @@ int main(int argc, char *argv[]) {
                 // selected before a click on empty space).
                 if(e && !self_acting && !sidebar->Focused() && last_click_target && e->component == last_click_target) {
                     double_click_played_at = std::chrono::steady_clock::now();
+                    const auto before = current_state;
                     layout->OnEvent(Event::Return);
+                    // On the cover: the track in full screen, as before. On the title: it just plays.
+                    if (on_cover && current_state == before && current_state != ui::State::NOWPLAYING && has_current()) {
+                        ui->OnEvent(Config::keyEvent(cfg.KEY_NOW_PLAYING));
+                    }
                     return true;
                 }
             }
@@ -2075,7 +2095,11 @@ int main(int argc, char *argv[]) {
                     if(self_acting) navigation = false, double_click = false;
                 }
                 if(double_click) double_click_played_at = std::chrono::steady_clock::now();
+                const auto before = current_state;
                 if(navigation || double_click) layout->OnEvent(Event::Return);
+                if (double_click && !navigation && on_cover && current_state == before && current_state != ui::State::NOWPLAYING && has_current()) {
+                    ui->OnEvent(Config::keyEvent(cfg.KEY_NOW_PLAYING));
+                }
             }
 
             return true;

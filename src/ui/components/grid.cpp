@@ -1,5 +1,6 @@
 #include "../../../include/ui/components/grid.hpp"
 #include "../../../include/ui/constants/colors.hpp"
+#include "../../../include/ui/components/content.hpp"
 #include "../../../include/utils/utils.hpp"
 
 #include "ftxui-grid-container/grid-container.hpp"
@@ -244,7 +245,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
 
                 return hbox({
                     vbox({
-                        cover,
+                        ui::coverHit(cover),
                         text(" "),
                         hbox({
                             vbox({
@@ -290,7 +291,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             }
 
             return hbox({
-                thumb,
+                ui::coverHit(thumb),
                 text("  "),
                 vbox({
                     text(utils::trimSuffix(item.top, 20, "...")) | ((state.focused && *focused)

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <deque>
+
 #include "carousel.hpp"
 #include "chips.hpp"
 #include "grid.hpp"
@@ -49,7 +51,11 @@ extern int anim_frame;
 extern std::vector<std::pair<int, std::shared_ptr<ftxui::Box>>> queue_row_boxes;
 extern int queue_drag_from, queue_drag_over;
 extern int queue_focus_index;     // queue view: row to select after the next rebuild (a move)
-extern bool search_has_focus;     // pages must not take the focus from the search bar
+extern bool search_has_focus;
+// Where covers / thumbnails were drawn this frame (double-click on one plays
+// the track in full screen). coverHit() records one.
+extern std::deque<ftxui::Box> cover_hit_boxes;
+ftxui::Element coverHit(ftxui::Element cover);     // pages must not take the focus from the search bar
 
 /* buildPlaylist
 - The open playlist (state->open_playlist): a header with Play / Add to queue,
