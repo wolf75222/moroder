@@ -918,7 +918,7 @@ int main(int argc, char *argv[]) {
     auto save_offsets = [offsets_file] {
         if (offsets_file.empty()) return;
         nlohmann::json j = nlohmann::json::object();
-        for (const auto& [id, off] : ui::lyrics_offset) if (off != 0.0) j[id] = off;
+        for (const auto& [id, off] : ui::lyrics_offset) j[id] = off;   // 0 too: it can undo a suggested shift
         std::error_code ec;
         fs::create_directories(offsets_file.parent_path(), ec);
         std::ofstream(offsets_file, std::ios::trunc) << j.dump();
@@ -2574,6 +2574,11 @@ int main(int argc, char *argv[]) {
         // (for lyrics timed on another cut of the song).
         if (current_state == ui::State::NOWPLAYING && (event == Event::Character(",") || event == Event::Character("."))) {
             if (auto song = current_song()) {
+                // From what is shown: your shift, else a video's suggested one.
+                if (!ui::lyrics_offset.count(song->ref.id)) {
+                    std::lock_guard lock(player.state_mutex);
+                    ui::lyrics_offset[song->ref.id] = player.state.lyrics && player.state.lyrics_id == song->ref.id ? player.state.lyrics->shift : 0.0;
+                }
                 double& off = ui::lyrics_offset[song->ref.id];
                 off += event == Event::Character(".") ? 0.5 : -0.5;
                 if (std::abs(off) < 0.01) off = 0;

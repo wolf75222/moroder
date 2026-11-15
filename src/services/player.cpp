@@ -492,6 +492,7 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
             // Lyrics for the Now Playing view, fetched off the player thread.
             if (song && Config::get().ENABLE_LYRICS) {
                 const std::string id = song->ref.id, title = song->ref.title;
+                const bool video = song->ref.wide;
                 const std::string artist = song->ref.artists.empty() ? "" : song->ref.artists[0].name;
                 const double secs = static_cast<double>(song_duration) / 1000000.0;
                 {
@@ -500,8 +501,8 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
                     state.lyrics_id = id;
                     state.flags["lyrics"] = Flags::Ongoing;
                 }
-                std::thread([this, id, title, artist, secs] {
-                    auto l = std::make_shared<services::Lyrics>(services::fetchLyrics(title, artist, secs));
+                std::thread([this, id, title, artist, secs, video] {
+                    auto l = std::make_shared<services::Lyrics>(services::fetchLyrics(title, artist, secs, video));
                     std::lock_guard lock(state_mutex);
                     if (state.lyrics_id != id) return;      // track changed meanwhile
                     state.lyrics = l;

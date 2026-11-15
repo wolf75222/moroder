@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cwctype>
 #include <filesystem>
 #include <functional>
 #include <thread>
@@ -127,8 +128,10 @@ std::string firstLine(const std::string& cmd) {
 // This copy (install.ps1's folder): `where moroder` could name the launcher
 // install.ps1 leaves for terminals that were already open.
 std::string installedBinary() {
-    const std::string self = platform::selfPath();
-    return !self.empty() ? self : platform::which("moroder.exe");
+    // moroder.exe on the PATH (the launcher has no .exe); else this copy, when
+    // this terminal predates the install and only knows the launcher.
+    const std::string onPath = platform::which("moroder.exe");
+    return !onPath.empty() ? onPath : platform::selfPath();
 }
 #else
 std::string installedBinary() { return platform::which("moroder"); }
@@ -430,29 +433,31 @@ int services::update::doctor() {
 // terminals that were open during the install: gone once this terminal's
 // PATH lists moroder's own folder (new terminals have it), or on uninstall.
 static void removeLaunchers(bool always) {
-    const char* local = std::getenv("LOCALAPPDATA");
+    // Wide strings throughout: a profile like C:\Users\Rémi must still match.
+    const wchar_t* local = _wgetenv(L"LOCALAPPDATA");
     if (!local) return;
-    const fs::path dir = fs::path(local) / "Microsoft" / "WindowsApps";
+    const fs::path dir = fs::path(local) / L"Microsoft" / L"WindowsApps";
     std::error_code ec;
-    if (!fs::exists(dir / "moroder.cmd", ec) && !fs::exists(dir / "moroder", ec)) return;
+    if (!fs::exists(dir / L"moroder.cmd", ec) && !fs::exists(dir / L"moroder", ec)) return;
     if (!always) {
-        const std::string self = platform::selfPath();
-        const char* path = std::getenv("PATH");
+        const std::string self = platform::selfPath();          // UTF-8
+        const wchar_t* path = _wgetenv(L"PATH");
         if (self.empty() || !path) return;
-        const std::string mine = utils::lower(fs::path(self).parent_path().string());
+        auto lower = [](std::wstring w) { for (auto& c : w) c = static_cast<wchar_t>(towlower(c)); return w; };
+        auto bare = [](std::wstring w) { while (!w.empty() && (w.back() == L'\\' || w.back() == L'/')) w.pop_back(); return w; };
+        const std::wstring mine = lower(bare(fs::u8path(self).parent_path().wstring()));
         bool listed = false;
-        std::string all = path, entry;
-        for (size_t at = 0; at <= all.size(); at++) {
-            if (at == all.size() || all[at] == ';') {
-                while (!entry.empty() && (entry.back() == '\\' || entry.back() == '/')) entry.pop_back();
-                listed = listed || utils::lower(entry) == mine;
-                entry.clear();
-            } else entry += all[at];
+        const std::wstring all = path;
+        size_t from = 0;
+        while (from <= all.size()) {
+            const size_t to = std::min(all.find(L';', from), all.size());
+            listed = listed || lower(bare(all.substr(from, to - from))) == mine;
+            from = to + 1;
         }
         if (!listed) return;
     }
-    fs::remove(dir / "moroder.cmd", ec);
-    fs::remove(dir / "moroder", ec);
+    fs::remove(dir / L"moroder.cmd", ec);
+    fs::remove(dir / L"moroder", ec);
 }
 void services::update::tidyLaunchers() { removeLaunchers(false); }
 #else

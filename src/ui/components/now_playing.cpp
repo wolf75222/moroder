@@ -241,7 +241,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         */
         const auto& ls = state->lyrics->lines;
         // A hand shift: positive = the words come later.
-        const double shift = ui::lyrics_offset.count(ref.id) ? ui::lyrics_offset[ref.id] : 0.0;
+        // Your own shift, else the one suggested for a music video.
+        const double shift = ui::lyrics_offset.count(ref.id) ? ui::lyrics_offset[ref.id] : state->lyrics->shift;
         const double lpos = position - shift;   // the lyrics' clock, not the progress line's
         int cur = -1;
         for (size_t i = 0; i < ls.size(); i++) if (ls[i].first <= lpos + 0.15) cur = static_cast<int>(i);
@@ -275,7 +276,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
         int rows_left = visible;
         // The shift badge takes a row at the top.
-        if (ui::lyrics_offset.count(ref.id) && ui::lyrics_offset[ref.id] != 0.0) rows_left--;
+        if (shift != 0.0) rows_left--;
 
         // Before the first line (the intro): three dots that fill until the
         // voice comes in, instead of a column of grey lines and nothing lit.
@@ -351,9 +352,10 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // Synced lyrics fill the column; a message or plain text sits level with the cover.
     const bool synced = ours && state->lyrics->found && !state->lyrics->lines.empty();
     const bool fill = synced || lines.size() > 2;     // plain text, top down
-    if (synced && ui::lyrics_offset.count(ref.id) && ui::lyrics_offset[ref.id] != 0.0) {
+    const double shown_shift = !ours || !state->lyrics ? 0.0 : ui::lyrics_offset.count(ref.id) ? ui::lyrics_offset[ref.id] : state->lyrics->shift;
+    if (synced && shown_shift != 0.0) {
         char badge[32];
-        std::snprintf(badge, sizeof badge, "%+.1f s", ui::lyrics_offset[ref.id]);
+        std::snprintf(badge, sizeof badge, "%+.1f s", shown_shift);
         lines.insert(lines.begin(), text(badge) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)));
     }
     // Synced lines centred in their column: balanced between the cover and

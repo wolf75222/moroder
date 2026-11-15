@@ -1130,8 +1130,8 @@ ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::fun
         // One line, one colour: the name, the selected one bright and bold.
         opt.transform = [name](const EntryState& s) {
             return hbox({
-                // The app's red bar, like every other selected row.
-                text(s.focused ? "\u258e " : "  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
+                // A dot like the charts' (red on the selected one).
+                text("\u2022 ") | color(s.focused ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text(utils::trimSuffix(name, 24, "\u2026")) | (s.focused ? bold : nothing)
                     | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 filler(),

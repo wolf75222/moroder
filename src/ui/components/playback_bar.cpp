@@ -78,13 +78,6 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text("") | ((data->can_skip_forwards)  ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_next)
         });
 
-        // Title - artist. (A 2-cell cover here read as a grey smudge.)
-        Element track_info = hbox({
-            text(utils::trimSuffix(data->title, 50, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
-            data->artist.empty() ? emptyElement() : text("  \u00b7  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-            text(utils::trimSuffix(data->artist, 40, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-        });
-
         /* Loop icon
         - Off is dimmed the same way an unavailable skip arrow is
         - This icon set has no repeat-one glyph, so a track loop is the same
@@ -140,6 +133,17 @@ Component ui::PlaybackBar(PlaybackData* data) {
         left_controls->ComputeRequirement();
         right_controls->ComputeRequirement();
         const int side = std::max(left_controls->requirement().min_x, right_controls->requirement().min_x);
+
+        // Title · artist in what is left between them (a long one used to push
+        // the icons off the right edge). (A 2-cell cover here read as a smudge.)
+        const int room = std::max(8, width - 2 * side - 4);
+        const int artist_w = data->artist.empty() ? 0 : std::min(static_cast<int>(utils::utf8Length(data->artist)), std::max(0, room / 3));
+        const int title_w = std::max(4, room - (artist_w ? artist_w + 5 : 0));
+        Element track_info = hbox({
+            text(utils::trimSuffix(data->title, title_w, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+            artist_w ? text("  \u00b7  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) : emptyElement(),
+            artist_w ? text(utils::trimSuffix(data->artist, artist_w, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) : emptyElement(),
+        });
 
         return vbox({
             hbox(std::move(progress_line)) | reflect(data->box_progress),

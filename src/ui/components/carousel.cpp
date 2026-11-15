@@ -121,7 +121,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
                 // thumb = ui::noCover(20, 10);
 
             } catch (...) {
-                thumb = ui::noCover(20, 10);
+                thumb = ui::noCover(item.wide ? 32 : 20, 10);
             }
         }
 
@@ -140,7 +140,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
                 }),
             }),
             text(" "),
-        }) | reflect(hb);
+        }) | size(WIDTH, EQUAL, (item.wide ? 32 : 20) + 3) | reflect(hb);   // every tile its cover's width, whatever its title
     };
 
     options.on_enter = [data, selected] () {

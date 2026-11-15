@@ -17,8 +17,10 @@ struct Lyrics {
     std::vector<std::pair<double, std::string>> lines;   // seconds, text (synced)
     std::vector<std::string> plain;                      // when not synced
     bool found = false;
+    double shift = 0;   // suggested delay (s): a music video's intro before the album's timings
 };
 
-Lyrics fetchLyrics(const std::string& title, const std::string& artist, double duration_seconds);
+// video: a music video (its intro / outro make it longer than the song).
+Lyrics fetchLyrics(const std::string& title, const std::string& artist, double duration_seconds, bool video = false);
 
 }

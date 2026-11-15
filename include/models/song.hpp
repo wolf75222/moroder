@@ -95,7 +95,9 @@ struct SongRef {
         - Don't ask me why that is
         */
         if ((j.contains("thumbnails") && j["thumbnails"].is_array() && !j["thumbnails"].empty())) {
-            const auto& t = j["thumbnails"].back();
+            // Wide only if the picture drawn (the small one) is: a video's
+            // list can mix square crops and 16:9 frames.
+            const auto& t = j["thumbnails"].front();
             if (t.contains("width") && t.contains("height") && t["width"].is_number() && t["height"].is_number())
                 s.wide = t["width"].get<double>() > t["height"].get<double>() * 1.3;
             s.thumbnail_large = utils::jstr(j["thumbnails"].back(), "url");

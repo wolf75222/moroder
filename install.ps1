@@ -159,11 +159,17 @@ try {
         try {
             $Exe = Join-Path $Prefix "moroder.exe"
             $NoBom = New-Object System.Text.UTF8Encoding $false
-            # cmd and PowerShell
-            [IO.File]::WriteAllText((Join-Path $ShimDir "moroder.cmd"), "@`"$Exe`" %*`r`n", $NoBom)
+            # cmd and PowerShell. (goto) leaves the batch first: no "Terminate
+            # batch job?" on Ctrl+C, and no error once moroder deletes it. In
+            # the OEM code page cmd reads, through %LOCALAPPDATA% when it can
+            # (a name like Rémi stays out of it).
+            $CmdExe = $Exe
+            if ($Exe.StartsWith($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) { $CmdExe = "%LOCALAPPDATA%" + $Exe.Substring($env:LOCALAPPDATA.Length) }
+            $Oem = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+            [IO.File]::WriteAllText((Join-Path $ShimDir "moroder.cmd"), "@(goto) 2>nul & `"$CmdExe`" %*`r`n", $Oem)
             # bash / zsh (Git Bash, MSYS2, Cygwin): no extension, a shebang
             $ExeSh = $Exe -replace "'", "'\''"
-            $Sh = "#!/bin/sh`n# moroder launcher (install.ps1); removed once the PATH is in place`nexe='$ExeSh'`ncommand -v cygpath >/dev/null 2>&1 && exe=`$(cygpath -u `"`$exe`")`nexec `"`$exe`" `"`$@`"`n"
+            $Sh = "#!/bin/sh`n# moroder launcher (install.ps1); removed once the PATH is in place`nexe='$ExeSh'`nif command -v cygpath >/dev/null 2>&1; then exe=`$(cygpath -u `"`$exe`"); elif [ -n `"`$WSL_DISTRO_NAME`" ] && command -v wslpath >/dev/null 2>&1; then exe=`$(wslpath -u `"`$exe`"); fi`nexec `"`$exe`" `"`$@`"`n"
             [IO.File]::WriteAllText((Join-Path $ShimDir "moroder"), $Sh, $NoBom)
             $script:Launcher = $true
         } catch { }
