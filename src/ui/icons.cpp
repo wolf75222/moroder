@@ -23,7 +23,7 @@ const std::unordered_map<std::string, std::string>& table() {
             {0xF067, "+"}, {0xF0FE, "+"}, {0xF068, "−"}, {0xF00D, "×"}, {0xF1F8, "×"},   // edit
             {0xF040, "✎"}, {0xF0C5, "⧉"}, {0xF0C1, "∞"}, {0xF0C7, "↓"}, {0xF12D, "⌫"}, {0xF08E, "↗"},
             {0xF07C, "▸"}, {0xF03A, "≡"}, {0xF1BE, "◉"}, {0xF007, "●"}, {0xF1DA, "↺"},
-            {0xF002, "⌕"}, {0xF4E2, "⌂"}, {0xF02E, "▤"}, {0xF16A, "►"},
+            {0xF002, "⌕"}, {0xF4E2, "⌂"}, {0xF14E, "◎"}, {0xF02E, "▤"}, {0xF16A, "►"},
             {0xF05D, "✓"}, {0xEA87, "✗"},
         };
         std::unordered_map<std::string, std::string> m;

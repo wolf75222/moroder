@@ -1217,6 +1217,21 @@ void services::Player::worker_loop() {
                     }
                 }
 
+            } else if constexpr (std::is_same_v<T, ExploreCommand>) {
+                spdlog::info("PLAYER: ExploreCommand");
+                explore_queued = false;
+                auto shelves = music_service->getExplore();
+                const services::RequestError& err = music_service->lastError();
+                std::lock_guard lock(state_mutex);
+                if (err.failed && !err.cancelled) {
+                    state.flags["explore"] = Flags::Error;
+                    state.errors["explore"] = { err.message, err.retryable };
+                } else if (!err.failed) {
+                    state.flags["explore"] = Flags::Done;
+                    state.explore = std::move(shelves);
+                    state.explore_order = music_service->exploreOrder();
+                }
+
             } else if constexpr (std::is_same_v<T, LibraryPlaylistsCommand>) {
                 spdlog::info("PLAYER: LibraryPlaylistsCommand");
 
@@ -1838,6 +1853,22 @@ void services::Player::getHome() {
         command_queue.push(HomeCommand{});
     }
 
+    command_cv.notify_one();
+}
+
+void services::Player::getExplore() {
+    {
+        std::lock_guard lock(state_mutex);
+        // find, not []: an absent flag would read as Ongoing (the enum's first value).
+        if (auto it = state.flags.find("explore"); it != state.flags.end() && it->second == Flags::Ongoing && explore_queued) return;
+        explore_queued = true;
+        state.flags["explore"] = Flags::Ongoing;
+        state.errors.erase("explore");
+    }
+    {
+        std::lock_guard lock(command_mutex);
+        pushUrgent(ExploreCommand{});
+    }
     command_cv.notify_one();
 }
 

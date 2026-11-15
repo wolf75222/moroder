@@ -26,11 +26,13 @@ void ui::getSidebarData(services::Player::PlayerState* state, ui::SidebarData* d
     auto busy = [&](const char* f) { auto it = state->flags.find(f); return it != state->flags.end() && it->second == services::Player::Flags::Ongoing; };
     data->entries = {
         {std::string("\uf4e2  Home") + (busy("home") ? spin : ""), ""},
+        {std::string("\uf14e  Explore") + (busy("explore") ? spin : ""), ""},
         {std::string("\uf02e  Library") + (busy("library_playlists") || busy("library_albums") ? spin : ""), ""},
     };
 
     data->entries_spoof = {
         "01",
+        "04",
         "02",
     };
 
@@ -62,7 +64,7 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
     options.entries_option.transform = [data, focused](const EntryState& entry_state) {
         const auto& item = data->entries[entry_state.index];
 
-        if(entry_state.index == 2) {
+        if(entry_state.index == ui::SIDEBAR_FIXED - 1) {
             return vbox({
                 separator() | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
                 hbox({
@@ -76,7 +78,7 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
             }) | (entry_state.active && *focused ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)));
         }
 
-        if(entry_state.index > 2) {
+        if(entry_state.index >= ui::SIDEBAR_FIXED) {
             return hbox({
                 text("  "),
                 vbox({
@@ -100,22 +102,25 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
         if(data->entries_spoof[*selected] == "01") {
             data->onHome();
 
+        } else if(data->entries_spoof[*selected] == "04") {
+            if (data->onExplore) data->onExplore();
+
         } else if(data->entries_spoof[*selected] == "02") {
             data->onLibrary();
 
         } else if(data->entries_spoof[*selected] == "03") {
             if (data->onThird) data->onThird();
 
-        } else if (*selected > 2 && static_cast<size_t>(*selected - 3) < data->results.size()) {
-            spdlog::info("SIDEBAR: pressed enter on playlist, " + data->results[*selected - 3].ref.title);
+        } else if (*selected >= ui::SIDEBAR_FIXED && static_cast<size_t>(*selected - ui::SIDEBAR_FIXED) < data->results.size()) {
+            spdlog::info("SIDEBAR: pressed enter on playlist, " + data->results[*selected - ui::SIDEBAR_FIXED].ref.title);
         }
     };
 
     auto menu = Menu(&data->entries_spoof, selected, options);
 
     return CatchEvent(menu, [data, selected, on_press](const ftxui::Event& event) {
-        if (*selected > 2 && static_cast<size_t>(*selected - 3) < data->results.size()) {
-            return on_press(event, data->results[(*selected - 3)]);
+        if (*selected >= ui::SIDEBAR_FIXED && static_cast<size_t>(*selected - ui::SIDEBAR_FIXED) < data->results.size()) {
+            return on_press(event, data->results[(*selected - ui::SIDEBAR_FIXED)]);
         }
         return false;
     });

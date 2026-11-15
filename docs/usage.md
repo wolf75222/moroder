@@ -276,6 +276,8 @@ playlist; right-click a track, *Add to playlist…*, to add it to one of yours
   `NOW_PLAYING_UP_NEXT = true` adds what plays next beside the lyrics.
 - **Queue** (<kbd>a</kbd>, or the queue icon in the playback bar; again to go back).
 - **Recently played** is the first home shelf.
+- **Explore** (sidebar): YouTube Music's Explore page, new albums & singles,
+  trending, new videos. Click it again to refresh it.
 
 ### Trying things out
 

@@ -394,6 +394,24 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
     return response.results;
 }
 
+std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getExplore() {
+    nlohmann::json sections = ytm->getBrowse("FEmusic_explore", 6);
+    captureError("explore");
+
+    ipc::HomeResponse response;
+    if (sections.is_array()) {
+        for (const nlohmann::json& section : sections) {
+            const std::string category = utils::jstr(section, "title");
+            if (!section.contains("contents") || !section["contents"].is_array()) continue;
+            for (const nlohmann::json& item : section["contents"]) {
+                tryAdd(item, "explore", [&] { response.addItem(category, item); });
+            }
+        }
+    }
+    explore_order = response.order;
+    return response.results;
+}
+
 services::Music::ArtistPage services::Music::getArtist(const music::ArtistRef& artist) {
     ArtistPage page;
     page.ref = artist;

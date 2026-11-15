@@ -69,6 +69,7 @@ private:
     };
 
     struct HomeCommand {};
+    struct ExploreCommand {};
     struct LibraryPlaylistsCommand {};
     struct LibraryAlbumsCommand {};
     struct LibrarySongsCommand {};
@@ -177,6 +178,8 @@ public:
 
         std::unordered_map<std::string, std::vector<music::ApiResult>> home;
         std::vector<std::string> home_order;    // shelf titles, YouTube Music's order
+        std::unordered_map<std::string, std::vector<music::ApiResult>> explore;
+        std::vector<std::string> explore_order;
 
         /* library
         - Filled by the Library*Commands, all require the user to be logged in
@@ -424,6 +427,7 @@ private:
         QueueNextRadioCommand,
 
         HomeCommand,
+        ExploreCommand,
         LibraryPlaylistsCommand,
         LibraryAlbumsCommand,
         LibrarySongsCommand,
@@ -452,7 +456,11 @@ private:
 
     std::queue<Command> command_queue;
     void pushUrgent(Command c);              // to the front (command_mutex held)
+public:
+    void getExplore();                       // the Explore page (state.explore)
+private:
     std::atomic<bool> home_queued{false};    // a HomeCommand waits: no second one
+    std::atomic<bool> explore_queued{false}; // same for Explore
 
     std::unique_ptr<MPV> mpv_service;
     std::unique_ptr<Mpris> mpris_service;

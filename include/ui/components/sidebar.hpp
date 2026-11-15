@@ -9,6 +9,9 @@
 
 namespace ui {
 
+// Rows before the playlists: Home, Explore, Library, New playlist / Sign in.
+constexpr int SIDEBAR_FIXED = 4;
+
 struct SidebarData {
     std::vector<std::string> entries_spoof;
     std::vector<ui::SimpleEntry> entries;
@@ -18,6 +21,7 @@ struct SidebarData {
 
     std::function<void()> onHome;
     std::function<void()> onLibrary;
+    std::function<void()> onExplore;
     std::function<void()> onThird;      // "New playlist" (signed in) / "Sign in"
 };
 

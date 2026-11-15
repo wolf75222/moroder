@@ -7,6 +7,7 @@
 #include "spdlog/spdlog.h"
 #include "image_view.hpp"
 #include "../../../include/ui/cover_cache.hpp"
+#include "../../../include/ui/viewport.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -682,7 +683,23 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
         queue_container->SetActiveChild(queue_container->ChildAt(state->queue_position + 1));
     }
 
-    auto queue_wrapper = Renderer(queue_container, [thumbnail_url, queue_container] {
+    /* The list opens on the track playing, at the top: what already played is
+    above it, out of view, until you move up to it (it used to be centred on
+    the selection, so played tracks filled half of it and pushed the rest
+    down). Rebuilt when the track or the queue changes, so it starts again
+    from the track playing. */
+    auto view = std::make_shared<ui::ViewportState>();
+    view->anchor = std::max(0, std::min(state->queue_position + 1, child_count - 1));
+    auto queue_wrapper = Renderer(queue_container, [thumbnail_url, queue_container, view] {
+        const int n = static_cast<int>(queue_container->ChildCount());
+        Elements rows;
+        std::vector<int> indices;
+        int active = 0;
+        for (int i = 0; i < n; i++) {
+            if (queue_container->ChildAt(i) == queue_container->ActiveChild()) active = i;
+            rows.push_back(queue_container->ChildAt(i)->Render());
+            indices.push_back(i);
+        }
         return hbox({
             filler(),
             vbox({
@@ -694,7 +711,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
             vbox({
                 text(" "),
                 text(" "),
-                queue_container->Render() | yframe | yflex | size(WIDTH, ftxui::GREATER_THAN, 30),
+                ui::viewport(std::move(rows), std::move(indices), active, view.get()) | yflex | size(WIDTH, ftxui::GREATER_THAN, 30),
             }) | yflex,
         }) | yflex;
     });
@@ -981,6 +998,56 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
     }
 
     for (auto& item : main_content_items) item.focused = item.component->Focused();
+}
+
+void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content,
+                      std::function<bool(const ftxui::Event&, const music::ApiResult&)> on_press, std::function<void()> on_retry) {
+    if (buildError(state, "explore", main_content_items, main_content, on_retry)) {
+        return;
+    }
+
+    const auto ef = state->flags.find("explore");
+    const bool loading = ef == state->flags.end() || ef->second == services::Player::Flags::Ongoing;
+    const std::string signature = "__explore__:" + std::to_string(state->explore_order.size()) + ":" + (loading ? "1" : "0");
+
+    if (main_content_items.empty() || main_content_items.front().category != signature) {
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+
+        main_content_items.push_back(ContentEntry{});
+        ContentEntry& head = main_content_items.back();
+        head.category = signature;
+        head.component = Renderer([loading] {
+            return vbox({
+                text(" "),
+                hbox({
+                    text(" "),
+                    text("Explore") | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text("   "),
+                    loading ? spinner(15, ui::anim_frame) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) : emptyElement(),
+                }),
+                hbox({ text(" "), text("New releases, what's trending, moods") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) }),
+            });
+        });
+        main_content->Add(head.component);
+
+        for (const std::string& category : state->explore_order) {
+            main_content_items.push_back(ContentEntry{});
+            ContentEntry& item = main_content_items.back();
+            item.category = category;
+            item.selected = 0;
+            item.component = MouseGate(Carousel(&item.carousel_data, &item.selected, &item.focused, on_press), item.shown);
+            main_content->Add(item.component);
+        }
+
+        if (main_content_items.size() > 1 && !ui::search_has_focus) main_content_items[1].component->TakeFocus();
+    }
+
+    for (auto& item : main_content_items) {
+        if (item.category.rfind("__explore__", 0) == 0) continue;
+        ui::getCarouselDataFrom(state->explore, item.category, &item.carousel_data);
+        item.focused = item.component->Focused();
+    }
 }
 
 void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content,

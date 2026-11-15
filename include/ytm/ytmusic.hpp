@@ -124,6 +124,8 @@ public:
     - Array of {title, contents} sections.
     */
     json getHome(int limit = 3);
+    // Any browse page made of shelves like Home (FEmusic_explore...).
+    json getBrowse(const std::string& browseId, int limit = 3);
 
     /* getAlbum
     - Album object with a "tracks" array. browseId must start with MPRE.

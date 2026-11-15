@@ -727,8 +727,12 @@ bool YTMusic::deletePlaylist(const std::string& playlistId) {
 }
 
 json YTMusic::getHome(int limit) {
+    return getBrowse("FEmusic_home", limit);
+}
+
+json YTMusic::getBrowse(const std::string& browseId, int limit) {
     json body = json::object();
-    body["browseId"] = "FEmusic_home";
+    body["browseId"] = browseId;
 
     json response = sendRequest("browse", body);
 

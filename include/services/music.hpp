@@ -78,6 +78,9 @@ public:
     bool deletePlaylist(const std::string& playlistId);
     // Shelf titles from the last getHome(), in YouTube Music's order.
     const std::vector<std::string>& homeOrder() const { return home_order; }
+    // YouTube Music's Explore page (new albums & singles, trending, videos...).
+    std::unordered_map<std::string, std::vector<music::ApiResult>> getExplore();
+    const std::vector<std::string>& exploreOrder() const { return explore_order; }
 
     music::Song     getSong(const music::SongRef& song);
     music::Episode  getEpisode(const music::EpisodeRef& episode);
@@ -104,6 +107,7 @@ public:
 
 private:
     std::vector<std::string> home_order;
+    std::vector<std::string> explore_order;
     /* ytm
     - The InnerTube client: transport, auth, endpoints, continuations
     - Reads the same browser.json ytmusicapi's setup writes

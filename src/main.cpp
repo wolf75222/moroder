@@ -450,6 +450,7 @@ int main(int argc, char *argv[]) {
             switch (state) {
                 case ui::State::HOME: return "Home";
                 case ui::State::LIBRARY: return "Library";
+                case ui::State::EXPLORE: return "Explore";
                 case ui::State::PLAYLIST: return playlist.title.empty() ? "Playlist" : playlist.title;
                 case ui::State::ARTIST: return artist.name.empty() ? "Artist" : artist.name;
                 case ui::State::SEARCH: return "Search: " + query;
@@ -841,6 +842,22 @@ int main(int argc, char *argv[]) {
         prompt.done = [&player](const std::string& name) { player.createPlaylist(name); };
     };
 
+    sidebar_data.onExplore = [&current_state, &main_content_items, &main_content, &screen, &player] {
+        spdlog::info("SIDEBAR: Explore pressed");
+        // First visit, or again while on it: (re)load; otherwise what was fetched.
+        bool have;
+        {
+            std::lock_guard lock(player.state_mutex);
+            have = !player.state.explore_order.empty();
+        }
+        if (!have || current_state == ui::State::EXPLORE) player.getExplore();
+        current_state = ui::State::EXPLORE;
+        main_content_items.clear();
+        main_content->DetachAllChildren();
+        main_content->Add(Renderer([] { return emptyElement(); }));
+        screen.PostEvent(Event::Custom);
+    };
+
     sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen, &player] {
         spdlog::info("SIDEBAR: Library pressed");
         if (current_state == ui::State::LIBRARY) {
@@ -912,7 +929,7 @@ int main(int argc, char *argv[]) {
 
     auto render_page = [&]() -> Element {
         const int n = static_cast<int>(main_content->ChildCount());
-        const bool home = current_state == ui::State::HOME || current_state == ui::State::ARTIST;
+        const bool home = current_state == ui::State::HOME || current_state == ui::State::ARTIST || current_state == ui::State::EXPLORE;
 
         if (n == 0 || main_content->ChildAt(0) != page_first) {
             page_view = {};
@@ -1030,8 +1047,8 @@ int main(int argc, char *argv[]) {
         {
             static std::string last_prefetch;
             const music::PlaylistRef* ref = nullptr;
-            if (sidebar_focused && sidebar_selected > 2 && static_cast<size_t>(sidebar_selected - 3) < sidebar_data.results.size()) {
-                ref = &sidebar_data.results[sidebar_selected - 3].ref;
+            if (sidebar_focused && sidebar_selected >= ui::SIDEBAR_FIXED && static_cast<size_t>(sidebar_selected - ui::SIDEBAR_FIXED) < sidebar_data.results.size()) {
+                ref = &sidebar_data.results[sidebar_selected - ui::SIDEBAR_FIXED].ref;
             } else if (ui::ContentEntry* e = [&]() -> ui::ContentEntry* {
                            if (current_state == ui::State::NOWPLAYING) return nullptr;   // page hidden
                            for (auto& item : main_content_items) if (item.component && item.component->Focused()) return &item;
@@ -1075,7 +1092,7 @@ int main(int argc, char *argv[]) {
                 return it != state_copy.flags.end() && it->second == services::Player::Flags::Ongoing;
             };
             // Lyrics only need a few frames a second; spinners want more.
-            const bool spinner_on = ongoing("home") || ongoing("search") || ongoing("open_playlist") || ongoing("open_playlist_more")
+            const bool spinner_on = ongoing("home") || ongoing("explore") || ongoing("search") || ongoing("open_playlist") || ongoing("open_playlist_more")
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
                      || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
                      || (current_state == ui::State::NOWPLAYING && ongoing("lyrics"));
@@ -1084,7 +1101,7 @@ int main(int argc, char *argv[]) {
                               && state_copy.lyrics && !state_copy.lyrics->lines.empty();
             anim_period_ms = (spinner_on || singing) ? 90 : 250;
 
-            animating = ongoing("home") || ongoing("search") || ongoing("open_playlist") || ongoing("open_playlist_more")
+            animating = ongoing("home") || ongoing("explore") || ongoing("search") || ongoing("open_playlist") || ongoing("open_playlist_more")
                      || ongoing("library_playlists") || ongoing("library_albums") || ongoing("library_songs")
                      || (state_copy.current && ongoing("audio") && playback_bar_data.duration == 0)
                      // Synced lyrics scroll smoothly while playing.
@@ -1203,6 +1220,16 @@ int main(int argc, char *argv[]) {
                         open = player.state.open_playlist;
                     }
                     if (open) player.openPlaylist(open->ref);
+                    main_content_items.clear();
+                    main_content->DetachAllChildren();
+                    main_content->Add(Renderer([] { return emptyElement(); }));
+                    screen.PostEvent(Event::Custom);
+                });
+
+        } else if(current_state == ui::State::EXPLORE) {
+            ui::buildExplore(&state_copy, main_content_items, main_content, on_item_press,
+                [&player, &main_content_items, &main_content, &screen] {
+                    player.getExplore();
                     main_content_items.clear();
                     main_content->DetachAllChildren();
                     main_content->Add(Renderer([] { return emptyElement(); }));
@@ -1567,6 +1594,7 @@ int main(int argc, char *argv[]) {
         switch (e.state) {
             case ui::State::HOME:    sidebar_data.onHome(); return;
             case ui::State::LIBRARY: sidebar_data.onLibrary(); return;
+            case ui::State::EXPLORE: sidebar_data.onExplore(); return;
             case ui::State::PLAYLIST:
                 if (e.kind == "album") {
                     music::AlbumRef a;
@@ -2006,8 +2034,8 @@ int main(int argc, char *argv[]) {
 
                 if(sidebar->Focused()) {
                     const int sel = sidebar_selected;
-                    if(sel > 2 && static_cast<size_t>(sel - 3) < sidebar_data.results.size()) {
-                        const music::Playlist pl = sidebar_data.results[sel - 3];
+                    if(sel >= ui::SIDEBAR_FIXED && static_cast<size_t>(sel - ui::SIDEBAR_FIXED) < sidebar_data.results.size()) {
+                        const music::Playlist pl = sidebar_data.results[sel - ui::SIDEBAR_FIXED];
                         ctx.title = pl.ref.title;
                         ctx.items.push_back({"\uf07c", "Open", play_hint, key(cfg.KEY_PLAY_NOW)});
                         ctx.items.push_back({"\uf04b", "Play", "", [&player, pl] {

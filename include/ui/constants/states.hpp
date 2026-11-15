@@ -11,7 +11,8 @@ enum class State {
     LIBRARY,
     PLAYLIST,
     ARTIST,
-    NOWPLAYING
+    NOWPLAYING,
+    EXPLORE
 };
 
 }
