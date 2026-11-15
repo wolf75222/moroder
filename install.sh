@@ -255,8 +255,14 @@ t_deps() {
         brew install "$f" || return 1
     done
     if [ -z "$need" ] && [ -n "${MORODER_UPDATING:-}" ]; then
-        set_ deps run "updating yt-dlp"
-        brew upgrade yt-dlp || true
+        # brew upgrade refreshes all of Homebrew first (a minute or more):
+        # only when yt-dlp has a newer release than the one installed.
+        latest=$(curl -fsS --max-time 5 https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest 2>/dev/null \
+                 | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+        if [ -z "$latest" ] || [ "$latest" != "$(yt-dlp --version 2>/dev/null)" ]; then
+            set_ deps run "updating yt-dlp${latest:+ to $latest} (Homebrew)"
+            brew upgrade yt-dlp || true
+        fi
     fi
     set_ deps run "${need:+installed$need, }yt-dlp $(yt-dlp --version 2>/dev/null)"
 }
