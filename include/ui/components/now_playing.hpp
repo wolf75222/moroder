@@ -30,6 +30,9 @@ struct UpNextRow {
 extern std::vector<UpNextRow> now_playing_upnext;
 // Its rows drawn last frame, with their queue index (click to play).
 extern std::vector<std::pair<ftxui::Box, int>> now_playing_upnext_boxes;
+extern ftxui::Box now_playing_upnext_area;
+extern ftxui::Box now_playing_progress_box;  // its progress line: click / drag to seek   // the column: the wheel scrolls it
+extern int now_playing_upnext_scroll;        // rows scrolled past
 
 ftxui::Element renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height);
 

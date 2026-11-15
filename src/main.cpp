@@ -847,7 +847,15 @@ int main(int argc, char *argv[]) {
 
     sidebar_data.onLibrary = [&current_state, &main_content_items, &main_content, &screen, &player, refreshing] {
         spdlog::info("SIDEBAR: Library pressed");
-        if (current_state == ui::State::LIBRARY) { player.retryLibrary(); refreshing("your library"); }
+        if (current_state == ui::State::LIBRARY) {
+            bool loading;     // already reloading: not a second time
+            {
+                std::lock_guard lock(player.state_mutex);
+                auto it = player.state.flags.find("library_playlists");
+                loading = it != player.state.flags.end() && it->second == services::Player::Flags::Ongoing;
+            }
+            if (!loading) { player.retryLibrary(); refreshing("your library"); }
+        }
         current_state = ui::State::LIBRARY;
 
         main_content_items.clear();
@@ -992,6 +1000,10 @@ int main(int argc, char *argv[]) {
             // Now Playing's "up next": a few rows after the current one, then
             // autoplay, with their queue indexes (as the queue view counts them).
             ui::now_playing_upnext.clear();
+            {
+                static const music::IStreamable* last_current = nullptr;   // a new track: up next from the top
+                if (player.state.current.get() != last_current) { last_current = player.state.current.get(); ui::now_playing_upnext_scroll = 0; }
+            }
             if (current_state == ui::State::NOWPLAYING) {
                 auto row = [](const std::shared_ptr<music::IStreamable>& item, int index, bool autoplay) {
                     ui::UpNextRow r; r.index = index; r.autoplay = autoplay;
@@ -1003,11 +1015,11 @@ int main(int argc, char *argv[]) {
                     return r;
                 };
                 const auto& uq = player.state.user_queue;
-                for (int i = std::max(0, player.state.queue_position + 1); i < static_cast<int>(uq.size()) && ui::now_playing_upnext.size() < 6; i++)
+                for (int i = std::max(0, player.state.queue_position + 1); i < static_cast<int>(uq.size()) && ui::now_playing_upnext.size() < 40; i++)
                     if (uq[i]) ui::now_playing_upnext.push_back(row(uq[i], i, false));
                 if (player.state.autoplay) {
                     const auto& rq = player.state.radio_queue;
-                    for (size_t i = 0; i < rq.size() && i < 6; i++)
+                    for (size_t i = 0; i < rq.size() && i < 40; i++)
                         if (rq[i]) ui::now_playing_upnext.push_back(row(rq[i], static_cast<int>(uq.size() + i), true));
                 }
             }
@@ -1624,6 +1636,7 @@ int main(int argc, char *argv[]) {
     // Dragging along the progress line (see the mouse handler).
     struct Scrub {
         bool active = false;
+        bool np = false;          // on Now Playing's line rather than the bar's
         std::chrono::steady_clock::time_point last{};
     } scrub;
 
@@ -1686,10 +1699,19 @@ int main(int argc, char *argv[]) {
             An open context menu takes the click first (it closes).
             */
             if (!ctx.open) {
-                const Box& p = playback_bar_data.box_progress;
+                // The bar's line, or Now Playing's own (same behaviour); a drag
+                // keeps the line it started on.
+                auto on_line = [&](const Box& b) {
+                    return b.x_max > b.x_min && b.y_min >= 0 && m.x >= b.x_min && m.x <= b.x_max && m.y >= b.y_min && m.y <= b.y_max + 1;
+                };
+                if (click) {
+                    if (current_state == ui::State::NOWPLAYING && on_line(ui::now_playing_progress_box)) scrub.np = true;
+                    else if (on_line(playback_bar_data.box_progress)) scrub.np = false;
+                }
+                const Box& p = scrub.np && current_state == ui::State::NOWPLAYING ? ui::now_playing_progress_box : playback_bar_data.box_progress;
                 const bool has_bar = p.x_max > p.x_min && p.y_min >= 0;
                 const auto fraction = [&] { return std::clamp(double(m.x - p.x_min) / double(p.x_max - p.x_min), 0.0, 1.0); };
-                if(click && has_bar && m.x >= p.x_min && m.x <= p.x_max && m.y >= p.y_min && m.y <= p.y_max + 1) {
+                if(click && on_line(p)) {
                     scrub.active = true;
                     scrub.last = std::chrono::steady_clock::now();
                     player.seekToFraction(fraction());
@@ -1850,6 +1872,16 @@ int main(int argc, char *argv[]) {
               grid under the pointer by columns (see ui/components/hscroll.hpp)
             - Elsewhere a deliberate sideways swipe goes back / forward
             */
+            // Now Playing's up next column: the wheel scrolls it, a row at a time.
+            if(wheel && current_state == ui::State::NOWPLAYING && in(ui::now_playing_upnext_area)) {
+                const auto now = std::chrono::steady_clock::now();
+                if(now - last_wheel < std::chrono::milliseconds(40)) return true;
+                last_wheel = now;
+                ui::now_playing_upnext_scroll += m.button == Mouse::WheelUp ? -1 : 1;
+                if (ui::now_playing_upnext_scroll < 0) ui::now_playing_upnext_scroll = 0;
+                return true;
+            }
+
             if(wheel || wheel_h) {
                 const bool horizontal = wheel_h || m.shift;
                 const bool back = m.button == Mouse::WheelUp || m.button == Mouse::WheelLeft;
@@ -2539,58 +2571,52 @@ int main(int argc, char *argv[]) {
         // Search suggestions, under the bar.
         auto& sb = search_bar_data;
         if (search_bar->Focused() && !sb.suggestions.empty() && sb.suggestions_for == sb.value && !sb.value.empty()) {
-            /* A panel of its own, opaque (a see-through terminal showed the
-            page through it): what you typed in grey, what the suggestion
-            adds in bold, the picked row on a lighter band with the accent bar. */
+            /* A dropdown under the search bar, lined up with it: its icons
+            under the bar's icon, the words under what you type. The page's
+            own background (no block of colour over the terminal's), the
+            picked row marked by the accent bar and bold, the rest of each
+            suggestion (what it adds to what you typed) brighter. */
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
-            const Color panel = Color::RGB(22, 22, 26), band = Color::RGB(40, 40, 46);
             const Color typed = ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY), dimc = ui::GetColor(ui::MColor::SEPARATOR_PRIMARY);
             auto lower = [](std::string t) { for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return t; };
             const std::string q = lower(sb.value);
+            const int bar_w = sb.box.x_max - sb.box.x_min + 1;
             size_t longest = 0;
             for (const auto& t : sb.suggestions) longest = std::max(longest, t.size());
-            const int W = std::clamp(static_cast<int>(longest) + 12, 40, std::max(40, std::min(72, sb.box.x_max - sb.box.x_min - 4)));
+            const int W = std::clamp(static_cast<int>(longest) + 10, std::min(48, bar_w - 2), std::max(20, std::min(80, bar_w - 2)));
 
             sb.suggestion_boxes.assign(sb.suggestions.size(), Box{});
             Elements rows;
-            rows.push_back(text(""));
             for (size_t i = 0; i < sb.suggestions.size(); i++) {
                 const std::string& t = sb.suggestions[i];
                 const bool on = static_cast<int>(i) == sb.suggestion_index;
                 const bool past = std::find(sb.history.begin(), sb.history.end(), t) != sb.history.end();
                 const size_t n = lower(t).rfind(q, 0) == 0 ? q.size() : 0;     // the part you typed
-                Element row = hbox({
+                rows.push_back(hbox({
                     text(on ? "\u258e" : " ") | color(accent),
-                    text(" "),
                     text(past ? "\uf1da" : "\uf002") | color(on ? accent : dimc),
                     text("  "),
-                    text(t.substr(0, n)) | color(on ? Color(Color::White) : typed),
-                    text(t.substr(n)) | bold | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(t.substr(0, n)) | color(on ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : typed) | (on ? bold : nothing),
+                    text(t.substr(n)) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
-                });
-                if (on) row = row | bgcolor(band);
-                rows.push_back(row | reflect(sb.suggestion_boxes[i]));
+                }) | reflect(sb.suggestion_boxes[i]));
             }
-            rows.push_back(text(""));
-            rows.push_back(hbox({ text(" "), separatorLight() | color(Color::RGB(50, 50, 56)) | flex, text(" ") }));
             rows.push_back(hbox({
-                text("  "),
-                text("\u2191\u2193") | color(typed), text(" pick   ") | color(dimc),
-                text("tab") | color(typed), text(" fill   ") | color(dimc),
-                text("enter") | color(typed), text(" search") | color(dimc),
                 filler(),
+                text("\u2191\u2193 ") | color(typed), text("pick  ") | color(dimc),
+                text("tab ") | color(typed), text("fill  ") | color(dimc),
+                text("enter ") | color(typed), text("search ") | color(dimc),
             }));
-            Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W) | bgcolor(panel)
-                | borderStyled(BorderStyle::ROUNDED, Color::RGB(60, 60, 68))
-                | bgcolor(panel);
-            // A blank cell around it: lines of the page behind don't join its border.
-            list = hbox({ text(" "), vbox({ list, text("") }), text(" ") }) | clear_under;
+            Element list = vbox(std::move(rows)) | size(WIDTH, EQUAL, W)
+                | borderStyled(BorderStyle::ROUNDED, dimc);
+            // A blank cell on each side: lines of the page don't join its border.
+            list = hbox({ text(" "), list, text(" ") }) | clear_under;
             base = dbox({
                 base,
                 vbox({
-                    // Below the line under the bar, not over it.
+                    // Right under the line beneath the bar, its border under the bar's start.
                     filler() | size(HEIGHT, EQUAL, std::max(0, sb.box.y_max + 2)),
-                    hbox({ filler() | size(WIDTH, EQUAL, std::max(0, sb.box.x_min + 3)), list, filler() }),
+                    hbox({ filler() | size(WIDTH, EQUAL, std::max(0, sb.box.x_min)), list, filler() }),
                     filler(),
                 }),
             });

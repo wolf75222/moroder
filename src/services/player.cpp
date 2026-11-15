@@ -1170,6 +1170,7 @@ void services::Player::worker_loop() {
 
             } else if constexpr (std::is_same_v<T, HomeCommand>) {
                 spdlog::info("PLAYER: HomeCommand");
+                home_queued = false;     // a click from now on is a new reload
 
                 {
                     std::lock_guard lock(state_mutex);
@@ -1825,12 +1826,24 @@ services::Player::~Player() {
 }
 
 void services::Player::getHome() {
+    // Clicking Home again and again queued a full reload each time, and
+    // whatever came next (opening a playlist) waited behind all of them.
+    if (home_queued.exchange(true)) return;
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(HomeCommand{});
     }
 
     command_cv.notify_one();
+}
+
+// What the user just asked for (a page, a search) goes before background
+// work (prefetches, like lookups, reloads). Caller holds command_mutex.
+void services::Player::pushUrgent(Command c) {
+    std::queue<Command> q;
+    q.push(std::move(c));
+    while (!command_queue.empty()) { q.push(std::move(command_queue.front())); command_queue.pop(); }
+    command_queue.swap(q);
 }
 
 void services::Player::isLoggedIn() {
@@ -1873,7 +1886,7 @@ void services::Player::search(const std::string& query) {
     }
     {
         std::lock_guard lock(command_mutex);
-        command_queue.push(SearchCommand{query});
+        pushUrgent(SearchCommand{query});   // ahead of background work
     }
 
     command_cv.notify_one();
@@ -2726,7 +2739,7 @@ void services::Player::openPlaylist(const music::PlaylistRef& ref) {
 
     {
         std::lock_guard lock(command_mutex);
-        command_queue.push(OpenPlaylistCommand{ref});
+        pushUrgent(OpenPlaylistCommand{ref});   // ahead of background work
     }
 
     command_cv.notify_one();
@@ -3443,7 +3456,7 @@ void services::Player::openAlbum(const music::AlbumRef& ref) {
 
     {
         std::lock_guard lock(command_mutex);
-        command_queue.push(OpenAlbumCommand{ref});
+        pushUrgent(OpenAlbumCommand{ref});   // ahead of background work
     }
     command_cv.notify_one();
 }
@@ -3460,7 +3473,7 @@ void services::Player::openArtist(const music::ArtistRef& ref) {
 
     {
         std::lock_guard lock(command_mutex);
-        command_queue.push(OpenArtistCommand{ref});
+        pushUrgent(OpenArtistCommand{ref});   // ahead of background work
     }
     command_cv.notify_one();
 }

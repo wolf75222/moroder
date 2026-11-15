@@ -58,12 +58,17 @@ Box ui::now_playing_artist_box{-1, -1, -1, -1};
 Box ui::now_playing_album_box{-1, -1, -1, -1};
 std::vector<ui::UpNextRow> ui::now_playing_upnext;
 std::vector<std::pair<Box, int>> ui::now_playing_upnext_boxes;
+Box ui::now_playing_upnext_area{-1, -1, -1, -1};
+Box ui::now_playing_progress_box{-1, -1, -1, -1};
+int ui::now_playing_upnext_scroll = 0;
 
 Element ui::renderNowPlaying(services::Player::PlayerState* state, double position, double duration, bool playing, int width, int height) {
     ui::lyric_boxes.clear();
     ui::now_playing_cover_box = Box{-1, -1, -1, -1};
     ui::now_playing_title_box = ui::now_playing_artist_box = ui::now_playing_album_box = Box{-1, -1, -1, -1};
     ui::now_playing_upnext_boxes.clear();
+    ui::now_playing_upnext_area = Box{-1, -1, -1, -1};
+    ui::now_playing_progress_box = Box{-1, -1, -1, -1};
     auto song = std::dynamic_pointer_cast<music::Song>(state->current);
     if (!song) {
         return text("Nothing is playing. Press v or Esc to go back.") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) | center | flex;
@@ -134,7 +139,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
             hbox({
                 text(done) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-            }),
+            }) | reflect(ui::now_playing_progress_box),
             hbox({
                 text(clock(position)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                 filler(),
@@ -153,7 +158,11 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         Elements col;
         bool in_auto = false, first = true;
         int used = 0;
-        for (const auto& r : ui::now_playing_upnext) {
+        const int total = static_cast<int>(ui::now_playing_upnext.size());
+        ui::now_playing_upnext_scroll = std::clamp(ui::now_playing_upnext_scroll, 0, std::max(0, total - 1));
+        bool more = false;
+        for (int k = ui::now_playing_upnext_scroll; k < total; k++) {
+            const auto& r = ui::now_playing_upnext[k];
             if (first || r.autoplay != in_auto) {
                 if (used + 6 > rows_room) break;      // a heading needs a row under it
                 if (!first) { col.push_back(text("")); used++; }
@@ -162,7 +171,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                 used += 2;
                 in_auto = r.autoplay; first = false;
             }
-            if (used + 3 > rows_room) break;
+            if (used + 3 > rows_room - 1) { more = true; break; }
             Element thumb = r.thumb.empty() ? ui::noCover(4, 2)
                                             : image_view(ui::cover(r.thumb)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
             ui::now_playing_upnext_boxes.emplace_back(Box{-1, -1, -1, -1}, r.index);
@@ -178,7 +187,12 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
             }) | reflect(b));
             used += 3;
         }
-        return vbox({ text(""), vbox(std::move(col)), filler() }) | size(WIDTH, EQUAL, UP_W);
+        // Rows above or below: say so (the wheel scrolls the column).
+        Element above = ui::now_playing_upnext_scroll > 0
+            ? text("\u2191 " + std::to_string(ui::now_playing_upnext_scroll) + " more") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
+            : text("");
+        Element below = more ? text("\u2193 more") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) : text("");
+        return vbox({ above, vbox(std::move(col)), text(""), below, filler() }) | size(WIDTH, EQUAL, UP_W) | reflect(ui::now_playing_upnext_area);
     };
     if (room_for_next) lyrics_w = std::max(20, lyrics_w - UP_W - 2);
 
@@ -226,7 +240,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         const int visible = std::max(5, height - 2);     // rows
         const int before = visible * 2 / 5;
         // A blank row between lines when there's room: easier to follow.
-        const int gap = height >= 28 ? 1 : 0;
+        const int gap = height >= 22 ? 1 : 0;
 
         // Rows each line takes once wrapped, to keep the current line a third
         // of the way down whatever the line lengths.
@@ -291,6 +305,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
                         if (ease < 1.f) c = Color::Interpolate(ease, ahead, c);         // fades in
                     } else {
                         c = i < cur ? sung : ahead;
+                        // Further back, fainter too.
+                        if (i < cur - 2) c = Color::Interpolate(std::min(0.6f, 0.2f * static_cast<float>(cur - 2 - i)), sung, Color::RGB(40, 40, 44));
                         // Further ahead, fainter: the eye stays near the current line.
                         if (i > cur + 2) c = Color::Interpolate(std::min(0.6f, 0.15f * static_cast<float>(i - cur - 2)), ahead, sung);
                         if (i == cur - 1 && ease < 1.f) c = Color::Interpolate(ease, bright, sung);   // fades out
@@ -311,6 +327,9 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
     // Synced lyrics fill the column; a message or plain text sits level with the cover.
     const bool synced = ours && state->lyrics->found && !state->lyrics->lines.empty();
     const bool fill = synced || lines.size() > 2;     // plain text, top down
+    // Synced lines centred in their column: balanced between the cover and
+    // up next, like a lyrics view, rather than flush left with a gap after.
+    if (synced) for (auto& l : lines) l = hbox({ filler(), std::move(l), filler() });
     Element lyrics = fill
         ? vbox({ text(""), vbox(std::move(lines)) | flex }) | flex
         : vbox({ filler(), vbox(std::move(lines)), filler() }) | flex;

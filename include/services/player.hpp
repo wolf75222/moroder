@@ -451,6 +451,8 @@ private:
 
 
     std::queue<Command> command_queue;
+    void pushUrgent(Command c);              // to the front (command_mutex held)
+    std::atomic<bool> home_queued{false};    // a HomeCommand waits: no second one
 
     std::unique_ptr<MPV> mpv_service;
     std::unique_ptr<Mpris> mpris_service;
