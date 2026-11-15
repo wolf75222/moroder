@@ -52,8 +52,9 @@ std::string shellQuote(const std::string& value);
 const char* quietStderr();
 
 /* Process
-- A program with pipes to its stdin and stdout, stderr discarded; argv[0] is
-  looked up on the PATH. Killed when destroyed
+- A program with pipes to its stdin and stdout, stderr discarded (or mixed
+  into stdout with merge_stderr); argv[0] is looked up on the PATH. Killed
+  when destroyed
 */
 class Process {
 public:
@@ -62,7 +63,7 @@ public:
     Process(const Process&) = delete;
     Process& operator=(const Process&) = delete;
 
-    bool start(const std::vector<std::string>& argv);
+    bool start(const std::vector<std::string>& argv, bool merge_stderr = false);
     bool running() const;
 
     bool write(const std::string& data);
