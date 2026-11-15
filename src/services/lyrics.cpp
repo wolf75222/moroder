@@ -134,6 +134,7 @@ services::Lyrics services::fetchLyrics(const std::string& title, const std::stri
         }
         // Words without timings rather than mistimed ones.
         for (const auto& hit : j) {
+            if (!hit.is_object()) continue;
             Lyrics l = parse(hit);
             l.lines.clear();
             if (l.plain.empty() && hit.value("plainLyrics", nlohmann::json()).is_string()) {
@@ -141,7 +142,7 @@ services::Lyrics services::fetchLyrics(const std::string& title, const std::stri
                 std::string line;
                 while (std::getline(p, line)) l.plain.push_back(line);
             }
-            l.found = !l.plain.empty();
+            l.found = l.plain.size() >= 6;     // not a stub
             if (l.found) return l;
         }
     }

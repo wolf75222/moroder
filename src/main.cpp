@@ -442,13 +442,14 @@ int main(int argc, char *argv[]) {
         std::string kind;                // "playlist" / "album"
         music::ArtistRef artist;         // ARTIST
         std::string query;               // SEARCH
+        std::string filter;              // SEARCH: its tab ("" all, "albums"...)
         // Where the page was when left (scroll, selected row): back / forward
         // land there, not at the top.
         ui::ViewportState view;
         int active = -1;
         std::string key() const {
             return std::to_string(static_cast<int>(state)) + "|" + (state == ui::State::PLAYLIST ? kind + playlist.id : "")
-                 + (state == ui::State::ARTIST ? artist.id : "") + (state == ui::State::SEARCH ? query : "");
+                 + (state == ui::State::ARTIST ? artist.id : "") + (state == ui::State::SEARCH ? query + "\x1f" + filter : "");
         }
         std::string label() const {
             switch (state) {
@@ -970,6 +971,7 @@ int main(int argc, char *argv[]) {
     // Back / forward: where to put the page once it has its rows again.
     struct Restore {
         bool pending = false;
+        std::string key;              // the page it is for (dropped on any other)
         ui::ViewportState view;
         int active = -1;
         std::chrono::steady_clock::time_point since;
@@ -987,6 +989,7 @@ int main(int argc, char *argv[]) {
 
         // Back / forward: once the page has the row it was left on (it loads
         // anew), the selection and the scroll go back where they were.
+        if (restore.pending && restore.key != nav_current.key()) restore.pending = false;   // another page now
         if (restore.pending) {
             if (n > std::max(0, restore.active) && n > 1) {
                 if (restore.active >= 0 && main_content->ChildAt(restore.active)->Focusable())
@@ -1219,7 +1222,7 @@ int main(int argc, char *argv[]) {
             now.state = current_state;
             if (current_state == ui::State::PLAYLIST && state_copy.open_playlist) { now.playlist = state_copy.open_playlist->ref; now.kind = state_copy.open_kind; }
             if (current_state == ui::State::ARTIST && state_copy.open_artist) now.artist = state_copy.open_artist->ref;
-            if (current_state == ui::State::SEARCH) now.query = last_query;
+            if (current_state == ui::State::SEARCH) { now.query = last_query; now.filter = state_copy.search_filter; }
             // The queue's way back to Now Playing holds only while on the queue.
             if (now.state != ui::State::QUEUE && now.state != ui::State::NOWPLAYING) before_queue = ui::State::HOME;
             if (now.state == ui::State::NOWPLAYING) {
@@ -1719,7 +1722,7 @@ int main(int argc, char *argv[]) {
             case ui::State::SEARCH:
                 last_query = e.query;
                 search_bar_data.value = e.query;
-                player.search(e.query);
+                player.search(e.query, e.filter);
                 break;
             case ui::State::NOWPLAYING: before_now_playing = current_state; break;
             default: break;
@@ -1769,7 +1772,7 @@ int main(int argc, char *argv[]) {
         nav_forward.push_back(nav_current);
         nav_notice("\u2190 " + target.label());
         navigate_to(target);
-        restore = { true, target.view, target.active, std::chrono::steady_clock::now() };
+        restore = { true, target.key(), target.view, target.active, std::chrono::steady_clock::now() };
         return true;
     };
     auto go_forward = [&]() -> bool {
@@ -1779,7 +1782,7 @@ int main(int argc, char *argv[]) {
         nav_back.push_back(nav_current);
         nav_notice(target.label() + " \u2192");
         navigate_to(target);
-        restore = { true, target.view, target.active, std::chrono::steady_clock::now() };
+        restore = { true, target.key(), target.view, target.active, std::chrono::steady_clock::now() };
         return true;
     };
 
@@ -2521,6 +2524,9 @@ int main(int argc, char *argv[]) {
         }
 
         if(search_bar->Focused()) {
+            // Tab with suggestions showing fills the picked one in (the bar's own key).
+            const bool suggesting = !search_bar_data.suggestions.empty() && search_bar_data.suggestions_for == search_bar_data.value;
+            if (event == Event::Tab && suggesting) return false;
             // Esc (or Tab) leaves the search bar for the page below.
             if(event == Event::Escape || event == Event::Tab || event == Event::TabReverse) {
                 close_search();

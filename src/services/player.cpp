@@ -1894,6 +1894,11 @@ void services::Player::setChartsCountry(const std::string& code) {
     {
         std::lock_guard lock(state_mutex);
         state.charts_country = code;
+        // Another page in effect: the old country's charts go, and a request
+        // still queued for them must not stop this one.
+        state.explore.clear();
+        state.explore_order.clear();
+        explore_queued = false;
     }
     getExplore("FEmusic_charts");
 }

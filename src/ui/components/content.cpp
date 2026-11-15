@@ -58,7 +58,16 @@ std::string activeLibraryFilter(ui::ChipsData* chips) {
   fetch landing
 */
 std::string librarySignature(services::Player::PlayerState* state, const std::string& filter, const std::string& query) {
-    return "__library_grid__:" + filter
+    // The contents too, not only the counts: a fresh list of the same length
+    // (an album swapped for another) must show.
+    std::string ids;
+    for (const auto& p : state->library_playlists) ids += p.ref.id;
+    for (const auto& a : state->library_albums) ids += a.ref.id;
+    for (const auto& a : state->library_artists) ids += a.id;
+    const std::string digest = std::to_string(std::hash<std::string>{}(ids));
+    // Songs are laid out in columns: the width counts.
+    const int song_cols = std::max(1, (ftxui::Terminal::Size().dimx - 38) / 42);
+    return "__library_grid__:" + digest + ":" + std::to_string(song_cols) + ":" + filter
         + ":" + query
         + ":" + std::to_string(state->library_playlists.size())
         + ":" + std::to_string(state->library_albums.size())
@@ -498,6 +507,9 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
     for (auto& item : main_content_items) {
         item.focused = item.component->Focused();
     }
+    // The first result is selected (Enter plays it), not the tabs above.
+    if (main_content_items.size() > 1 && !ui::search_has_focus) main_content_items[1].component->TakeFocus();
+
 }
 
 void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntry>& main_content_items, ftxui::Component main_content, std::function<bool(const ftxui::Event&, const int)> on_queue_press) {
