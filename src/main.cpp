@@ -2958,38 +2958,35 @@ int main(int argc, char *argv[]) {
             for (const auto& it : ctx.items) W = std::max(W, static_cast<int>(ftxui::string_width(it.label) + ftxui::string_width(it.hint)) + 11);
             // The title fits the items' width (trimmed), it doesn't widen the menu.
             W = std::min(W, 40);
-            const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
-
+            /* Like a native menu: a solid panel (the same on any terminal
+            background, see-through or not), grey icons, the picked row on a
+            lighter band in bold white. No title, no red. */
+            const Color panel = Color::RGB(28, 28, 33), band = Color::RGB(58, 58, 68);
             Elements rows;
-
-            if (!ctx.title.empty()) {
-                rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 5, "\u2026")) | dim | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)), filler() }));
-            }
-
-            // The selected row: an accent bar and accent text, no solid block.
             for (size_t i = 0; i < ctx.items.size(); i++) {
                 const auto& it = ctx.items[i];
                 const bool on = static_cast<int>(i) == ctx.hover;
-
                 Element row = hbox({
-                    text(on ? "\u258e" : " ") | color(accent),
                     text(" "),
-                    text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? accent : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
-                    text(utils::trimSuffix(it.label, std::max(4, W - 8 - static_cast<int>(ftxui::string_width(it.hint))), "\u2026")) | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                    text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
+                    text(utils::trimSuffix(it.label, std::max(4, W - 8 - static_cast<int>(ftxui::string_width(it.hint))), "\u2026"))
+                        | (on ? bold : nothing) | color(on ? Color(Color::White) : ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                     filler(),
-                    text(it.hint) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
-                    text("  "),
+                    text(it.hint) | color(on ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
+                    text(" "),
                 });
+                if (on) row = row | bgcolor(band);
                 rows.push_back(row | reflect(ctx.boxes[i]));
             }
 
             Element menu = vbox(std::move(rows))
                 | size(WIDTH, EQUAL, W)
-                | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY))
-                | bgcolor(Color::RGB(20, 20, 24)) | clear_under;
+                | bgcolor(panel)
+                | borderStyled(BorderStyle::ROUNDED, Color::RGB(64, 64, 74))
+                | bgcolor(panel) | clear_under;
 
             // Keep it on screen near the pointer.
-            const int h = static_cast<int>(ctx.items.size()) + (ctx.title.empty() ? 0 : 1) + 2;
+            const int h = static_cast<int>(ctx.items.size()) + 2;
             const int x = std::max(0, std::min(ctx.x, screen.dimx() - W - 3));
             const int y = std::max(0, std::min(ctx.y, screen.dimy() - h - 1));
             base = dbox({

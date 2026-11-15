@@ -303,7 +303,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             }
 
             Element rank_col = rank.empty() ? emptyElement() : hbox({
-                text(trend > 0 ? "\u25b2" : trend < 0 ? "\u25bc" : "\u2022")
+                text(trend > 0 ? "\u25b2" : trend < 0 ? "\u25bc" : " ")     // unchanged: nothing
                     | color(trend > 0 ? Color::RGB(46, 160, 67) : trend < 0 ? ui::GetColor(ui::MColor::ACCENT_PRIMARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text(rank) | align_right | size(WIDTH, EQUAL, 3) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
                 text("  "),

@@ -45,9 +45,10 @@ int homeCategoryRank(const std::vector<std::string>& sent_order, const std::stri
 */
 std::string activeLibraryFilter(ui::ChipsData* chips) {
     for (const auto& chip : chips->entries) {
-        if (chip.enabled) return chip.id;
+        if (chip.enabled) return chip.id == "all" ? "" : chip.id;
     }
-
+    // None picked (one clicked off): back to All, underlined like any tab.
+    for (auto& chip : chips->entries) if (chip.id == "all") chip.enabled = true;
     return "";
 }
 
@@ -793,6 +794,7 @@ void ui::buildLibrary(services::Player::PlayerState* state, std::deque<ContentEn
         filters.chips_data.exclusive = true;
 
         ui::setChipsData(&filters.chips_data, {
+            {"all", "All", true},
             {"playlists", "Playlists"},
             {"albums", "Albums"},
             {"songs", "Songs"},
@@ -1085,7 +1087,8 @@ ftxui::Component MoodGrid(const std::vector<music::ApiResult>& results, std::fun
         // One line, one colour: the name, the selected one bright and bold.
         opt.transform = [name](const EntryState& s) {
             return hbox({
-                text(s.focused ? "\u203a " : "  ") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+                // The app's red bar, like every other selected row.
+                text(s.focused ? "\u258e " : "  ") | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 text(utils::trimSuffix(name, 24, "\u2026")) | (s.focused ? bold : nothing)
                     | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY) : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                 filler(),
@@ -1170,17 +1173,9 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
             for (const auto& [c, name] : ui::chartCountries()) if (c == code) country = name;
         }
         // Loading shows beside Explore in the sidebar: no row of its own here.
-        head.component = Renderer([mood, country] {
-            ui::charts_country_box = Box{-1, -1, -1, -1};
-            if (!country.empty()) {
-                return vbox({ text(" "), hbox({ text(" "),
-                    hbox({ text(" " + country + "  \uf078 ") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) })
-                        | borderStyled(BorderStyle::ROUNDED, ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) | reflect(ui::charts_country_box) }) });
-            }
-            if (mood.empty()) return emptyElement();
-            return vbox({ text(" "), hbox({ text(" "), text(mood) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) }) });
-        });
-        // Drawn under the tabs (added after them below).
+        // Nothing of its own: the mood's name / the charts' country sit at the
+        // right end of the tabs row (no extra line).
+        head.component = Renderer([] { return emptyElement(); });
 
         // Tabs: YouTube Music's Explore buttons (a mood belongs to Moods & genres).
         main_content_items.push_back(ContentEntry{});
@@ -1197,9 +1192,20 @@ void ui::buildExplore(services::Player::PlayerState* state, std::deque<ContentEn
         };
         for (auto& c : chips) c.enabled = c.id == on;
         ui::setChipsData(&tabs.chips_data, chips);
-        tabs.component = Chips(&tabs.chips_data, &tabs.selected, &tabs.focused, on_tab);
+        auto chips_c = Chips(&tabs.chips_data, &tabs.selected, &tabs.focused, on_tab);
+        tabs.component = Renderer(chips_c, [chips_c, mood, country] {
+            ui::charts_country_box = Box{-1, -1, -1, -1};
+            Element extra = emptyElement();
+            if (!country.empty()) {
+                extra = hbox({ text(country + " ") | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
+                               text("\uf078") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) }) | reflect(ui::charts_country_box);
+            } else if (!mood.empty()) {
+                extra = text(mood) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY));
+            }
+            return hbox({ chips_c->Render(), filler(), vbox({ text(""), extra }), text("   ") });
+        });
         main_content->Add(tabs.component);
-        main_content->Add(main_content_items.front().component);     // the page's title, under the tabs
+        main_content->Add(main_content_items.front().component);
 
         for (const std::string& category : state->explore_order) {
             main_content_items.push_back(ContentEntry{});

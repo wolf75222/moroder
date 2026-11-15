@@ -25,9 +25,9 @@ void ui::getSidebarData(services::Player::PlayerState* state, ui::SidebarData* d
     const std::string spin = std::string("  ") + frames[(ui::anim_frame / 2) % 10];
     auto busy = [&](const char* f) { auto it = state->flags.find(f); return it != state->flags.end() && it->second == services::Player::Flags::Ongoing; };
     data->entries = {
-        {std::string("\uf4e2  Home") + (busy("home") ? spin : ""), ""},
-        {std::string("\uf14e  Explore") + (busy("explore") ? spin : ""), ""},
-        {std::string("\uf02e  Library") + (busy("library_playlists") || busy("library_albums") ? spin : ""), ""},
+        {std::string("\uf4e2  Home"), busy("home") ? spin : ""},
+        {std::string("\uf14e  Explore"), busy("explore") ? spin : ""},
+        {std::string("\uf02e  Library"), busy("library_playlists") || busy("library_albums") ? spin : ""},
     };
 
     data->entries_spoof = {
@@ -97,10 +97,12 @@ Component ui::Sidebar(ui::SidebarData* data, int* selected, bool* focused, std::
             });
         }
 
+        // Home / Explore / Library: a red spinner after the name while it loads
+        // (like the playback bar's).
         return hbox({
             mark(),
             vbox({
-                text(item.top) | tone(true),
+                hbox({ text(item.top) | tone(true), text(item.bottom) | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) }),
                 text("")
             })
         });

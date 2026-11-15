@@ -164,7 +164,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
             text(""),
             // The arrows level with the covers' middle, not the whole row's
             // (covers + two lines of captions sat them low).
-            ui::hscrolled(menu->Render(), &data->hscroll, 4),
+            ui::hscrolled(menu->Render(), &data->hscroll, 12),     // the covers: 10 lines + their empty border
         });
     });
 }

@@ -41,8 +41,9 @@ private:
     ftxui::Box* out_;
 };
 
-// arrow_row: the line the arrows sit on (-1: the row's middle).
-inline ftxui::Element hscrolled(ftxui::Element row, HScroll* h, int arrow_row = -1) {
+// arrow_area: the arrows are centred in the row's first arrow_area lines (its
+// covers, not the captions under them); -1: in the whole row.
+inline ftxui::Element hscrolled(ftxui::Element row, HScroll* h, int arrow_area = -1) {
     using namespace ftxui;
     if (h->offset >= 0) {
         // xframe centres the focus: a focus point half a screen in shows `offset` first.
@@ -60,11 +61,12 @@ inline ftxui::Element hscrolled(ftxui::Element row, HScroll* h, int arrow_row = 
     const int at = h->offset >= 0 ? std::min(h->offset, max_offset) : h->frame.x_min - h->inner.x_min;
     const bool can_prev = at > 0;
     const bool can_next = at < max_offset;
-    auto arrow = [arrow_row](bool on, const char* glyph, Box* box) {
+    auto arrow = [arrow_area](bool on, const char* glyph, Box* box) {
         Element a = on ? text(glyph) | bold | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(*box)
                        : text("   ");
-        if (arrow_row >= 0) return vbox({ filler() | size(HEIGHT, EQUAL, arrow_row), a, filler() }) | size(WIDTH, EQUAL, 3);
-        return vbox({ filler(), a, filler() }) | size(WIDTH, EQUAL, 3);
+        Element centred = vbox({ filler(), a, filler() });
+        if (arrow_area > 0) return vbox({ centred | size(HEIGHT, EQUAL, arrow_area), filler() }) | size(WIDTH, EQUAL, 3);
+        return centred | size(WIDTH, EQUAL, 3);
     };
     return hbox({ arrow(can_prev, " \uf053 ", &h->prev), std::move(framed) | flex, arrow(can_next, " \uf054 ", &h->next) });
 }
