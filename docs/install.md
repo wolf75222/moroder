@@ -42,9 +42,13 @@ irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
   to your user `PATH`
 - Installs Deno (yt-dlp needs a JavaScript runtime for YouTube) and the
   CaskaydiaMono Nerd Font for your user, and adds a **Moroder** profile to
-  Windows Terminal (its tab menu) that uses it: icons included. Elsewhere on
-  Windows, icons are plain symbols (`ICONS` in the config)
-- Best in Windows Terminal (colours, mouse, Unicode)
+  Windows Terminal (its tab menu) that uses it: icons included. `moroder.exe`
+  started in a console window of its own gets that font too, and its icons.
+  Elsewhere on Windows, icons are plain symbols (`ICONS` in the config)
+- Best in Windows Terminal (colours, mouse, Unicode). In the old console
+  window (conhost), whose fonts lack most symbols and block shapes, Moroder
+  draws with the characters they have and covers with half blocks
+  (`MORODER_GLYPHS=full` to keep everything, `console` to force it)
 - Settings and session live in `%USERPROFILE%\.config\moroder`, as on the
   other systems
 - `moroder setup` reads Firefox, Zen and LibreWolf sessions directly. Chrome

@@ -1,0 +1,63 @@
+diff --git a/libs/tiv_lib.cpp b/libs/tiv_lib.cpp
+index fcfe802..bbf6b45 100644
+--- a/libs/tiv_lib.cpp
++++ b/libs/tiv_lib.cpp
+@@ -344,6 +344,10 @@ CharData findCharData(GetPixelFunction get_pixel, int x0, int y0,
+         if ((BITMAPS[i + 2] & flags) != BITMAPS[i + 2]) {
+             continue;
+         }
++        if ((flags & FLAG_HALF_BLOCKS) && BITMAPS[i + 1] != 0x00a0 &&
++            BITMAPS[i + 1] != 0x2584 && BITMAPS[i + 1] != 0x258c) {
++            continue;
++        }
+         unsigned int pattern = BITMAPS[i];
+         for (int j = 0; j < 2; j++) {
+             int diff = (std::bitset<32>(pattern ^ bits)).count();
+diff --git a/libs/tiv_lib.h b/libs/tiv_lib.h
+index d97dbe7..632e169 100644
+--- a/libs/tiv_lib.h
++++ b/libs/tiv_lib.h
+@@ -38,6 +38,10 @@
+ #include <functional>
+ 
+ constexpr int FLAG_TELETEXT = 32;  // Bitset flag to use teletext characters.
++// Only a space and the lower / left half blocks: the characters every console
++// font has (the Windows console's fonts have no quadrants or scan lines, and
++// no font fallback, so the others came out as boxes).
++constexpr int FLAG_HALF_BLOCKS = 64;
+ // 32 for backwards-compatibility reasons
+ // as this was introduced after other bitset flags for the tiv CLI
+ 
+diff --git a/src/image_view.cpp b/src/image_view.cpp
+index 0a3326d..e676b80 100644
+--- a/src/image_view.cpp
++++ b/src/image_view.cpp
+@@ -6,6 +6,7 @@
+ #include <atomic>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdlib>
+ #include <sstream>
+ #include <utility>
+ #include <memory>
+@@ -122,7 +123,19 @@ cimg_library::CImg<unsigned char> LoadImageRGB(const char* const filename) {
+ // effect, but that flag (and the whole idea of a "color mode" flag) no
+ // longer exists now that tiv_lib doesn't know about color modes at all
+ // -- we always build truecolor ftxui::Color values directly below.
+-constexpr int kCharSelectionFlags = 0;
++// MORODER_COVER_BLOCKS=half (set by the app for the Windows console) keeps
++// to the half blocks every console font has; see FLAG_HALF_BLOCKS. Read when
++// the first cover is drawn, not at static init: the app sets it in main().
++struct CharSelectionFlags {
++    operator int() const {
++        static const int flags = [] {
++            const char* v = std::getenv("MORODER_COVER_BLOCKS");
++            return v != nullptr && std::string(v) == "half" ? FLAG_HALF_BLOCKS : 0;
++        }();
++        return flags;
++    }
++};
++const CharSelectionFlags kCharSelectionFlags{};
+ 
+ // ---- Hashing helper for the composite cache keys below ----
+ 

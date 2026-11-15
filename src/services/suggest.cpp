@@ -1,5 +1,6 @@
 #include "../../include/services/suggest.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
@@ -21,7 +22,7 @@ std::vector<std::string> services::searchSuggestions(const std::string& input) {
     const std::string payload = body.dump();
 
     std::string response;
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return out;
     curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");

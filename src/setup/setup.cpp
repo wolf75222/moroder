@@ -713,7 +713,8 @@ std::string ytdlpPython() {
 /* cookiesViaYtdlpCli
 - The same with no Python at hand (yt-dlp.exe on Windows, a standalone
   build): yt-dlp itself saves the browser's cookies to a file on its way out,
-  after an empty search that never touches the network
+  given no URL, so it never touches the network (its usage error has no
+  "ERROR:", which leaves those to the cookie store's problems)
 */
 std::string cookiesViaYtdlpCli(const FoundBrowser& b, std::string& error) {
     /* The jar is a Google session: never in the shared temp folder. A 0600
@@ -727,10 +728,13 @@ std::string cookiesViaYtdlpCli(const FoundBrowser& b, std::string& error) {
     char name[40];
     std::snprintf(name, sizeof name, ".cookies-%08x%08x.txt", rd(), rd());
     const fs::path file = dir / name;
-    if (!platform::writePrivateFile(file, "")) { error = "couldn't create a private file in " + dir.string(); return ""; }
+    // yt-dlp reads the file before writing it, and an empty one isn't a
+    // cookie file to it: it stops there. The header alone is.
+    if (!platform::writePrivateFile(file, "# Netscape HTTP Cookie File\n")) { error = "couldn't create a private file in " + dir.string(); return ""; }
     platform::Process p;
+    // Its stderr too: the reason, when there's one.
     if (!p.start({ "yt-dlp", "--cookies-from-browser", b.ytdlp_spec, "--cookies", file.string(),
-                   "--skip-download", "--no-warnings", "--quiet", "ytsearch0:moroder" })) { error = "couldn't start yt-dlp"; return ""; }
+                   "--no-warnings", "--quiet" }, true)) { error = "couldn't start yt-dlp"; return ""; }
     p.closeStdin();
     std::string said;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);

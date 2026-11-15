@@ -5,6 +5,7 @@
 #include "../../include/utils/platform.hpp"
 #include "../../include/ytm/ytmusic.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
@@ -65,7 +66,7 @@ size_t collect(char* d, size_t s, size_t n, void* out) {
 // A repository's latest release tag without the "v" ("1.2.0"), "" when unknown (offline, timeout).
 std::string latestRelease(long timeout_ms, const std::string& repo = MORODER_REPO) {
     std::string body;
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return "";
     const std::string url = "https://api.github.com/repos/" + repo + "/releases/latest";
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
@@ -145,7 +146,7 @@ void quietly(const std::string& cmd) {
 
 // Milliseconds for a HEAD request, -1 when it fails.
 long pingMs(const std::string& url, long timeout_ms) {
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return -1;
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_NOBODY, 1L);
@@ -459,7 +460,20 @@ static void removeLaunchers(bool always) {
     fs::remove(dir / L"moroder.cmd", ec);
     fs::remove(dir / L"moroder", ec);
 }
-void services::update::tidyLaunchers() { removeLaunchers(false); }
+void services::update::tidyLaunchers() {
+    removeLaunchers(false);
+    /* The copy an update replaced while it ran: install.ps1 moves it into a
+    .old-* folder beside the new one and only deletes it on the next
+    install, so ~200 MB stayed there for a whole release. Free now, it goes;
+    still in use, it stays for the next launch. */
+    const std::string self = platform::selfPath();
+    if (self.empty()) return;
+    std::error_code ec;
+    for (fs::directory_iterator it(fs::u8path(self).parent_path(), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e;
+        if (it->is_directory(e) && it->path().filename().wstring().rfind(L".old-", 0) == 0) fs::remove_all(it->path(), e);
+    }
+}
 #else
 void services::update::tidyLaunchers() {}
 #endif
@@ -539,6 +553,10 @@ int services::update::uninstall() {
             std::error_code e;
             if (fs::exists(fragment, e)) { fs::remove_all(fragment, e); live.set(live.add("WT profile"), e ? State::Fail : State::Ok, e ? e.message() : "removed"); }
         }
+        // The console window settings install.ps1 gave moroder.exe (its Nerd Font).
+        std::string console_key = fs::path(bin).string();
+        for (auto& c : console_key) if (c == '\\' || c == '/') c = '_';
+        quietly("reg delete \"HKCU\\Console\\" + console_key + "\" /f");
     }
 #else
     remove("program", bin);

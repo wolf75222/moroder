@@ -15,6 +15,7 @@
 #include "../../include/utils/platform.hpp"
 #include "../../include/utils/utils.hpp"
 
+#include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
@@ -80,7 +81,7 @@ public:
     ~WebSocket() { if (curl_) curl_easy_cleanup(curl_); }
 
     bool open(int port, const std::string& path) {
-        curl_ = curl_easy_init();
+        curl_ = utils::newCurl();
         if (!curl_) return false;
         curl_easy_setopt(curl_, CURLOPT_URL, ("http://127.0.0.1:" + std::to_string(port)).c_str());
         curl_easy_setopt(curl_, CURLOPT_CONNECT_ONLY, 1L);
@@ -205,7 +206,7 @@ size_t collect(char* d, size_t s, size_t n, void* out) {
 
 // Open tabs (pages); -1 when the browser doesn't answer.
 int pageCount(int port) {
-    CURL* c = curl_easy_init();
+    CURL* c = utils::newCurl();
     if (!c) return -1;
     std::string body;
     curl_easy_setopt(c, CURLOPT_URL, ("http://127.0.0.1:" + std::to_string(port) + "/json/list").c_str());

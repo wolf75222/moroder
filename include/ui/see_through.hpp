@@ -52,6 +52,20 @@ public:
             }
         }
         children_[0]->Render(screen);
+
+        /* Box-drawing cells join their neighbours when the frame is drawn: the
+        pop-up's border took the lines of the page around it ("┴" where the
+        sidebar's rule met the keys sheet, "├" on its sides). Its outer ring
+        stays as drawn.
+        */
+        for (int x = box_.x_min; x <= box_.x_max; ++x) {
+            screen.CellAt(x, box_.y_min).automerge = false;
+            screen.CellAt(x, box_.y_max).automerge = false;
+        }
+        for (int y = box_.y_min; y <= box_.y_max; ++y) {
+            screen.CellAt(box_.x_min, y).automerge = false;
+            screen.CellAt(box_.x_max, y).automerge = false;
+        }
     }
 
 private:

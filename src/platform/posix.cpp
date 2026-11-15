@@ -44,6 +44,8 @@ int terminalColumns() {
     return ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 20 ? w.ws_col : 80;
 }
 
+std::string consoleFontName() { return {}; }
+
 int shell(const std::string& command_line, std::string* out, bool merge_stderr) {
     FILE* p = popen((command_line + (merge_stderr ? " 2>&1" : "")).c_str(), "r");
     if (!p) return -1;
@@ -111,7 +113,7 @@ int exitCode(int status) { return WIFEXITED(status) ? WEXITSTATUS(status) : -1; 
 Process::Process() : impl_(std::make_unique<Impl>()) {}
 Process::~Process() { kill(); }
 
-bool Process::start(const std::vector<std::string>& args) {
+bool Process::start(const std::vector<std::string>& args, bool merge_stderr) {
     kill();
     if (args.empty()) return false;
     int in[2], out[2];
@@ -130,7 +132,8 @@ bool Process::start(const std::vector<std::string>& args) {
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, in[0], STDIN_FILENO);
     posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    if (merge_stderr) posix_spawn_file_actions_adddup2(&actions, out[1], STDERR_FILENO);
+    else posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
 
     // Only the fds set up above reach the child (other spawns' pipes would
     // keep their readers from ever seeing EOF).

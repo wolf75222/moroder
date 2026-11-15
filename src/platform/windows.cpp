@@ -98,6 +98,25 @@ int terminalColumns() {
     return 80;
 }
 
+// CONSOLE_FONT_INFOEX and GetCurrentConsoleFontEx sit behind NOGDI in the
+// headers (kept on project-wide: GDI's RGB macro clashes with FTXUI's).
+struct ConsoleFontInfoEx {
+    ULONG cbSize;
+    DWORD nFont;
+    COORD dwFontSize;
+    UINT FontFamily;
+    UINT FontWeight;
+    WCHAR FaceName[32];   // LF_FACESIZE
+};
+extern "C" __declspec(dllimport) BOOL WINAPI GetCurrentConsoleFontEx(HANDLE, BOOL, ConsoleFontInfoEx*);
+
+std::string consoleFontName() {
+    ConsoleFontInfoEx info{};
+    info.cbSize = sizeof(info);
+    if (!GetCurrentConsoleFontEx(GetStdHandle(STD_OUTPUT_HANDLE), FALSE, &info)) return {};
+    return narrow(info.FaceName);
+}
+
 int shell(const std::string& command_line, std::string* out, bool merge_stderr) {
     // cmd.exe needs the whole line quoted once more when it starts with a quote.
     const std::wstring cmd = L"\"" + wide(command_line + (merge_stderr ? " 2>&1" : "")) + L"\"";
@@ -149,7 +168,7 @@ struct Process::Impl {
 Process::Process() : impl_(std::make_unique<Impl>()) {}
 Process::~Process() { kill(); }
 
-bool Process::start(const std::vector<std::string>& args) {
+bool Process::start(const std::vector<std::string>& args, bool merge_stderr) {
     kill();
     if (args.empty()) return false;
 
@@ -160,19 +179,23 @@ bool Process::start(const std::vector<std::string>& args) {
     // Our ends stay with us; only the child's ends are inherited.
     SetHandleInformation(in_write, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
-    HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    // No NUL when stderr goes to stdout: the fallback below sends it there.
+    HANDLE nul = merge_stderr ? INVALID_HANDLE_VALUE
+                              : CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
 
     std::wstring cmdline;
     for (const auto& a : args) { if (!cmdline.empty()) cmdline += L' '; cmdline += quoteArg(wide(a)); }
 
-    // Only these three handles reach the child, whatever else is inheritable.
+    // Only these handles reach the child (two when stderr shares stdout's
+    // pipe), whatever else is inheritable.
     HANDLE inherit[3] = {in_read, out_write, nul};
+    const SIZE_T inherited = (nul != INVALID_HANDLE_VALUE ? 3 : 2) * sizeof(HANDLE);
     SIZE_T size = 0;
     InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
     std::vector<char> attr_buf(size);
     auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
     bool attrs_ok = InitializeProcThreadAttributeList(attrs, 1, 0, &size) &&
-        UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof(inherit), nullptr, nullptr);
+        UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, inherited, nullptr, nullptr);
 
     STARTUPINFOEXW si{};
     si.StartupInfo.cb = sizeof(si);

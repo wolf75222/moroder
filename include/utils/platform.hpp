@@ -31,6 +31,10 @@ fs::path homeDir();
 // Columns of the terminal on stdout, 80 when unknown.
 int terminalColumns();
 
+// The font of the console window stdout is in (Windows' own console); ""
+// elsewhere or when unknown. Under Windows Terminal it says nothing useful.
+std::string consoleFontName();
+
 /* shell
 - Runs a command line through the system shell (sh, cmd.exe), its stdout
   (and stderr when merge_stderr) into *out; returns the exit code, -1 when it
@@ -52,8 +56,9 @@ std::string shellQuote(const std::string& value);
 const char* quietStderr();
 
 /* Process
-- A program with pipes to its stdin and stdout, stderr discarded; argv[0] is
-  looked up on the PATH. Killed when destroyed
+- A program with pipes to its stdin and stdout, stderr discarded (or mixed
+  into stdout with merge_stderr); argv[0] is looked up on the PATH. Killed
+  when destroyed
 */
 class Process {
 public:
@@ -62,7 +67,7 @@ public:
     Process(const Process&) = delete;
     Process& operator=(const Process&) = delete;
 
-    bool start(const std::vector<std::string>& argv);
+    bool start(const std::vector<std::string>& argv, bool merge_stderr = false);
     bool running() const;
 
     bool write(const std::string& data);
