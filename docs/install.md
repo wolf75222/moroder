@@ -18,6 +18,10 @@ curl -fsSL https://raw.githubusercontent.com/wolf75222/moroder/main/install.sh |
   Debian/Ubuntu yt-dlp gets its own up-to-date Python environment, since the
   distribution's package lags behind YouTube
 - Puts `moroder` on your `PATH` (zsh, bash, fish or `~/.profile`, if needed)
+- Installs the Symbols Nerd Font for your user when no Nerd Font is there, so
+  the icons show in terminals that fall back to installed fonts (most Linux
+  ones). Ghostty, kitty, WezTerm and Warp have them built in; in iTerm2, add
+  "Symbols Nerd Font Mono" as its non-ASCII font, or set `ICONS = "plain"`
 - Shows what it installs and where, with the independent steps running side
   by side (dependencies and download, or dependencies and source)
 
@@ -36,6 +40,10 @@ irm https://raw.githubusercontent.com/wolf75222/moroder/main/install.ps1 | iex
   with libmpv and the DLLs it needs, into `%LOCALAPPDATA%\Programs\moroder`
 - Adds `yt-dlp.exe` next to it when yt-dlp isn't installed, and the folder
   to your user `PATH`
+- Installs Deno (yt-dlp needs a JavaScript runtime for YouTube) and the
+  CaskaydiaMono Nerd Font for your user, and adds a **Moroder** profile to
+  Windows Terminal (its tab menu) that uses it: icons included. Elsewhere on
+  Windows, icons are plain symbols (`ICONS` in the config)
 - Best in Windows Terminal (colours, mouse, Unicode)
 - Settings and session live in `%USERPROFILE%\.config\moroder`, as on the
   other systems

@@ -36,6 +36,7 @@ jobs:
           install: >-
             git
             zip
+            unzip
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
@@ -78,7 +79,13 @@ jobs:
           ntldd -R build/moroder.exe | grep -io '[a-z]:\\[^ ]*ucrt64\\bin\\[^ ]*\.dll' | sort -u | while read -r dll; do
             cp "$(cygpath -u "$dll")" "dist/$name/"
           done
-          ls "dist/$name"
+          # CaskaydiaMono Nerd Font (Cascadia with the icons), for the Windows
+          # Terminal profile install.ps1 adds: two files of the family, OFL.
+          mkdir -p "dist/$name/fonts"
+          curl -fsSL -o nf.zip https://github.com/ryanoasis/nerd-fonts/releases/latest/download/CascadiaMono.zip
+          unzip -oq -j nf.zip 'CaskaydiaMonoNerdFontMono-Regular.ttf' 'CaskaydiaMonoNerdFontMono-Bold.ttf' -d "dist/$name/fonts"
+          unzip -oq -j nf.zip 'LICENSE*' -d "dist/$name/fonts" || true
+          ls "dist/$name" "dist/$name/fonts"
           (cd dist && zip -qr "$name.zip" "$name" && sha256sum "$name.zip" > "$name.zip.sha256")
           echo "name=$name" >> "$GITHUB_OUTPUT"
 

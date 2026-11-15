@@ -483,6 +483,12 @@ int services::update::uninstall() {
                 "[Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')\"");
         std::system(("start \"\" /min cmd /c \"timeout /t 2 >NUL & rmdir /s /q " + platform::shellQuote(dir) + "\"").c_str());
         live.set(id, State::Ok, dir + "  (removed in a moment)");
+        // The Windows Terminal profile install.ps1 added (the font stays: other apps may use it).
+        if (const char* local = std::getenv("LOCALAPPDATA")) {
+            const fs::path fragment = fs::path(local) / "Microsoft" / "Windows Terminal" / "Fragments" / "Moroder";
+            std::error_code e;
+            if (fs::exists(fragment, e)) { fs::remove_all(fragment, e); live.set(live.add("WT profile"), e ? State::Fail : State::Ok, e ? e.message() : "removed"); }
+        }
     }
 #else
     remove("program", bin);

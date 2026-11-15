@@ -108,6 +108,37 @@ try {
         Ok "JS runtime" ("deno " + ((& $KeepDeno --version) -split "\s+")[1])
     }
 
+    # Icons: CaskaydiaMono Nerd Font (Cascadia with the icons) for this user,
+    # and a "Moroder" profile in Windows Terminal that uses it. The profile is
+    # a settings fragment of its own: your settings.json isn't touched.
+    $Fonts = Join-Path $Prefix "fonts"
+    if (Test-Path $Fonts) {
+        $UserFonts = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
+        New-Item -ItemType Directory -Path $UserFonts -Force | Out-Null
+        $Reg = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+        if (-not (Test-Path $Reg)) { New-Item -Path $Reg -Force | Out-Null }
+        foreach ($ttf in Get-ChildItem $Fonts -Filter *.ttf) {
+            $Target = Join-Path $UserFonts $ttf.Name
+            if (-not (Test-Path $Target)) { Copy-Item $ttf.FullName $Target -Force }
+            $Style = if ($ttf.Name -like "*Bold*") { "Bold" } else { "Regular" }
+            New-ItemProperty -Path $Reg -Name "CaskaydiaMono Nerd Font Mono $Style (TrueType)" -Value $Target -PropertyType String -Force | Out-Null
+        }
+        $Fragment = Join-Path $env:LOCALAPPDATA "Microsoft\Windows Terminal\Fragments\Moroder"
+        New-Item -ItemType Directory -Path $Fragment -Force | Out-Null
+        $Profile = @{
+            profiles = @(@{
+                guid = "{6f1b2d6e-3a4c-4f0e-9b7a-6d0f2c1e9a51}"
+                name = "Moroder"
+                commandline = "cmd.exe /c set MORODER_ICONS=nerd&& `"$Prefix\moroder.exe`""
+                startingDirectory = "%USERPROFILE%"
+                font = @{ face = "CaskaydiaMono Nerd Font Mono" }
+                closeOnExit = "graceful"
+            })
+        }
+        $Profile | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Fragment "moroder.json") -Encoding UTF8
+        Ok "Icons" "CaskaydiaMono Nerd Font + a Moroder profile in Windows Terminal"
+    }
+
     # On the user PATH (new terminals), and in this one.
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not (($UserPath -split ";") -contains $Prefix)) {
@@ -128,9 +159,10 @@ Write-Host "  ✓ " -ForegroundColor Green -NoNewline
 Write-Host "Moroder $Version is installed" -NoNewline
 Write-Host " ($Took s)" -ForegroundColor DarkGray
 if (Test-Path (Join-Path $HOME ".config\moroder\browser.json")) {
-    Write-Host "    Run moroder"
+    Write-Host "    Run moroder, or open the Moroder profile in Windows Terminal (icons)"
 } else {
     Write-Host "    Next: moroder setup to sign in once, then moroder"
+    Write-Host "    In Windows Terminal, the Moroder profile (tab menu) shows the icons" -ForegroundColor DarkGray
     Write-Host "    No account? moroder -a" -ForegroundColor DarkGray
 }
 Write-Host ""

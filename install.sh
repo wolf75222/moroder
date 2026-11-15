@@ -276,6 +276,20 @@ t_js() {
     set_ js run "deno $("$PREFIX/bin/deno" --version 2>/dev/null | head -n1 | cut -d' ' -f2)"
 }
 
+# Icons: Moroder draws Nerd Font glyphs. The symbols-only Nerd Font, for this
+# user, lets terminals that fall back to installed fonts show them (most Linux
+# terminals; on macOS Ghostty, kitty, WezTerm and Warp bundle them anyway).
+t_font() {
+    if [ "$OS" = "Darwin" ]; then dir="$HOME/Library/Fonts"; else dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts"; fi
+    if ls "$dir" 2>/dev/null | grep -qi "NerdFont"; then set_ font run "a Nerd Font is installed"; return 0; fi
+    have unzip || { set_ font skip "unzip missing, icons may show as boxes"; return 0; }
+    set_ font run "Symbols Nerd Font"
+    curl -fsSL -o "$TMP/nf.zip" https://github.com/ryanoasis/nerd-fonts/releases/latest/download/NerdFontsSymbolsOnly.zip || return 1
+    mkdir -p "$dir" && unzip -oq -j "$TMP/nf.zip" 'SymbolsNerdFontMono-Regular.ttf' -d "$dir" || return 1
+    have fc-cache && fc-cache -f "$dir" >/dev/null 2>&1
+    set_ font run "Symbols Nerd Font in $dir"
+}
+
 t_tools() {      # building on a Mac also needs these
     for f in cmake pkg-config; do
         brew list --versions "$f" >/dev/null 2>&1 && continue
@@ -380,11 +394,12 @@ printf '\n'
 [ "$LIVE" = 1 ] && printf '%s[?25l' "${ESC}"
 
 task deps "Dependencies"
+task font "Icons font"
 if [ "$PREBUILT" = 1 ]; then
     task download "Download"
     task install  "Install"
     task path     "PATH"
-    run deps download             # side by side
+    run deps download font        # side by side
 else
     [ "$OS" = "Darwin" ] && task tools "Build tools"
     [ "$OS" = "Linux" ] && task js "JS runtime"
@@ -392,7 +407,7 @@ else
     task build   "Compile"
     task install "Install"
     task path    "PATH"
-    if [ "$OS" = "Darwin" ]; then run deps tools fetch; else run deps js fetch; fi
+    if [ "$OS" = "Darwin" ]; then run deps tools fetch font; else run deps js fetch font; fi
     run build
 fi
 run install
