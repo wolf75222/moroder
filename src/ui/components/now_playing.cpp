@@ -377,7 +377,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     return hbox({
         text("   "),
-        vbox({ filler(), cover, track_block(false), filler() }),
+        vbox({ filler(), cover, track_block(true), filler() }),     // centred under the cover
         text("      "),
         lyrics,
         room_for_next ? hbox({ text("  "), up_next(height - 2) }) : emptyElement(),
