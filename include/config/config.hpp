@@ -116,6 +116,7 @@ public:
     bool ENABLE_NOTIFICATIONS         = true;
     bool ENABLE_LYRICS                = true;
     bool NOW_PLAYING_UP_NEXT          = false;   // up next beside the lyrics
+    std::string CHARTS_COUNTRY        = "ZZ";    // Explore > Charts: "ZZ" global, or "FR", "US"...
     std::string KEY_NOW_PLAYING       = "v";
     int VOLUME_STEP                   = 5;
     std::string KEY_MUTE              = "m";
@@ -681,6 +682,7 @@ private:
             {"ENABLE_NOTIFICATIONS", makeSetter(&Config::ENABLE_NOTIFICATIONS),  true},
             {"ENABLE_LYRICS",        makeSetter(&Config::ENABLE_LYRICS),         true},
             {"NOW_PLAYING_UP_NEXT",  makeSetter(&Config::NOW_PLAYING_UP_NEXT),   true},
+            {"CHARTS_COUNTRY",       makeSetter(&Config::CHARTS_COUNTRY),        true},
             {"KEY_NOW_PLAYING",      makeSetter(&Config::KEY_NOW_PLAYING),       true},
             {"VOLUME_STEP",          makeSetter(&Config::VOLUME_STEP),           true},
             {"KEY_MUTE",             makeSetter(&Config::KEY_MUTE),              true},

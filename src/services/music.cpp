@@ -395,7 +395,9 @@ std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::
 }
 
 std::unordered_map<std::string, std::vector<music::ApiResult>> services::Music::getExplore(const std::string& browseId, const std::string& params) {
-    nlohmann::json sections = ytm->getBrowse(browseId, 6, params);
+    // Charts: global unless a country is set (YouTube picks yours otherwise).
+    const std::string country = browseId == "FEmusic_charts" ? Config::get().CHARTS_COUNTRY : "";
+    nlohmann::json sections = ytm->getBrowse(browseId, 6, params, country);
     captureError("explore");
 
     ipc::HomeResponse response;

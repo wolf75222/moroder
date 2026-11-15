@@ -277,7 +277,8 @@ playlist; right-click a track, *Add to playlist…*, to add it to one of yours
 - **Queue** (<kbd>a</kbd>, or the queue icon in the playback bar; again to go back).
 - **Recently played** is the first home shelf.
 - **Explore** (sidebar): YouTube Music's Explore page, new albums & singles,
-  trending, new videos. Click it again to refresh it.
+  trending, new videos. Click it again to refresh it. Tabs: New releases,
+  Charts (global; `CHARTS_COUNTRY = "FR"` for a country's), Moods & genres.
 
 ### Trying things out
 
