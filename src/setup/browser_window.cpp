@@ -228,12 +228,13 @@ void closeBrowser(int port, const std::string& path) {
 }
 
 bool signedIn(const std::string& cookie) {
-    // First-party sign-in cookies (see hasLogin in setup.cpp).
-    for (const char* name : {"SAPISID=", "__Secure-1PAPISID="}) {
+    // The sign-in cookies (see hasLogin in setup.cpp).
+    auto has = [&](const char* name) {
         for (size_t at = cookie.find(name); at != std::string::npos; at = cookie.find(name, at + 1))
             if (at == 0 || cookie[at - 1] == ' ' || cookie[at - 1] == ';') return true;
-    }
-    return false;
+        return false;
+    };
+    return has("SAPISID=") || has("__Secure-1PAPISID=") || (has("__Secure-3PAPISID=") && has("LOGIN_INFO="));
 }
 
 }

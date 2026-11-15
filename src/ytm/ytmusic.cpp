@@ -46,12 +46,27 @@ std::string clientVersion() {
     return std::string("1.") + buf + ".01.00";
 }
 
+std::string cookieValue(const std::string& raw, const std::string& name);
+
 /* authorizationHeader
-- Reverse-engineered SAPISIDHASH scheme Google uses for cookie-authed calls.
+- Google's hashes for cookie-authed calls, one per login cookie the session
+  has, as the browser sends them: SAPISIDHASH (SAPISID), SAPISID1PHASH
+  (__Secure-1PAPISID), SAPISID3PHASH (__Secure-3PAPISID). Recent Chromium
+  (Arc) may keep only the 3P ones: then the 3P value also signs the plain one
+- Each is "<scheme> <time>_<sha1(time value origin)>", space separated
 */
-std::string authorizationHeader(const std::string& sapisid, const std::string& origin) {
-    std::string ts = std::to_string(static_cast<long long>(std::time(nullptr)));
-    return "SAPISIDHASH " + ts + "_" + sha1Hex(ts + " " + sapisid + " " + origin);
+std::string authorizationHeader(const std::string& cookie, const std::string& origin) {
+    const std::string ts = std::to_string(static_cast<long long>(std::time(nullptr)));
+    auto hash = [&](const char* scheme, const std::string& value) {
+        return std::string(scheme) + " " + ts + "_" + sha1Hex(ts + " " + value + " " + origin);
+    };
+    const std::string plain = cookieValue(cookie, "SAPISID");
+    const std::string first = cookieValue(cookie, "__Secure-1PAPISID");
+    const std::string third = cookieValue(cookie, "__Secure-3PAPISID");
+    std::string out = hash("SAPISIDHASH", !plain.empty() ? plain : !third.empty() ? third : first);
+    if (!first.empty()) out += " " + hash("SAPISID1PHASH", first);
+    if (!third.empty()) out += " " + hash("SAPISID3PHASH", third);
+    return out;
 }
 
 /* cookieValue
@@ -300,7 +315,7 @@ std::vector<std::string> YTMusic::buildHeaders() {
     };
 
     if (authenticated) {
-        add("authorization", authorizationHeader(sapisid, origin));
+        add("authorization", authorizationHeader(auth_headers.value("cookie", std::string()), origin));
         add("X-Origin", origin);
     }
 

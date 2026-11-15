@@ -208,11 +208,18 @@ bool hasLogin(const fs::path& store, const char* hosts) {
     sqlite3* db = nullptr;
     if (!ec && sqlite3_open_v2(tmpl.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
         sqlite3_stmt* st = nullptr;
-        // A first-party sign-in on youtube.com: the __Secure-3P ones alone also
-        // come from YouTube embedded on other sites, without being signed in.
-        const std::string sql = std::string("SELECT 1 FROM cookies WHERE host_key IN (") + hosts + ") "
-                                "AND name IN ('SAPISID', '__Secure-1PAPISID')" + unpartitioned(db) + " LIMIT 1";
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) found = true;
+        // Signed in: SAPISID or __Secure-1PAPISID, or __Secure-3PAPISID with
+        // LOGIN_INFO (recent Chromium, Arc). The 3P ones alone also come from
+        // YouTube embedded on other sites; LOGIN_INFO only from signing in.
+        const std::string where = std::string(" FROM cookies WHERE host_key IN (") + hosts + ")" + unpartitioned(db);
+        const std::string sql = "SELECT (SELECT COUNT(*)" + where + " AND name IN ('SAPISID', '__Secure-1PAPISID')),"
+                                " (SELECT COUNT(*)" + where + " AND name = '__Secure-3PAPISID'),"
+                                " (SELECT COUNT(*)" + where + " AND name = 'LOGIN_INFO')";
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) {
+            const bool google = std::string(hosts).find("google") != std::string::npos;
+            found = sqlite3_column_int(st, 0) > 0 ||
+                    (!google && sqlite3_column_int(st, 1) > 0 && sqlite3_column_int(st, 2) > 0);
+        }
         sqlite3_finalize(st);
     }
     sqlite3_close(db);

@@ -858,13 +858,15 @@ std::vector<Account> accountsIn(const std::string& browser, bool native, const s
 }
 
 /* hasLogin
-- A first-party YouTube sign-in: SAPISID or __Secure-1PAPISID. The
-  __Secure-3P ones alone also come from YouTube embedded on other sites
-  (a browser signed in to Google but never to youtube.com), and YouTube
-  Music doesn't accept them as a session
+- A YouTube sign-in: SAPISID or __Secure-1PAPISID, or, as recent Chromium
+  (Arc) keeps it, __Secure-3PAPISID together with LOGIN_INFO (which only
+  signing in to youtube.com sets: a video embedded on another site leaves the
+  3P cookies, not that one). YouTube Music has the last word: setup asks it
+  whose account this is
 */
 bool hasLogin(const std::string& cookie) {
-    return !cookieValue(cookie, "SAPISID").empty() || !cookieValue(cookie, "__Secure-1PAPISID").empty();
+    if (!cookieValue(cookie, "SAPISID").empty() || !cookieValue(cookie, "__Secure-1PAPISID").empty()) return true;
+    return !cookieValue(cookie, "__Secure-3PAPISID").empty() && !cookieValue(cookie, "LOGIN_INFO").empty();
 }
 
 std::string prettyBrowser(const std::string& name) {
