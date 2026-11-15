@@ -1,4 +1,5 @@
 #include "../../include/ui/viewport.hpp"
+#include "../../include/ui/anim.hpp"
 
 #include <ftxui/dom/node.hpp>
 #include <ftxui/screen/screen.hpp>
@@ -73,6 +74,25 @@ public:
 
         y = std::max(0, std::min(y, std::max(0, total - view)));
 
+        /* Smooth scrolling: the picture glides to y over a few frames
+        (ease-out) instead of jumping. Where the last frame was, in this
+        window's lines; a jump of more than two screens (another page, a
+        far selection) is not animated. The layout below uses the eased
+        position; anchor / line stay the real one. */
+        int shown = y;
+        {
+            const int prev = slot(state_->shown_anchor);
+            if (prev >= 0) {
+                const double was = top[prev] + state_->shown_line + state_->lag;
+                state_->lag = was - y;
+                if (std::abs(state_->lag) > 2.0 * view) state_->lag = 0;
+            } else {
+                state_->lag = 0;
+            }
+            ui::anim::approach(state_->lag, 0.0, 0.5, 0.5);
+            shown = std::max(0, std::min(y + static_cast<int>(std::lround(state_->lag)), std::max(0, total - view)));
+        }
+
         // Back to page index + line.
         state_->anchor = n > 0 ? indices_.front() : 0;
         state_->line = y;
@@ -80,6 +100,8 @@ public:
             if (top[i + 1] > y) { state_->anchor = indices_[i]; state_->line = y - top[i]; break; }
         }
 
+        state_->shown_anchor = state_->anchor;
+        state_->shown_line = state_->line;
         state_->height = view;
         state_->first_visible = state_->last_visible = -1;
         for (int i = 0; i < n; i++) {
@@ -96,8 +118,8 @@ public:
         for (int i = 0; i < n; i++) {
             ftxui::Box& b = boxes_[i];
             b = box;
-            b.y_min = box.y_min + top[i] - y;
-            b.y_max = box.y_min + top[i + 1] - y - 1;
+            b.y_min = box.y_min + top[i] - shown;
+            b.y_max = box.y_min + top[i + 1] - shown - 1;
             if (b.y_max < box.y_min || b.y_min > box.y_max) {
                 // Not drawn, so its click areas are never clipped: park them
                 // far off screen, where no pointer can reach them.

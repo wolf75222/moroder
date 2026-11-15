@@ -9,6 +9,7 @@
 
 #include "image_view.hpp"
 #include "../../../include/ui/cover_cache.hpp"
+#include "../../../include/ui/anim.hpp"
 
 using namespace ftxui;
 
@@ -77,7 +78,14 @@ Component ui::PlaybackBar(PlaybackData* data) {
         std::string bar_char = "▁";
 
         // Two runs of the bar character (played / to come), not one element per column.
-        const int filled = std::clamp((width * percent) / 100, 0, std::max(0, width));
+        // From the exact position, moved on since the last 1 s tick: the bar
+        // advances when it should, not up to a second late.
+        double exact = data->position_exact;
+        if (data->is_playing && data->tick_at != std::chrono::steady_clock::time_point{})
+            exact += std::min(1.0, std::chrono::duration<double>(std::chrono::steady_clock::now() - data->tick_at).count());
+        const int filled = data->duration > 0
+            ? std::clamp(static_cast<int>(width * exact / static_cast<double>(data->duration)), 0, std::max(0, width))
+            : std::clamp((width * percent) / 100, 0, std::max(0, width));
         std::string played, rest;
         played.reserve(static_cast<size_t>(filled) * 3);
         rest.reserve(static_cast<size_t>(std::max(0, width - filled)) * 3);
@@ -88,11 +96,17 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text(rest) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)),
         };
 
+        // Play / pause: the icon lights red for a moment when it changes.
+        static bool was_playing = false;
+        static std::chrono::steady_clock::time_point flipped{};
+        if (data->is_playing != was_playing) { was_playing = data->is_playing; flipped = std::chrono::steady_clock::now(); }
+        const bool pulse = ui::anim::progress(flipped, 240) < 1.0;
+
         Element left_controls = hbox({
             text("  "),
             text("") | ((data->can_skip_backwards) ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_prev),
             text("  "),
-            text(data->is_playing ? "" : "") | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) | reflect(data->box_play),
+            text(data->is_playing ? "" : "") | (pulse ? color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)) | bold : color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY))) | reflect(data->box_play),
             text("  "),
             text("") | ((data->can_skip_forwards)  ? color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)) : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))) | reflect(data->box_next)
         });
@@ -168,7 +182,7 @@ Component ui::PlaybackBar(PlaybackData* data) {
         const int artist_w = data->artist.empty() || room < 16 ? 0 : std::min(ftxui::string_width(data->artist), room / 3);
         const int title_w = room - (artist_w ? artist_w + 3 : 0);
         Element track_info = title_w < 2 ? emptyElement() : hbox({
-            thumb ? hbox({ image_view(ui::cover(data->image_url)) | size(WIDTH, EQUAL, 2) | size(HEIGHT, EQUAL, 1), text("  ") }) : emptyElement(),
+            thumb ? hbox({ ui::coverArt(data->image_url, 2, 1), text("  ") }) : emptyElement(),
             text(fitCells(data->title, title_w)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
             artist_w ? text(" - ") | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)) : emptyElement(),
             artist_w ? text(fitCells(data->artist, artist_w)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) : emptyElement(),

@@ -245,7 +245,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
 
                 Element cover = item.image_url.empty()
                     ? ui::noCover(ui::GRID_TILE_COVER_WIDTH, ui::GRID_TILE_COVER_HEIGHT)
-                    : image_view(ui::cover(item.image_url)) | size(WIDTH, EQUAL, ui::GRID_TILE_COVER_WIDTH) | size(HEIGHT, EQUAL, ui::GRID_TILE_COVER_HEIGHT);
+                    : ui::coverArt(item.image_url, ui::GRID_TILE_COVER_WIDTH, ui::GRID_TILE_COVER_HEIGHT);
 
                 return hbox({
                     vbox({
@@ -299,7 +299,7 @@ ftxui::Component ui::Grid(GridData* data, int* selected, bool* focused, int rows
             if (item.image_url.empty()) {
                 thumb = ui::noCover(4, 2);
             } else {
-                thumb = image_view(ui::cover(item.image_url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                thumb = ui::coverArt(item.image_url, 4, 2);
             }
 
             Element rank_col = rank.empty() ? emptyElement() : hbox({

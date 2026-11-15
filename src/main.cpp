@@ -4,6 +4,8 @@
 #include <ftxui/screen/terminal.hpp>
 #include "../include/ui/viewport.hpp"
 #include "../include/ui/see_through.hpp"
+#include "../include/ui/anim.hpp"
+#include "../include/ui/fade.hpp"
 #include "../include/services/suggest.hpp"
 #include "../include/services/scrobble.hpp"
 #include "../include/services/update.hpp"
@@ -398,6 +400,9 @@ int main(int argc, char *argv[]) {
 
 
     int spinner_frame = 0;
+    static double ctx_bar = -1; // the context menu's red bar, gliding to the row picked (-1: closed)
+    // Inertia: a fast sideways swipe on a row coasts on, slowing down, after its last event.
+    struct { std::string row; int dir = 0, burst = 0; double speed = 0; std::chrono::steady_clock::time_point last{}; } glide;
 
     // ~12 fps redraws while `animating` (spinners), none otherwise.
     static std::atomic<bool> animating{false};
@@ -410,9 +415,11 @@ int main(int argc, char *argv[]) {
     std::thread([&screen] {
         auto last = std::chrono::steady_clock::now();
         while (true) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            std::this_thread::sleep_for(std::chrono::milliseconds(ui::anim::wanted ? 11 : 40));
             const auto now = std::chrono::steady_clock::now();
-            if (animating && now - last >= std::chrono::milliseconds(anim_period_ms.load())) {
+            // Something in motion (a scroll, a fade): ~30 fps until it settles.
+            const int period = ui::anim::wanted ? 33 : anim_period_ms.load();
+            if ((animating || ui::anim::wanted) && now - last >= std::chrono::milliseconds(period)) {
                 last = now;
                 screen.PostEvent(Event::Custom);
             }
@@ -518,6 +525,7 @@ int main(int argc, char *argv[]) {
             last_tick_at = std::chrono::steady_clock::now();
             playback_bar_data.position = position / 1000000ULL;
             playback_bar_data.position_exact = static_cast<double>(position) / 1e6;
+            playback_bar_data.tick_at = last_tick_at;
             playback_bar_data.duration = duration / 1000000ULL;
             if (progress >= 0) playback_bar_data.progress = progress;
         });
@@ -806,10 +814,10 @@ int main(int argc, char *argv[]) {
         }
 
         std::thread([&screen, &search_bar_data, text, gen, mine] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
             if (generation != gen) return;
             std::vector<std::string> list = mine;
-            for (auto& s : services::searchSuggestions(text)) {
+            for (auto& s : services::searchSuggestions(text, [gen] { return generation != gen; })) {
                 if (list.size() >= 8) break;
                 if (std::find(list.begin(), list.end(), s) == list.end()) list.push_back(s);
             }
@@ -910,6 +918,42 @@ int main(int argc, char *argv[]) {
     };
 
     // Search history survives restarts (~/.cache/moroder/searches.json).
+    /* Where each tab was left (Home, Explore, Library): scroll and
+    selection, back when you return to it from the sidebar, and at the next
+    launch (~/.cache/moroder/views.json). */
+    struct TabView { int anchor = 0, line = 0, active = -1; std::string sub; };   // sub: which of the tab's pages (Charts, a Library filter)
+    std::map<int, TabView> tab_views;
+    const fs::path views_file = [] {
+        const fs::path h = utils::home();
+        return h.empty() ? fs::path() : h / ".cache" / "moroder" / "views.json";
+    }();
+    {
+        std::ifstream in(views_file);
+        nlohmann::json j = in.is_open() ? nlohmann::json::parse(in, nullptr, false) : nlohmann::json();
+        if (j.is_object()) for (auto it = j.begin(); it != j.end(); ++it) {
+            const auto& v = it.value();
+            if (!v.is_array() || v.size() != 4 || !v[0].is_number_integer() || !v[1].is_number_integer() || !v[2].is_number_integer() || !v[3].is_string()) continue;
+            tab_views[std::atoi(it.key().c_str())] = { v[0].get<int>(), v[1].get<int>(), v[2].get<int>(), v[3].get<std::string>() };
+        }
+    }
+    auto save_views = [&tab_views, views_file] {
+        if (views_file.empty()) return;
+        nlohmann::json j = nlohmann::json::object();
+        for (const auto& [st, v] : tab_views) j[std::to_string(st)] = { v.anchor, v.line, v.active, v.sub };
+        std::error_code ec;
+        fs::create_directories(views_file.parent_path(), ec);
+        std::ofstream(views_file, std::ios::trunc) << j.dump();
+    };
+    auto is_tab = [](ui::State st) { return st == ui::State::HOME || st == ui::State::EXPLORE || st == ui::State::LIBRARY; };
+    // Which page of a tab is shown: Explore's tab / mood, the Library's filter.
+    // A view is only put back on the same one (Charts' scroll on Explore's top
+    // page hid its tabs).
+    auto library_filter = [&]() -> std::string {
+        for (auto& item : main_content_items)
+            for (const auto& c : item.chips_data.entries) if (c.enabled) return c.id;
+        return "all";
+    };
+
     // Lyrics shifted by hand (, and .), kept across restarts.
     const fs::path offsets_file = [] {
         const fs::path h = utils::home();
@@ -1127,13 +1171,14 @@ int main(int argc, char *argv[]) {
         {
             static std::string last_prefetch;
             const music::PlaylistRef* ref = nullptr;
+            const music::ApiResult* r = nullptr;
             if (sidebar_focused && sidebar_selected >= ui::SIDEBAR_FIXED && static_cast<size_t>(sidebar_selected - ui::SIDEBAR_FIXED) < sidebar_data.results.size()) {
                 ref = &sidebar_data.results[sidebar_selected - ui::SIDEBAR_FIXED].ref;
             } else if (ui::ContentEntry* e = [&]() -> ui::ContentEntry* {
                            if (current_state == ui::State::NOWPLAYING) return nullptr;   // page hidden
                            for (auto& item : main_content_items) if (item.component && item.component->Focused()) return &item;
                            return nullptr; }()) {
-                const music::ApiResult* r = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
+                r = (!e->carousel_data.results.empty() && e->selected >= 0 && static_cast<size_t>(e->selected) < e->carousel_data.results.size())
                     ? &e->carousel_data.results[e->selected] : &e->result;
                 ref = std::get_if<music::PlaylistRef>(&r->data);
             }
@@ -1141,6 +1186,13 @@ int main(int argc, char *argv[]) {
             if (ref && ref->id != last_prefetch) {
                 last_prefetch = ref->id;
                 player.prefetchPlaylist(*ref);
+            }
+            // An album: the same, so opening it shows its tracks at once.
+            if (!ref && r) {
+                if (const auto* al = std::get_if<music::AlbumRef>(&r->data); al && al->id != last_prefetch) {
+                    last_prefetch = al->id;
+                    player.prefetchAlbum(*al);
+                }
             }
 
             // Same for a song: resolve its stream, so Enter starts it at once.
@@ -1160,7 +1212,43 @@ int main(int argc, char *argv[]) {
         }
 
         const auto p1 = std::chrono::steady_clock::now();
-        spinner_frame++;
+        // Spinners turn with time (one step per 80 ms), not with redraws:
+        // a burst of redraws (scrolling) no longer spins them faster.
+        spinner_frame = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 80);
+        ui::anim::wanted = false;           // set again by whatever is still moving in this frame
+        /* A page change (the sidebar, back / forward, an album opened, Now
+        Playing) fades the new page in over ~180 ms. Navigation shows in the
+        history's size, so loads and refreshes of the same page don't fade. */
+        // The page's own request still running (the skeleton shows only then,
+        // and for 10 s at most: a stalled request doesn't animate forever).
+        bool page_loading = false;
+        {
+            const char* flag = current_state == ui::State::HOME ? "home" : current_state == ui::State::EXPLORE ? "explore"
+                             : current_state == ui::State::LIBRARY ? "library_playlists" : current_state == ui::State::SEARCH ? "search"
+                             : current_state == ui::State::PLAYLIST ? "open_playlist" : current_state == ui::State::ARTIST ? "open_artist" : nullptr;
+            static ui::State loading_page = ui::State::HOME;
+            static ui::anim::Clock::time_point loading_since{};
+            auto f = flag ? state_copy.flags.find(flag) : state_copy.flags.end();
+            const bool ongoing = f != state_copy.flags.end() && f->second == services::Player::Flags::Ongoing;
+            if (!ongoing || loading_page != current_state) { loading_page = current_state; loading_since = ui::anim::Clock::now(); }
+            page_loading = ongoing && ui::anim::msSince(loading_since) < 10000;
+        }
+        double page_fade = 1.0;
+        {
+            static std::string last_key;
+            static ui::anim::Clock::time_point changed{};
+            const std::string key = std::to_string(static_cast<int>(current_state)) + "|" + nav_current.key();
+            if (key != last_key) { if (!last_key.empty()) changed = ui::anim::Clock::now(); last_key = key; }
+            page_fade = ui::anim::easeOut(ui::anim::progress(changed, 180));
+        }
+        if (glide.speed > 0.6 && ui::anim::msSince(glide.last) <= 60) ui::anim::more();   // until the coast can start
+        if (glide.speed > 0.6 && ui::anim::msSince(glide.last) > 60) {
+            ui::HScroll* h = nullptr;
+            for (auto& item : main_content_items)
+                if (item.category == glide.row) h = !item.grid_data.results.empty() ? &item.grid_data.hscroll : &item.carousel_data.hscroll;
+            if (h && ui::hscrollBy(h, glide.dir * std::max(1, static_cast<int>(std::lround(glide.speed))))) { glide.speed *= 0.72; ui::anim::more(); }
+            else glide.speed = 0;
+        }
         ui::anim_frame = spinner_frame;
         playback_bar_data.frame = spinner_frame;
 
@@ -1221,15 +1309,44 @@ int main(int argc, char *argv[]) {
             if (current_state == ui::State::SEARCH) { now.query = last_query; now.filter = state_copy.search_filter; }
             // The queue's way back to Now Playing holds only while on the queue.
             if (now.state != ui::State::QUEUE && now.state != ui::State::NOWPLAYING) before_queue = ui::State::HOME;
+            // The first page drawn after launch: where it was left last time.
+            static bool launched = false;
+            if (!launched && now.state != ui::State::NOWPLAYING) {
+                launched = true;
+                auto tv = tab_views.find(static_cast<int>(now.state));
+                if (is_tab(now.state) && tv != tab_views.end() && (now.state == ui::State::EXPLORE ? tv->second.sub == state_copy.explore_tab + "|" + state_copy.explore_title
+                                   : now.state == ui::State::LIBRARY ? tv->second.sub == "all" : true)) {
+                    ui::ViewportState v;
+                    v.anchor = tv->second.anchor; v.line = tv->second.line;
+                    restore = { true, now.key(), v, tv->second.active, std::chrono::steady_clock::now() };
+                }
+            }
             if (now.state == ui::State::NOWPLAYING) {
                 // Over the page, not a page of its own: not in the history.
             } else if (now.key() != nav_current.key()) {
+                // Leaving a tab: remember where it was.
+                if (is_tab(nav_current.state)) {
+                    tab_views[static_cast<int>(nav_current.state)] = { nav_current.view.anchor, nav_current.view.line, nav_current.active,
+                        nav_current.state == ui::State::EXPLORE ? state_copy.explore_tab + "|" + state_copy.explore_title
+                        : nav_current.state == ui::State::LIBRARY ? library_filter() : std::string() };
+                    save_views();
+                }
+                const bool fresh = !nav_restoring;
                 if (!nav_restoring) {
                     nav_back.push_back(nav_current);
                     if (nav_back.size() > 50) nav_back.erase(nav_back.begin());
                     nav_forward.clear();
                 }
                 nav_current = now;
+                // Coming to a tab anew (not back / forward, which restore their own):
+                // where it was left.
+                auto tv = tab_views.find(static_cast<int>(now.state));
+                if (fresh && is_tab(now.state) && tv != tab_views.end() && (now.state == ui::State::EXPLORE ? tv->second.sub == state_copy.explore_tab + "|" + state_copy.explore_title
+                                   : now.state == ui::State::LIBRARY ? tv->second.sub == "all" : true)) {
+                    ui::ViewportState v;
+                    v.anchor = tv->second.anchor; v.line = tv->second.line;
+                    restore = { true, now.key(), v, tv->second.active, std::chrono::steady_clock::now() };
+                }
             } else if (now.state == ui::State::PLAYLIST) {
                 nav_current.playlist = now.playlist;     // title known once loaded
             }
@@ -1428,7 +1545,7 @@ int main(int argc, char *argv[]) {
                         // Room between the sidebar's line and the page (it sat
                         // right against it), and a little on the right too.
                         text("   "),
-                        [&] {
+                        ui::fadeIn([&] {
                             const std::string error_key =
                                   current_state == ui::State::HOME    ? "home"
                                 : current_state == ui::State::SEARCH  ? "search"
@@ -1464,11 +1581,21 @@ int main(int argc, char *argv[]) {
                                 : current_state != ui::State::QUEUE
                                     ? render_page() | yflex
                                     : main_content->Render() | xflex;
-                        }(),
+                        }(), page_fade),
                         text("  "),
                     }) | yflex,
 
-                    ((main_content_items.empty() || sidebar_data.is_loading) && state_copy.is_logged_in && current_state != ui::State::NOWPLAYING) ?
+                    // A page still empty: its shape (titles, a row of covers,
+                    // captions) shimmering, so nothing jumps when it arrives.
+                    (main_content_items.empty() && page_loading) ? [&] {
+                        auto section = [&] {
+                            Elements tiles;
+                            for (int i = 0; i < 6; i++) tiles.push_back(vbox({ ui::shimmer(20, 10), text(""), ui::shimmer(14, 1), text(""), ui::shimmer(9, 1) }) | size(WIDTH, EQUAL, 23));
+                            return vbox({ text(""), text(""), hbox({ text("    "), ui::shimmer(18, 1) }), text(""), text(""), hbox({ text("    "), hbox(std::move(tiles)) }) });
+                        };
+                        return vbox({ section(), section(), filler() }) | flex | xframe;
+                    }() :
+                    (sidebar_data.is_loading && state_copy.is_logged_in && current_state != ui::State::NOWPLAYING) ?
                         vbox({
                             filler(),
                             hbox({
@@ -2131,6 +2258,7 @@ int main(int argc, char *argv[]) {
                         swipe.cooldown_until = now + std::chrono::milliseconds(650);
                         if(on_cover) {
                             // Like flicking an album cover: towards the left, the next one.
+                            ui::nowPlayingSwiped(dir);
                             if (dir > 0) player.skipForward(); else player.skipBackward();
                         } else if(dir < 0) {
                             if(!go_back() && current_state == ui::State::NOWPLAYING) ui->OnEvent(Event::Escape);
@@ -2146,6 +2274,13 @@ int main(int argc, char *argv[]) {
                 if(horizontal && sideways_list) {
                     ui::HScroll* h = !under->grid_data.results.empty() ? &under->grid_data.hscroll : &under->carousel_data.hscroll;
                     ui::hscrollBy(h, (back ? -1 : 1) * (wheel_h ? 3 : 8));
+                    // A quick swipe keeps going a little once the fingers lift (see glide).
+                    if (wheel_h) {
+                        const int dir = back ? -1 : 1;
+                        glide.burst = (dir == glide.dir && now - glide.last < std::chrono::milliseconds(120)) ? glide.burst + 1 : 1;
+                        glide.dir = dir; glide.last = now; glide.row = under->category;
+                        glide.speed = glide.burst >= 3 ? 3.0 : 0.0;
+                    }
                     return true;
                 }
 
@@ -2971,6 +3106,7 @@ int main(int argc, char *argv[]) {
             });
         }
 
+        if (!ctx.open) ctx_bar = -1;
         if (ctx.open) {
             // As wide as its longest line, not a fixed block: less of the page
             // hidden behind it.
@@ -2983,6 +3119,12 @@ int main(int argc, char *argv[]) {
             covers shows through, darkened (see see_through.hpp): a cover
             stays a cover, a see-through terminal stays see-through. */
             const Color accent = ui::GetColor(ui::MColor::ACCENT_PRIMARY);
+            // The red bar glides to the row picked (the label lights at once).
+            double& bar = ctx_bar;
+            // A menu just opened: the bar starts on its row.
+            if (bar < 0 || ctx.hover < 0) bar = std::max(0, ctx.hover);
+            ui::anim::approach(bar, std::max(0, ctx.hover), 0.55, 0.3);
+            const int bar_row = ctx.hover < 0 ? -1 : static_cast<int>(std::lround(bar));
             Elements rows;
             if (!ctx.title.empty())
                 rows.push_back(hbox({ text("  "), text(utils::trimSuffix(ctx.title, W - 5, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)), filler() }));
@@ -2990,7 +3132,7 @@ int main(int argc, char *argv[]) {
                 const auto& it = ctx.items[i];
                 const bool on = static_cast<int>(i) == ctx.hover;
                 Element row = hbox({
-                    text(on ? "\u258e" : " ") | color(accent),
+                    text(static_cast<int>(i) == bar_row ? "\u258e" : " ") | color(accent),
                     text(" "),
                     text(it.icon) | size(WIDTH, EQUAL, 3) | color(on ? accent : ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)),
                     text(utils::trimSuffix(it.label, std::max(4, W - 8 - static_cast<int>(ftxui::string_width(it.hint))), "\u2026"))
@@ -3049,7 +3191,15 @@ int main(int argc, char *argv[]) {
       detached threads) would otherwise keep the process alive with music
       playing, or touch mutexes torn down during exit and abort
     */
-    auto finish = [&player] {
+    auto finish = [&] {
+        // The tab on screen at quit: where it was, for the next launch.
+        if (is_tab(nav_current.state)) {
+            std::string sub;
+            if (nav_current.state == ui::State::LIBRARY) sub = library_filter();
+            if (nav_current.state == ui::State::EXPLORE) { std::lock_guard lock(player.state_mutex); sub = player.state.explore_tab + "|" + player.state.explore_title; }
+            tab_views[static_cast<int>(nav_current.state)] = { nav_current.view.anchor, nav_current.view.line, nav_current.active, sub };
+            save_views();
+        }
         player.saveSession();
         player.detachUI();
         player.pause();

@@ -34,10 +34,13 @@ public:
 
     inline static bool anonymous = false;
 
-    int MAX_IMAGE_CACHE_SIZE = 800;
-    int MAX_RESIZED_IMAGE_CACHE_SIZE = 3200;
-    int MAX_IMAGE_CHAR_CACHE_SIZE = 800000;
-    int MAX_CONCURRENT_IMAGE_LOADS = 200;
+    // Covers are 320 px squares (about 300 KB decoded): 200 of them stay
+    // under ~60 MB, enough for several pages; the rest reload from disk.
+    // Decoding 8 at a time keeps a fast scroll from spiking the CPU.
+    int MAX_IMAGE_CACHE_SIZE = 200;
+    int MAX_RESIZED_IMAGE_CACHE_SIZE = 1200;
+    int MAX_IMAGE_CHAR_CACHE_SIZE = 300000;
+    int MAX_CONCURRENT_IMAGE_LOADS = 8;
 
     std::string LASTFM_API_KEY;
 

@@ -6,6 +6,7 @@
 */
 
 #pragma once
+#include <deque>
 
 #include <chrono>
 #include <map>
@@ -85,6 +86,10 @@ private:
 
     struct PlayNextCommand {
         std::shared_ptr<music::IStreamable> streamable;
+    };
+
+    struct PrefetchAlbumCommand {
+        music::AlbumRef ref;
     };
 
     struct PrefetchPlaylistCommand {
@@ -318,6 +323,9 @@ public:
 
     // Fetch a playlist's tracks ahead (it's selected), so opening it is instant.
     void prefetchPlaylist(const music::PlaylistRef& ref);
+    void prefetchAlbum(const music::AlbumRef& ref);
+    void noticeNow(const std::string& text);
+    void pauseFaded();                                  // pause with a short fade (the pause key)            // a notice shown before the server answers      // the album under the cursor: opens at once
 
     // Save / restore the listening session (see the private notes).
     void saveSession();
@@ -462,6 +470,7 @@ private:
         PlaylistEditCommand,
         PlaylistRestCommand,
         PrefetchPlaylistCommand,
+        PrefetchAlbumCommand,
         PlayNextCommand
     >;
     std::vector<Command> postponed;
@@ -512,6 +521,7 @@ private:
 
     // Playlists already fetched (prefetch or open), by id; under state_mutex.
     std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_cache;       // complete
+    std::unordered_map<std::string, std::pair<std::chrono::steady_clock::time_point, std::shared_ptr<music::Album>>> album_cache;   // prefetched albums (10 min)
     std::unordered_map<std::string, std::shared_ptr<music::Playlist>> playlist_first_page;  // long ones: first page
 
     /* History, session
@@ -547,6 +557,11 @@ private:
     void forgetStream(const std::string& url);
     std::unordered_set<std::string> preloading;             // in flight
     std::mutex preloaded_mutex;
+    // Lyrics fetched ahead for the next track (video id -> lyrics, the length
+    // they were matched against); used when it starts if that length agrees.
+    std::map<std::string, std::pair<int, std::shared_ptr<services::Lyrics>>> lyrics_ahead;
+    std::deque<std::string> lyrics_ahead_order;          // oldest first
+    std::mutex lyrics_ahead_mutex;
     std::string streamUrlFor(const std::string& url);
 
     /* updateMprisControls

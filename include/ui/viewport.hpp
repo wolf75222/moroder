@@ -22,6 +22,11 @@ struct ViewportState {
     int pending = 0;            // wheel lines to apply on the next layout
     bool follow = true;         // keep the selection in view (false after a wheel scroll)
 
+    // Smooth scrolling: where the last frame showed (page index + line), and
+    // how far the picture still lags behind the real position (eases to 0).
+    int shown_anchor = -1, shown_line = 0;
+    double lag = 0;
+
     // Filled by the last layout.
     int height = 0;
     int first_visible = -1;     // page indices of children fully in view

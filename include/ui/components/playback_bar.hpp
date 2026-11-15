@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include <ftxui/screen/box.hpp>
 
 #include "../../services/player.hpp"
@@ -20,6 +22,7 @@ struct PlaybackData {
     // Seconds, from the position tick; duration 0 while a stream loads.
     uint64_t position = 0;
     double position_exact = 0;   // seconds, not rounded (synced lyrics)
+    std::chrono::steady_clock::time_point tick_at{};   // when position_exact was read (to move on from it)
     uint64_t duration = 0;
 
     int volume = 100;

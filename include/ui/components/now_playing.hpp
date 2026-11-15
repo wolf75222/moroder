@@ -18,6 +18,7 @@ namespace ui {
 // Lyrics lines drawn last frame and the time each starts at (click to seek).
 extern std::vector<std::pair<std::shared_ptr<ftxui::Box>, double>> lyric_boxes;
 extern ftxui::Box now_playing_cover_box;    // the cover: swipe it to skip
+void nowPlayingSwiped(int dir);             // the cover slides in from that side (1: next)
 extern ftxui::Box now_playing_title_box;    // right-click: the track's menu
 extern ftxui::Box now_playing_artist_box;   // click: the artist's page
 extern ftxui::Box now_playing_album_box;    // click: the album

@@ -131,9 +131,7 @@ ftxui::Component ui::Carousel(CarouselData* data, int* selected, bool* focused, 
             try {
                 // Every cover is cropped square when downloaded (cover_cache.cpp),
                 // videos too: every tile is a cover's width, its title cut to it.
-                thumb = image_view(ui::cover(item.image_url))
-                    | size(WIDTH, EQUAL, 20)
-                    | size(HEIGHT, EQUAL, 10)
+                thumb = ui::coverArt(item.image_url, 20, 10)
                     | borderStyled(BorderStyle::EMPTY);
                 // thumb = ui::noCover(20, 10);
 

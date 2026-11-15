@@ -509,7 +509,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
             const bool now = !id_cap.empty() && id_cap == playing_id;
             Element thumb = url_cap.empty()
                 ? ui::noCover(4, 2)
-                : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                : ui::coverArt(url_cap, 4, 2);
 
             auto row = hbox({
                 ui::coverHit(thumb),
@@ -700,7 +700,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
 
                 Element thumb = url_cap.empty()
                     ? ui::noCover(4, 2)
-                    : image_view(ui::cover(url_cap)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                    : ui::coverArt(url_cap, 4, 2);
 
                 auto row_el = hbox({
                     ui::coverHit(thumb),
@@ -812,7 +812,7 @@ void ui::buildQueue(services::Player::PlayerState* state, std::deque<ContentEntr
         Element cover = cover_w < 16 ? emptyElement()
             : vbox({
                 filler(),
-                image_view(ui::cover(thumbnail_url)) | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_w / 2),
+                ui::coverArt(thumbnail_url, cover_w, cover_w / 2),
                 filler()
             });
         return hbox({
@@ -1025,7 +1025,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
         head.component = Renderer(actions, [actions, title, sub, count, thumb, busy, kind] {
             Element cover = thumb.empty()
                 ? ui::noCover(14, 7)
-                : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
+                : ui::coverArt(thumb, 14, 7);
             return vbox({
                 text(" "),
                 hbox({
@@ -1074,7 +1074,7 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
             const bool hover = ui::hovered(*hover_box);
             Element thumb = url.empty()
                 ? ui::noCover(4, 2)
-                : image_view(ui::cover(url)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                : ui::coverArt(url, 4, 2);
             const bool now = !id.empty() && id == playing_id;
             // A blank row above each track: one track's artist never sits
             // right against the next one's title.
@@ -1377,7 +1377,7 @@ void ui::buildArtist(services::Player::PlayerState* state, std::deque<ContentEnt
         head.component = Renderer([name, thumb, loading] {
             Element picture = thumb.empty()
                 ? ui::noCover(14, 7)
-                : image_view(ui::cover(thumb)) | size(WIDTH, EQUAL, 14) | size(HEIGHT, EQUAL, 7);
+                : ui::coverArt(thumb, 14, 7);
             return vbox({
                 text(" "),
                 hbox({

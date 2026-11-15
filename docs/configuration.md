@@ -89,10 +89,10 @@ again, lower them on a memory-constrained machine.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `MAX_IMAGE_CACHE_SIZE` | `800` | full-size covers held in memory |
-| `MAX_RESIZED_IMAGE_CACHE_SIZE` | `3200` | resized variants |
-| `MAX_IMAGE_CHAR_CACHE_SIZE` | `800000` | rendered character-art frames |
-| `MAX_CONCURRENT_IMAGE_LOADS` | `200` | cover downloads running at once |
+| `MAX_IMAGE_CACHE_SIZE` | `200` | full-size covers held in memory |
+| `MAX_RESIZED_IMAGE_CACHE_SIZE` | `1200` | resized variants |
+| `MAX_IMAGE_CHAR_CACHE_SIZE` | `300000` | rendered character-art frames |
+| `MAX_CONCURRENT_IMAGE_LOADS` | `8` | covers decoded at once |
 
 ### Discord
 

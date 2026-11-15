@@ -1,4 +1,10 @@
 #include "../../include/ui/cover_cache.hpp"
+#include "../../include/ui/anim.hpp"
+#include "../../include/ui/fade.hpp"
+#include "image_view.hpp"
+#include <ftxui/dom/node.hpp>
+#include <ftxui/screen/screen.hpp>
+#include <cmath>
 #include "../../include/utils/utils.hpp"
 
 #include "../../include/utils/curl.hpp"
@@ -37,6 +43,7 @@ struct Entry {
     std::string path;                                    // set once on disk
     bool pending = false;
     std::chrono::steady_clock::time_point retry_after{};
+    std::chrono::steady_clock::time_point ready_at{};    // when its download finished (fade in from then)
 };
 
 std::mutex& m = *new std::mutex;
@@ -168,7 +175,7 @@ void download(std::string url, fs::path target) {
         std::lock_guard lock(m);
         Entry& e = entries[url];
         e.pending = false;
-        if (!saved.empty()) e.path = saved;
+        if (!saved.empty()) { e.path = saved; e.ready_at = std::chrono::steady_clock::now(); }
         else e.retry_after = std::chrono::steady_clock::now() + std::chrono::minutes(1);
         in_flight--;
         notify = ready_callback;
@@ -221,4 +228,54 @@ ftxui::Element ui::noCover(int width, int height) {
     const Color line = Color::RGB(90, 90, 90);
     if (height < 3 || width < 6) return text("\uf001") | color(line) | center | size(WIDTH, EQUAL, width) | size(HEIGHT, EQUAL, height);
     return text("\uf001") | color(line) | center | borderStyled(BorderStyle::ROUNDED, line) | size(WIDTH, EQUAL, width) | size(HEIGHT, EQUAL, height);
+}
+
+namespace {
+
+using ftxui::Color;
+
+// A loading tile: dark, with a soft lighter band sweeping across (1.4 s).
+class Shimmer : public ftxui::Node {
+public:
+    void ComputeRequirement() override { requirement_ = ftxui::Requirement{}; }
+    void Render(ftxui::Screen& screen) override {
+        const int w = box_.x_max - box_.x_min + 1, h = box_.y_max - box_.y_min + 1;
+        if (w <= 0 || h <= 0) return;
+        const double t = std::fmod(ui::anim::msSince(ui::anim::Clock::time_point{}) / 1400.0, 1.0);
+        const double band = -0.3 + t * 1.6;                // the band's centre, across the tile
+        for (int y = box_.y_min; y <= box_.y_max; ++y) {
+            for (int x = box_.x_min; x <= box_.x_max; ++x) {
+                const double u = (double(x - box_.x_min) / w + double(y - box_.y_min) / (2.0 * h)) / 1.5;
+                const double lit = std::max(0.0, 1.0 - std::abs(u - band) / 0.18);
+                auto& c = screen.CellAt(x, y);
+                c.character = " ";
+                c.background_color = Color::Interpolate(static_cast<float>(lit * 0.35), Color::RGB(30, 30, 36), Color::RGB(70, 70, 80));
+            }
+        }
+        ui::anim::more();
+    }
+};
+
+
+}
+
+ftxui::Element ui::coverArt(const std::string& url, int w, int h) {
+    using namespace ftxui;
+    const std::string path = ui::cover(url);
+    if (!placeholder().empty() && path == placeholder())
+        return std::make_shared<Shimmer>() | size(WIDTH, EQUAL, w) | size(HEIGHT, EQUAL, h);
+    Element img = image_view(path) | size(WIDTH, EQUAL, w) | size(HEIGHT, EQUAL, h);
+    std::chrono::steady_clock::time_point ready{};
+    {
+        std::lock_guard lock(m);
+        auto it = entries.find(url);
+        if (it != entries.end()) ready = it->second.ready_at;
+    }
+    const double p = ui::anim::progress(ready, 260);
+    return ui::fadeIn(std::move(img), ui::anim::easeOut(p));
+}
+
+ftxui::Element ui::shimmer(int w, int h) {
+    using namespace ftxui;
+    return std::make_shared<Shimmer>() | size(WIDTH, EQUAL, w) | size(HEIGHT, EQUAL, h);
 }

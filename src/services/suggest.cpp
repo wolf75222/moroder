@@ -3,6 +3,9 @@
 #include "../../include/utils/curl.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <mutex>
+#include <deque>
+#include <map>
 
 namespace {
 size_t collect(char* data, size_t size, size_t n, void* out) {
@@ -11,9 +14,19 @@ size_t collect(char* data, size_t size, size_t n, void* out) {
 }
 }
 
-std::vector<std::string> services::searchSuggestions(const std::string& input) {
+std::vector<std::string> services::searchSuggestions(const std::string& input, std::function<bool()> cancelled) {
     std::vector<std::string> out;
     if (input.empty() || input.size() > 200) return out;
+
+    // The last answers: typing back over a prefix (backspace) is instant.
+    static std::mutex m;
+    static std::map<std::string, std::vector<std::string>> recent;
+    static std::deque<std::string> order;
+    {
+        std::lock_guard lock(m);
+        auto it = recent.find(input);
+        if (it != recent.end()) return it->second;
+    }
 
     nlohmann::json body = {
         {"context", {{"client", {{"clientName", "WEB_REMIX"}, {"clientVersion", "1.20251015.03.00"}, {"hl", "en"}}}}},
@@ -34,6 +47,14 @@ std::vector<std::string> services::searchSuggestions(const std::string& input) {
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 3000L);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    // Dropped as soon as another letter is typed, instead of finishing for nothing.
+    if (cancelled) {
+        curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(c, CURLOPT_XFERINFODATA, &cancelled);
+        curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, +[](void* p, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+            return (*static_cast<std::function<bool()>*>(p))() ? 1 : 0;
+        });
+    }
     long status = 0;
     if (curl_easy_perform(c) == CURLE_OK) curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
     curl_slist_free_all(headers);
@@ -53,6 +74,11 @@ std::vector<std::string> services::searchSuggestions(const std::string& input) {
             for (const auto& r : runs) if (r.contains("text") && r["text"].is_string()) text += r["text"].get<std::string>();
             if (!text.empty()) out.push_back(text);
         }
+    }
+    {
+        std::lock_guard lock(m);
+        if (!recent.count(input)) { order.push_back(input); recent[input] = out; }
+        while (order.size() > 50) { recent.erase(order.front()); order.pop_front(); }
     }
     return out;
 }

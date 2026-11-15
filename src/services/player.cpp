@@ -502,6 +502,18 @@ services::Player::Player(const std::string_view& app_name, const std::string_vie
                     state.lyrics_id = id;
                     state.flags["lyrics"] = Flags::Ongoing;
                 }
+                // Fetched ahead (preloadNext) for the same length: no wait.
+                std::shared_ptr<services::Lyrics> ahead;
+                {
+                    std::lock_guard lock(lyrics_ahead_mutex);
+                    auto it = lyrics_ahead.find(id);
+                    if (it != lyrics_ahead.end() && it->second.second && std::abs(it->second.first - secs) <= 3) ahead = it->second.second;
+                }
+                if (ahead) {
+                    std::lock_guard lock(state_mutex);
+                    state.lyrics = ahead;
+                    state.flags["lyrics"] = Flags::Done;
+                } else
                 std::thread([this, id, title, artist, secs, video] {
                     auto l = std::make_shared<services::Lyrics>(services::fetchLyrics(title, artist, secs, video));
                     std::lock_guard lock(state_mutex);
@@ -1411,7 +1423,8 @@ void services::Player::worker_loop() {
                     }
 
                     // The open page shows the change: fetch it again.
-                    if (ok && c.kind != K::Create) {
+                    // A failed removal too: its row, taken off at once, comes back.
+                    if ((ok && c.kind != K::Create) || (!ok && c.kind == K::Remove)) {
                         playlist_cache.erase(c.playlist_id);
                         if (state.open_playlist && state.open_playlist->ref.id == c.playlist_id && c.kind != K::Delete) {
                             reopen = state.open_playlist->ref;
@@ -1550,8 +1563,16 @@ void services::Player::worker_loop() {
             } else if constexpr (std::is_same_v<T, OpenAlbumCommand>) {
                 spdlog::info("PLAYER: OpenAlbumCommand, {}", c.ref.title);
 
-                music::Album album = music_service->getAlbum(c.ref);
-                const services::RequestError& err = music_service->lastError();
+                // Prefetched while the cursor rested on it: no request.
+                std::shared_ptr<music::Album> ready;
+                {
+                    std::lock_guard lock(state_mutex);
+                    // Fresh only (10 min): an album can change (a track added).
+                    auto it = album_cache.find(c.ref.id);
+                    if (it != album_cache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::minutes(10)) ready = it->second.second;
+                }
+                music::Album album = ready ? *ready : music_service->getAlbum(c.ref);
+                const services::RequestError err = ready ? services::RequestError{} : music_service->lastError();
 
                 // Shown through the playlist view: same header, same rows.
                 music::PlaylistRef as_list;
@@ -1597,6 +1618,22 @@ void services::Player::worker_loop() {
 
             } else if constexpr (std::is_same_v<T, RefreshSessionCommand>) {
                 if (music_service->refreshCookies()) mpv_service->refreshSessionCookies();
+
+            } else if constexpr (std::is_same_v<T, PrefetchAlbumCommand>) {
+                {
+                    std::lock_guard lock(state_mutex);
+                    if (c.ref.id != latest_prefetch) return;
+                    auto it = album_cache.find(c.ref.id);
+                    if (it != album_cache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::minutes(10)) return;
+                }
+                music::Album album = music_service->getAlbum(c.ref);
+                if (music_service->lastError().failed || album.getStreamables().empty()) return;
+                const auto items = album.getStreamables();
+                if (!items.empty()) warmNow(items.front()->getStreamUrl());
+                std::lock_guard lock(state_mutex);
+                if (album_cache.size() > 40) album_cache.clear();
+                album_cache[c.ref.id] = { std::chrono::steady_clock::now(), std::make_shared<music::Album>(album) };
+                spdlog::info("PLAYER: prefetched album {}", c.ref.title);
 
             } else if constexpr (std::is_same_v<T, PrefetchPlaylistCommand>) {
                 // Scrolled past it since: the worker doesn't fetch it (Play,
@@ -2729,7 +2766,20 @@ void services::Player::resume() {
         state.flags["paused"] = Flags::False;
     }
 
-    mpv_service->resume();
+    // Back in with the same short fade, off this thread.
+    {
+        const uint64_t gen = ++fade_generation;
+        mpv_service->setVolume(0);
+        mpv_service->resume();
+        std::thread([this, gen] {
+            for (int i = 1; i <= 4 && fade_generation == gen; i++) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                int v;
+                { std::lock_guard sl(state_mutex); v = state.volume; }   // a change meanwhile counts
+                if (fade_generation == gen) mpv_service->setVolume(v * i / 4);
+            }
+        }).detach();
+    }
     social_service->resume();
 
     uint64_t position = mpv_service->getStreamPosition();
@@ -2812,6 +2862,19 @@ void services::Player::changeVolume(int delta) {
             if (v >= 0) std::ofstream(volumeFile(), std::ios::trunc) << v << "\n";
         }).detach();
     }
+}
+
+void services::Player::prefetchAlbum(const music::AlbumRef& ref) {
+    if (ref.id.empty()) return;
+    {
+        std::lock_guard lock(state_mutex);
+        latest_prefetch = ref.id;
+    }
+    {
+        std::lock_guard lock(command_mutex);
+        command_queue.push(PrefetchAlbumCommand{ref});
+    }
+    command_cv.notify_one();
 }
 
 void services::Player::prefetchPlaylist(const music::PlaylistRef& ref) {
@@ -3175,7 +3238,14 @@ void services::Player::saveQueueAsPlaylist(const std::string& title) {
     if (!ids.empty()) createPlaylist(title, ids);
 }
 
+void services::Player::noticeNow(const std::string& text) {
+    std::lock_guard lock(state_mutex);
+    state.notice = text;
+    state.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+}
+
 void services::Player::createPlaylist(const std::string& title, const std::string& video_id) {
+    noticeNow("Created \u201c" + title + "\u201d");
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(PlaylistEditCommand{title, "", video_id, PlaylistEditCommand::Kind::Create});
@@ -3184,6 +3254,8 @@ void services::Player::createPlaylist(const std::string& title, const std::strin
 }
 
 void services::Player::addToPlaylist(const std::string& playlist_id, const std::string& title, const std::string& video_id) {
+    // Shown at once (the server answers in the background; a failure replaces it).
+    noticeNow("Added to " + title);
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(PlaylistEditCommand{title, playlist_id, video_id, PlaylistEditCommand::Kind::Add});
@@ -3192,6 +3264,23 @@ void services::Player::addToPlaylist(const std::string& playlist_id, const std::
 }
 
 void services::Player::removeFromPlaylist(const std::string& playlist_id, const std::string& video_id, const std::string& set_video_id) {
+    noticeNow("Removed from the playlist");
+    // The row goes from the open page at once; the refetch after the
+    // server's answer puts it back if that failed.
+    {
+        std::lock_guard lock(state_mutex);
+        if (state.open_playlist && state.open_playlist->ref.id == playlist_id) {
+            auto kept = std::make_shared<music::Playlist>();
+            kept->setRef(state.open_playlist->ref);
+            bool dropped = false;
+            for (auto& item : state.open_playlist->getStreamables()) {
+                auto song = std::dynamic_pointer_cast<music::Song>(item);
+                if (!dropped && song && song->ref.id == video_id) { dropped = true; continue; }
+                kept->addStreamable(item);
+            }
+            if (dropped) state.open_playlist = kept;
+        }
+    }
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(PlaylistEditCommand{"", playlist_id, video_id, PlaylistEditCommand::Kind::Remove, set_video_id});
@@ -3200,6 +3289,7 @@ void services::Player::removeFromPlaylist(const std::string& playlist_id, const 
 }
 
 void services::Player::renamePlaylist(const std::string& playlist_id, const std::string& title) {
+    noticeNow("Renamed to \u201c" + title + "\u201d");
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(PlaylistEditCommand{title, playlist_id, "", PlaylistEditCommand::Kind::Rename});
@@ -3208,6 +3298,7 @@ void services::Player::renamePlaylist(const std::string& playlist_id, const std:
 }
 
 void services::Player::deletePlaylist(const std::string& playlist_id, const std::string& title) {
+    noticeNow("Deleted \u201c" + title + "\u201d");
     {
         std::lock_guard lock(command_mutex);
         command_queue.push(PlaylistEditCommand{title, playlist_id, "", PlaylistEditCommand::Kind::Delete});
@@ -3245,6 +3336,41 @@ void services::Player::preloadNext() {
         }
         if (wanted.size() < 2 && state.autoplay && !state.radio_queue.empty()) {
             wanted.emplace_back(SIZE_MAX, state.radio_queue.front()->getStreamUrl());   // the radio's next
+        }
+    }
+
+    /* The next song's lyrics too, matched against its listed length, so
+    Now Playing has them the moment it starts. */
+    if (Config::get().ENABLE_LYRICS) {
+        std::shared_ptr<music::Song> next;
+        {
+            std::lock_guard lock(state_mutex);
+            const size_t at = static_cast<size_t>(state.queue_position) + 1;
+            if (at < state.user_queue.size()) next = std::dynamic_pointer_cast<music::Song>(state.user_queue[at]);
+            else if (state.autoplay && !state.radio_queue.empty()) next = std::dynamic_pointer_cast<music::Song>(state.radio_queue.front());
+        }
+        if (next && next->ref.duration_s > 0) {
+            const std::string id = next->ref.id, title = next->ref.title;
+            const std::string artist = next->ref.artists.empty() ? "" : next->ref.artists[0].name;
+            const int secs = next->ref.duration_s;
+            const bool wide = next->ref.wide;
+            bool fetch = false;
+            {
+                std::lock_guard lock(lyrics_ahead_mutex);
+                if (!lyrics_ahead.count(id)) {
+                    lyrics_ahead[id] = { secs, nullptr }; fetch = true;
+                    lyrics_ahead_order.push_back(id);
+                    while (lyrics_ahead_order.size() > 8) { lyrics_ahead.erase(lyrics_ahead_order.front()); lyrics_ahead_order.pop_front(); }
+                }
+            }
+            if (fetch) std::thread([this, id, title, artist, secs, wide] {
+                auto l = std::make_shared<services::Lyrics>(services::fetchLyrics(title, artist, secs, wide));
+                std::lock_guard lock(lyrics_ahead_mutex);
+                auto it = lyrics_ahead.find(id);
+                if (it == lyrics_ahead.end()) return;
+                if (l->found) it->second.second = l;
+                else lyrics_ahead.erase(it);           // nothing (or offline): tried again at its start
+            }).detach();
         }
     }
 
@@ -3667,6 +3793,46 @@ void services::Player::fetchLikeStatus(const std::string& video_id) {
     command_cv.notify_one();
 }
 
+/* Pause with a short fade (80 ms) rather than a cut, off the caller's
+thread: the state says paused at once, the sound dips, then mpv pauses
+(unless a resume came meanwhile) and the volume is set back. During the
+end-of-track fade, a plain pause (that fade owns the volume). */
+void services::Player::pauseFaded() {
+    if (fading_out) { pause(); return; }
+    std::shared_ptr<music::IStreamable> current;
+    {
+        std::lock_guard lock(state_mutex);
+        if (!state.current || state.flags["audio"] != Flags::Ongoing) return;
+        state.flags["audio"]  = Flags::Done;
+        state.flags["paused"] = Flags::True;
+        current = state.current;
+    }
+    const uint64_t gen = ++fade_generation;
+    std::thread([this, gen, current] {
+        for (int i = 3; i >= 1 && fade_generation == gen; i--) {
+            int vol;
+            { std::lock_guard sl(state_mutex); vol = state.volume; }
+            mpv_service->setVolume(vol * i / 4);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        int vol;
+        bool still;
+        {
+            std::lock_guard sl(state_mutex);
+            vol = state.volume;
+            still = state.current == current && state.flags["paused"] == Flags::True;
+        }
+        if (!still) return;                  // resumed or another track meanwhile: theirs
+        mpv_service->pause();
+        mpv_service->setVolume(vol);
+        social_service->pause();
+        const uint64_t position = mpv_service->getStreamPosition();
+        social_service->setPosition(position);
+        mpris_service->setPosition(position);
+        mpris_service->setPlaybackStatus(services::PlaybackStatus::Paused);
+    }).detach();
+}
+
 void services::Player::togglePause() {
     bool is_playing;
 
@@ -3676,7 +3842,7 @@ void services::Player::togglePause() {
     }
 
     if (is_playing) {
-        pause();
+        pauseFaded();
     } else {
         resume();
     }

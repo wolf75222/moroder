@@ -7,6 +7,10 @@
 
 #include "image_view.hpp"
 #include <ftxui/screen/string.hpp>
+#include <ftxui/dom/node.hpp>
+#include <ftxui/screen/screen.hpp>
+#include "../../../include/ui/anim.hpp"
+#include "../../../include/ui/fade.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -16,6 +20,35 @@
 using namespace ftxui;
 
 namespace {
+
+int swipe_dir = 0;                                   // the last swipe on the cover (1: next)
+ui::anim::Clock::time_point swipe_at{};
+
+// Its child drawn `skip` rows higher, clipped to its box: the lyrics column
+// glides a row at a time instead of jumping a whole line.
+class ShiftUp : public ftxui::Node {
+public:
+    ShiftUp(ftxui::Element child, int skip) : Node(ftxui::Elements{std::move(child)}), skip_(skip) {}
+    void ComputeRequirement() override {
+        children_[0]->ComputeRequirement();
+        requirement_ = children_[0]->requirement();
+        requirement_.min_y = std::max(0, requirement_.min_y - skip_);
+    }
+    void SetBox(ftxui::Box box) override {
+        Node::SetBox(box);
+        ftxui::Box b = box;
+        b.y_min -= skip_;
+        children_[0]->SetBox(b);
+    }
+    void Render(ftxui::Screen& screen) override {
+        const ftxui::Box saved = screen.stencil;
+        screen.stencil = ftxui::Box::Intersection(box_, screen.stencil);
+        children_[0]->Render(screen);
+        screen.stencil = saved;
+    }
+private:
+    int skip_;
+};
 
 // Words of a line, wrapped to `width` columns: rows of word indices.
 std::vector<std::vector<int>> wrapWords(const std::vector<std::string>& words, int width) {
@@ -107,8 +140,22 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     Element cover = art.empty()
         ? filler() | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h) | border
-        : image_view(ui::cover(art)) | size(WIDTH, EQUAL, cover_w) | size(HEIGHT, EQUAL, cover_h);
+        : ui::coverArt(art, cover_w, cover_h);
     cover = cover | reflect(ui::now_playing_cover_box);
+
+    /* A new track: its cover fades in, and after a swipe it also slides in
+    from that side (3 columns, the lyrics staying put). */
+    static std::string cover_song;
+    static ui::anim::Clock::time_point cover_at{};
+    if (cover_song != ref.id) { cover_song = ref.id; cover_at = ui::anim::Clock::now(); }
+    const double cover_p = ui::anim::easeOut(ui::anim::progress(cover_at, 260));
+    cover = ui::fadeIn(cover, cover_p);
+    int slide = 0;
+    if (swipe_dir != 0) {
+        const double sp = ui::anim::progress(swipe_at, 260);
+        slide = static_cast<int>(std::lround(swipe_dir * 3 * (1.0 - ui::anim::easeOut(sp))));
+        if (sp >= 1.0) swipe_dir = 0;
+    }
 
     const float ratio = duration > 0 ? static_cast<float>(std::clamp(position / duration, 0.0, 1.0)) : 0.f;
 
@@ -143,9 +190,13 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         });
 
         // A thin progress line as wide as the cover, the times under its ends.
-        const int played = static_cast<int>(std::lround(ratio * static_cast<float>(cover_w)));
+        // In half cells: the head moves twice as often ("╸", half a line).
+        const int halves = std::clamp(static_cast<int>(ratio * static_cast<float>(cover_w) * 2.f), 0, cover_w * 2);
+        const int full = halves / 2, half = halves % 2;
         std::string done, rest;
-        for (int i = 0; i < cover_w; i++) (i < played ? done : rest) += "\u2501";
+        for (int i = 0; i < full; i++) done += "\u2501";
+        if (half) done += "\u2578";
+        for (int i = full + half; i < cover_w; i++) rest += "\u2501";
         return vbox({
             text(""),
             vbox(std::move(title_rows)) | reflect(ui::now_playing_title_box),
@@ -188,7 +239,7 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
             }
             if (used + 3 > rows_room - 1) { more = true; break; }
             Element thumb = r.thumb.empty() ? ui::noCover(4, 2)
-                                            : image_view(ui::cover(r.thumb)) | size(WIDTH, EQUAL, 4) | size(HEIGHT, EQUAL, 2);
+                                            : ui::coverArt(r.thumb, 4, 2);
             ui::now_playing_upnext_boxes.emplace_back(Box{-1, -1, -1, -1}, r.index);
             Box& b = ui::now_playing_upnext_boxes.back().first;
             col.push_back(text(""));
@@ -224,6 +275,8 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
 
     // Lyrics: synced lines around the current one, or the plain text.
     Elements lines;
+    int lyric_skip = 0;       // rows of the first line drawn above the column (gliding)
+    bool shift_badge = false; // the "+8.0 s" row sits first in lines
 
     if (!Config::get().ENABLE_LYRICS) {
         lines.push_back(text("Lyrics are off (ENABLE_LYRICS)") | dim);
@@ -274,7 +327,26 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         int start = std::max(0, cur);
         for (int used = 0; start > 0 && used + rows_of(start - 1) <= before; ) used += rows_of(--start);
 
-        int rows_left = visible;
+        /* The column glides to its new place (eased, a row at a time) when
+        the current line moves on, instead of jumping by a whole line. In
+        rows from the top of the song; a new song or a seek far away jumps. */
+        {
+            static double shown_row = -1;
+            static std::string glide_song;
+            int target_row = 0;
+            for (int i = 0; i < start; i++) target_row += rows_of(i);
+            if (glide_song != ref.id || shown_row < 0 || std::abs(shown_row - target_row) > visible) { glide_song = ref.id; shown_row = target_row; }
+            ui::anim::approach(shown_row, target_row, 0.3, 0.3);
+            const int top_row = static_cast<int>(std::lround(shown_row));
+            int s2 = 0, before_s2 = 0;
+            while (s2 < static_cast<int>(ls.size()) && before_s2 + rows_of(s2) <= top_row) before_s2 += rows_of(s2++);
+            if (s2 != start || top_row != target_row) {
+                start = std::min(s2, static_cast<int>(ls.size()) - 1);
+                lyric_skip = std::max(0, top_row - before_s2);
+            }
+        }
+
+        int rows_left = visible + lyric_skip;
         // The shift badge takes a row at the top.
         if (shift != 0.0) rows_left--;
 
@@ -357,20 +429,33 @@ Element ui::renderNowPlaying(services::Player::PlayerState* state, double positi
         char badge[32];
         std::snprintf(badge, sizeof badge, "%+.1f s", shown_shift);
         lines.insert(lines.begin(), text(badge) | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)));
+        shift_badge = true;
     }
     // Synced lines centred in their column: balanced between the cover and
     // up next, like a lyrics view, rather than flush left with a gap after.
     if (synced) for (auto& l : lines) l = hbox({ filler(), std::move(l), filler() });
+    if (synced && lyric_skip > 0) {
+        // The badge (if any) stays put; the words glide.
+        const bool badge = shift_badge;
+        Elements words(lines.begin() + (badge ? 1 : 0), lines.end());
+        Element col = std::make_shared<ShiftUp>(vbox(std::move(words)), lyric_skip);
+        Elements kept;
+        if (badge) kept.push_back(lines.front());
+        kept.push_back(col);
+        lines = std::move(kept);
+    }
     Element lyrics = fill
         ? vbox({ text(""), vbox(std::move(lines)) | flex }) | flex
         : vbox({ filler(), vbox(std::move(lines)), filler() }) | flex;
 
     return hbox({
-        text("   "),
+        text(std::string(static_cast<size_t>(3 + slide), ' ')),
         vbox({ filler(), cover, track_block(true), filler() }),     // centred under the cover
-        text("      "),
+        text(std::string(static_cast<size_t>(6 - slide), ' ')),
         lyrics,
         room_for_next ? hbox({ text("  "), up_next(height - 2) }) : emptyElement(),
         text("  "),
     }) | flex;
 }
+
+void ui::nowPlayingSwiped(int dir) { swipe_dir = dir > 0 ? 1 : -1; swipe_at = ui::anim::Clock::now(); }
