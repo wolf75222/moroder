@@ -2,6 +2,8 @@
 #include "../../../include/ui/constants/colors.hpp"
 
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/string.hpp>
+#include <ftxui/screen/terminal.hpp>
 #include <algorithm>
 #include <chrono>
 
@@ -18,6 +20,21 @@ std::string clock(uint64_t seconds) {
     if (h > 0) std::snprintf(buf, sizeof(buf), "%llu:%02llu:%02llu", (unsigned long long)h, (unsigned long long)m, (unsigned long long)s);
     else       std::snprintf(buf, sizeof(buf), "%llu:%02llu", (unsigned long long)m, (unsigned long long)s);
     return buf;
+}
+
+// Cut to w columns, not w characters: a CJK title is twice as wide.
+std::string fitCells(const std::string& s, int w) {
+    if (ftxui::string_width(s) <= w) return s;
+    std::string out;
+    int used = 0;
+    for (const auto& g : ftxui::Utf8ToGlyphs(s)) {
+        if (g.empty()) continue;                           // second half of a wide glyph
+        const int gw = ftxui::string_width(g);
+        if (used + gw > w - 1) break;
+        out += g; used += gw;
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out + "…";
 }
 
 }
@@ -53,7 +70,10 @@ Component ui::PlaybackBar(PlaybackData* data) {
     return Renderer([data] {
         int percent = std::clamp(data->progress, 0, 100);
 
-        int width = data->dimx;
+        // The terminal's width now: dimx is set when the player's state
+        // changes, and after a resize with none (a track still loading) it
+        // was the old width, laying the bar out for another window.
+        const int width = std::max(ftxui::Terminal::Size().dimx, 1);
         std::string bar_char = "▁";
 
         // Two runs of the bar character (played / to come), not one element per column.
@@ -129,35 +149,43 @@ Component ui::PlaybackBar(PlaybackData* data) {
             text("   "),
         });
 
-        // Both sides as wide as the wider one: the title in the screen's middle.
+        // Both sides as wide as the wider one: the title in the screen's middle
+        // (when there's room for that, below).
         left_controls->ComputeRequirement();
         right_controls->ComputeRequirement();
-        const int side = std::max(left_controls->requirement().min_x, right_controls->requirement().min_x);
+        const int left_min = left_controls->requirement().min_x, right_min = right_controls->requirement().min_x;
+        int left_w = std::max(left_min, right_min), right_w = left_w;
 
         // Title · artist in what is left between them (a long one used to push
         // the icons off the right edge). (A 2-cell cover here read as a smudge.)
-        const int room = std::max(8, width - 2 * side - 4);
-        const int artist_w = data->artist.empty() ? 0 : std::min(static_cast<int>(utils::utf8Length(data->artist)), std::max(0, room / 3));
-        const int title_w = std::max(4, room - (artist_w ? artist_w + 5 : 0));
-        Element track_info = hbox({
-            text(utils::trimSuffix(data->title, title_w, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
+        // Never more than that room: past it the sides were squeezed instead
+        // (80 columns: "8:1", "100" without its %). Too narrow to keep it in
+        // the middle (80 columns left it no room at all), it takes the slack
+        // beside the transport buttons; still short, the artist goes first.
+        int room = width - left_w - right_w - 4;
+        if (room < 12) { left_w = left_min; right_w = right_min; room = width - left_w - right_w - 4; }
+        room = std::max(0, room);
+        const int artist_w = data->artist.empty() || room < 16 ? 0 : std::min(ftxui::string_width(data->artist), room / 3);
+        const int title_w = room - (artist_w ? artist_w + 5 : 0);
+        Element track_info = title_w < 2 ? emptyElement() : hbox({
+            text(fitCells(data->title, title_w)) | color(ui::GetColor(ui::MColor::TEXT_TOP_PRIMARY)),
             artist_w ? text("  \u00b7  ") | color(ui::GetColor(ui::MColor::SEPARATOR_PRIMARY)) : emptyElement(),
-            artist_w ? text(utils::trimSuffix(data->artist, artist_w, "\u2026")) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) : emptyElement(),
+            artist_w ? text(fitCells(data->artist, artist_w)) | color(ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY)) : emptyElement(),
         });
 
         return vbox({
             hbox(std::move(progress_line)) | reflect(data->box_progress),
             text(" "),
             hbox({
-                hbox({ left_controls, filler() }) | size(WIDTH, EQUAL, side),
+                hbox({ left_controls, filler() }) | size(WIDTH, EQUAL, left_w),
                 filler(),
                 // A transient notice (like result, errors) briefly takes the
                 // track's place, where the eye already is.
-                data->notice.empty()
-                    ? track_info | reflect(data->box_track)
-                    : text(data->notice) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
+                data->notice.empty() ? track_info | reflect(data->box_track)
+                    : room < 2       ? emptyElement()
+                    : text(fitCells(data->notice, room)) | bold | color(ui::GetColor(ui::MColor::ACCENT_PRIMARY)),
                 filler(),
-                hbox({ filler(), right_controls }) | size(WIDTH, EQUAL, side),
+                hbox({ filler(), right_controls }) | size(WIDTH, EQUAL, right_w),
             }) | size(HEIGHT, EQUAL, 1)
         }) | size(HEIGHT, EQUAL, 3);
     });

@@ -524,6 +524,7 @@ void ui::buildSearch(services::Player::PlayerState* state, std::deque<ContentEnt
                         ? color(ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY))
                         : color(ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY))),
                 }) | flex,
+                text("  "),      // a gap a long title can't fill: it ran into the length
                 text(length) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text("   "),
             }) | size(HEIGHT, EQUAL, 2);
@@ -1079,6 +1080,8 @@ void ui::buildPlaylist(services::Player::PlayerState* state, std::deque<ContentE
                     text(bottom) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_BOTTOM_PRIMARY)
                                                    : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 }) | flex,
+                // A gap a long title can't fill: it ran into the length.
+                text("  "),
                 // Its length, right-aligned like a music app's track list.
                 text(length) | color(s.focused ? ui::GetColor(ui::MColor::TEXT_TOP_SECONDARY) : ui::GetColor(ui::MColor::TEXT_BOTTOM_SECONDARY)),
                 text("   "),
